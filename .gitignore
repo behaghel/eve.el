@@ -1,0 +1,41 @@
+*.elc
+.DS_Store
+.devenv/
+.devenv.flake.nix
+.direnv/
+.elpa/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+eln-cache/
+auto-save-list/
+var/
+cli/.venv/
+cli/build/
+cli/dist/
+cli/.coverage
+cli/.python-version.local
+cli/src/*.egg-info/
+__pycache__/
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
