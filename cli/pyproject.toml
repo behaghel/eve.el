@@ -1,0 +1,54 @@
+[build-system]
+requires = ["uv_build>=0.8.2,<0.9.0"]
+build-backend = "uv_build"
+
+[project]
+name = "eve-cli"
+version = "0.1.0"
+description = "Python executables for the eve.el project"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  { name = "Hubert Behaghel" },
+]
+license = "GPL-3.0-or-later"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "faster-whisper>=1.1.1",
+]
+
+[project.scripts]
+eve = "eve_cli.main:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.18.2",
+  "pytest>=8.4.2",
+  "pytest-cov>=7.0.0",
+  "ruff>=0.13.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["eve_cli"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["src"]
