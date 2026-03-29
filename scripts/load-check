@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME=${HOME:-$PWD}
+
+emacs --batch -Q -L . \
+  --eval "(require 'package)" \
+  --eval "(setq package-user-dir (expand-file-name \".elpa\" default-directory))" \
+  --eval "(package-initialize)" \
+  -l eve.el \
+  --eval '(message "Loaded eve")' \
+  --kill

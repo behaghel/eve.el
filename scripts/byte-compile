@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME=${HOME:-$PWD}
+
+mapfile -t el_files < <(git ls-files "*.el")
+if [ ${#el_files[@]} -eq 0 ]; then
+  exit 0
+fi
+
+emacs --batch -Q -L . \
+  --eval "(require 'package)" \
+  --eval "(setq package-user-dir (expand-file-name \".elpa\" default-directory))" \
+  --eval "(package-initialize)" \
+  --eval '(setq byte-compile-error-on-warn t)' \
+  -f batch-byte-compile "${el_files[@]}"

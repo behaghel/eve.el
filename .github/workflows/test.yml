@@ -1,0 +1,61 @@
+name: Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  elisp:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Emacs
+        uses: jcs090218/setup-emacs@master
+        with:
+          version: '30.2'
+
+      - name: Install ELPA dependencies
+        run: |
+          chmod +x scripts/install-elpa-deps
+          ./scripts/install-elpa-deps
+
+      - name: Run lint checks
+        run: |
+          export HOME=$GITHUB_WORKSPACE
+          chmod +x scripts/parse scripts/checkdoc scripts/load-check scripts/byte-compile
+          ./scripts/parse eve.el test/eve-test.el
+          ./scripts/checkdoc eve.el test/eve-test.el
+          ./scripts/load-check
+          ./scripts/byte-compile
+
+      - name: Run ERT tests
+        run: |
+          export HOME=$GITHUB_WORKSPACE
+          chmod +x scripts/ert
+          ./scripts/ert
+
+  python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Run CLI health suite
+        run: |
+          chmod +x scripts/check.sh scripts/startup-health-check.sh scripts/sync-python.sh scripts/lint.sh scripts/build.sh scripts/run-cli.sh
+          ./scripts/check.sh

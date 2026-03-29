@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+emacs --batch -Q \
+  --eval "(require 'package)" \
+  --eval "(setq package-user-dir (expand-file-name \".elpa\" default-directory))" \
+  --eval "(add-to-list 'package-archives '(\"gnu\" . \"https://elpa.gnu.org/packages/\") t)" \
+  --eval "(package-initialize)" \
+  --eval "(unless package-archive-contents (package-refresh-contents))" \
+  --eval "(dolist (pkg '(hydra)) (unless (package-installed-p pkg) (package-install pkg)))"

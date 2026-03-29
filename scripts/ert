@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME=${HOME:-$PWD}
+
+if ls test/*-test.el >/dev/null 2>&1; then
+  emacs --batch -Q -L . -l ert $(for f in test/*-test.el; do printf " -l %q" "$f"; done) -f ert-run-tests-batch-and-exit
+else
+  echo "No tests found under test/" >&2
+  exit 1
+fi
