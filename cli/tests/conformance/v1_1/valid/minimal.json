@@ -1,0 +1,39 @@
+{
+  "version": "1.1",
+  "sources": [
+    {
+      "id": "clip01",
+      "file": "raw/interview.mp4",
+      "timebase": {
+        "numerator": 1,
+        "denominator": 48000
+      }
+    }
+  ],
+  "render": {
+    "filler_policy": "keep",
+    "preserve_short_gaps": 0.0
+  },
+  "segments": [
+    {
+      "id": "clip01-s0001",
+      "source": "clip01",
+      "start_tick": 0,
+      "end_tick": 43200,
+      "display_text": "hello world",
+      "spoken_text": "hello world",
+      "words": [
+        {
+          "start_tick": 0,
+          "end_tick": 19200,
+          "spoken": "hello"
+        },
+        {
+          "start_tick": 19200,
+          "end_tick": 43200,
+          "spoken": "world"
+        }
+      ]
+    }
+  ]
+}

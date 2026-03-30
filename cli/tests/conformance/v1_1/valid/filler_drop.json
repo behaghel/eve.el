@@ -1,0 +1,49 @@
+{
+  "version": "1.1",
+  "sources": [
+    {
+      "id": "clip01",
+      "file": "raw/interview.mp4",
+      "timebase": {
+        "numerator": 1,
+        "denominator": 48000
+      }
+    }
+  ],
+  "render": {
+    "filler_policy": "drop",
+    "preserve_short_gaps": 0.2
+  },
+  "segments": [
+    {
+      "id": "clip01-s0001",
+      "source": "clip01",
+      "start_tick": 0,
+      "end_tick": 49920,
+      "display_text": "we launched it",
+      "words": [
+        {
+          "start_tick": 0,
+          "end_tick": 9600,
+          "spoken": "um",
+          "kind": "filler"
+        },
+        {
+          "start_tick": 9600,
+          "end_tick": 15600,
+          "spoken": "we"
+        },
+        {
+          "start_tick": 15600,
+          "end_tick": 38000,
+          "spoken": "launched"
+        },
+        {
+          "start_tick": 38000,
+          "end_tick": 49920,
+          "spoken": "it"
+        }
+      ]
+    }
+  ]
+}
