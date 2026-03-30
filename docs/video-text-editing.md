@@ -2,6 +2,10 @@
 
 This document outlines a workflow for editing spoken-word videos by manipulating text instead of cutting timelines manually. It summarises the file formats we generate, how Emacs can be used to rearrange content, and the inputs consumed by `eve text-edit`.
 
+The normative TJM v1.1 format specification lives in `docs/tjm-spec.md`. This
+document is workflow-oriented and conceptual; when it differs from the current
+interoperable format profile, `docs/tjm-spec.md` is authoritative.
+
 ## 1. Goals (Updated)
 
 - Support **multi-source projects** where several raw clips can be edited and compiled into a single deliverable.
@@ -81,6 +85,11 @@ Characteristics:
 - **`broll`**: optional override describing how to replace or overlay the video for the segment (keep source audio by default). When `continue` is present and truthy, adjacent segments with the same clip/mode are treated as a single continuous overlay by the exporter.
 - Future extensions can add `transitions`, `emphasis`, or `linkage` fields without breaking consumers if we keep the manifest versioned.
 
+The current repository is migrating toward an explicit TJM v1.1 contract with
+word semantics, exact timing, and deterministic render behavior defined in
+`docs/tjm-spec.md`. This concept document remains illustrative rather than
+normative.
+
 ## 3. Editing Workflow in Emacs
 
 We plan to ship a custom major mode (building on ideas from `subed`) that understands TJM files:
@@ -92,6 +101,9 @@ We plan to ship a custom major mode (building on ideas from `subed`) that unders
   - Insert segment: split an existing segment by editing `words` and adjusting `start`/`end`.
   - Merge adjacent segments: with point on the first segment, invoke `C-c m` (`J` in Evil) to span overlays like b-roll across the combined text.
   - Insert marker segments: `M-j` (or `C-c C-m`) prompts for a title, optional `source`, and optional `start` so you can outline sections without altering media order.
+  - Proposed v1.1 filler review: a manifest-aware filler pass can tag matching
+    words with `kind: "filler"` so the editor or renderer can review those
+    words before deciding whether to cut, hide, mute, or delete them.
   - Set b-roll metadata: choose files (relative paths welcome), switch overlay mode, flag still images (renderer synthesises a looping frame), and enter optional `start_offset`/`duration` values (seconds or `HH:MM:SS.mmm`) to begin partway through the clip without importing its audio.
   - Toggle b-roll continuity: `; B` flips the `continue` flag so an overlay can span multiple consecutive segments.
   - Reorder: drag segments around; the new ordering directly controls the final video timeline.

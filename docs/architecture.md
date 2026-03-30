@@ -22,8 +22,8 @@ The Python CLI owns:
 
 - manifest generation
 - denoise orchestration
-- filler trimming logic
-- text-based render planning
+- filler classification and render policy logic
+- text-based render planning and deterministic timeline construction
 - ffmpeg and ffprobe invocation
 - machine-readable diagnostics for Emacs
 
@@ -34,7 +34,7 @@ The Python CLI is where the current business logic from
 
 The shared contract between `eve.el` and `cli/` is:
 
-- TJM files on disk
+- TJM v1.1 files on disk as specified in `docs/tjm-spec.md`
 - structured JSON command output where appropriate
 - stable exit codes
 

@@ -18,10 +18,14 @@ Planned migration target inside this subtree:
 - `cli/src/eve_cli/commands/batch.py`
 - `cli/tests/`
 
-Recommended migration order:
+TJM v1.1 migration order in this repository:
 
-1. Lift `video-transcribe` into Python modules and preserve its current CLI.
-2. Lift `video-text-edit` with behavior-first parity tests.
-3. Lift `video-trim-fillers` with fixture-based integration tests.
-4. Consolidate `video-denoise` and `video-batch` into Python subcommands.
-5. Relegate Nix to packaging and integration glue only.
+1. Replace the draft TJM direction with a normative v1.1 specification in
+   `docs/tjm-spec.md`.
+2. Build a conformance-oriented v1.1 test suite and JSON fixtures under
+   `cli/tests/`.
+3. Migrate producers to emit and annotate TJM v1.1 data.
+4. Migrate `text-edit` to consume the exact timing and deterministic render
+   contract.
+5. Migrate `eve.el` to preserve and expose the new v1.1 structure while keeping
+   media semantics in the CLI.
