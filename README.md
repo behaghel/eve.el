@@ -4,6 +4,10 @@
 files. A TJM manifest describes spoken-word video edits as ordered text
 segments with per-word timing, optional markers, and b-roll metadata.
 
+The normative TJM v1.1 format specification lives in `docs/tjm-spec.md`. The
+workflow-oriented background and editing model live in
+`docs/video-text-editing.md`.
+
 This repository is Emacs-package-first:
 
 - `eve.el` is the main library entrypoint
@@ -50,6 +54,7 @@ Opening a `*.tjm.json` file enables `eve-mode` automatically.
 
 - main library: `eve.el`
 - tests: `test/eve-test.el`
+- normative TJM specification: `docs/tjm-spec.md`
 - workflow notes: `docs/video-text-editing.md`
 - CLI package: `cli/`
 
