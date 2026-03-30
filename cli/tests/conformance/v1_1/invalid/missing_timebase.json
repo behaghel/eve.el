@@ -1,0 +1,14 @@
+{
+  "version": "1.1",
+  "sources": [
+    {
+      "id": "clip01",
+      "file": "raw/interview.mp4"
+    }
+  ],
+  "render": {
+    "filler_policy": "keep",
+    "preserve_short_gaps": 0.0
+  },
+  "segments": []
+}

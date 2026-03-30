@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "sources": [],
+  "render": {
+    "filler_policy": "keep",
+    "preserve_short_gaps": 0.0
+  },
+  "segments": []
+}
