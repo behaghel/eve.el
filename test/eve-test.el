@@ -197,6 +197,249 @@
 	     (should-not (alist-get "title" placeholders nil nil #'equal))))
        (funcall cleanup)))))
 
+(ert-deftest eve-filter-media-files-drops-non-media-inputs ()
+  "Filtering keeps only configured media files."
+  (let ((files '("/tmp/clip.mp4"
+		"/tmp/notes.txt"
+		"/tmp/audio.wav"
+		"/tmp/manifest.tjm.json")))
+    (should (equal (eve--filter-media-files files)
+		   '("/tmp/clip.mp4" "/tmp/audio.wav")))))
+
+(ert-deftest eve-filter-media-files-is-case-insensitive ()
+  "Filtering matches supported extensions regardless of case."
+  (let ((files '("/tmp/INTRO.MP4"
+		"/tmp/voice.M4A"
+		"/tmp/still.PNG")))
+    (should (equal (eve--filter-media-files files)
+		   '("/tmp/INTRO.MP4" "/tmp/voice.M4A")))))
+
+(ert-deftest eve-infer-manifest-path-for-single-file ()
+  "A single media input maps to a sibling `.tjm.json' file."
+  (let ((file (expand-file-name "fixtures/session/clip.mp4" eve-test--root)))
+    (should (equal (eve--infer-manifest-path (list file))
+		   (expand-file-name "fixtures/session/clip.tjm.json" eve-test--root)))))
+
+(ert-deftest eve-infer-manifest-path-for-multiple-files ()
+  "Multiple media inputs map to a directory-named `.tjm.json' file."
+  (let* ((dir (expand-file-name "fixtures/session/" eve-test--root))
+	 (files (list (expand-file-name "clip.mp4" dir)
+		      (expand-file-name "clip-2.mov" dir))))
+    (should (equal (eve--infer-manifest-path files)
+		   (expand-file-name "session.tjm.json" dir)))))
+
+(ert-deftest eve-transcribe-async-builds-command ()
+  "Launcher clears the transcribe buffer and builds argv for `make-process`."
+  (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+        captured-plist
+        last-message)
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer
+            (insert "stale output"))
+          (cl-letf (((symbol-function 'make-process)
+                     (lambda (&rest args)
+                       (setq captured-plist args)
+                       'fake-process))
+                    ((symbol-function 'message)
+                     (lambda (format-string &rest args)
+                       (setq last-message (apply #'format format-string args)))))
+            (eve--transcribe-async '("/tmp/clip.mp4" "/tmp/voice.wav")
+                                   "/tmp/session.tjm.json"))
+          (should (equal (plist-get captured-plist :name) "eve-transcribe"))
+          (should (eq (plist-get captured-plist :buffer) buffer))
+          (should (equal (plist-get captured-plist :command)
+                         '("eve" "transcribe"
+                           "/tmp/clip.mp4" "/tmp/voice.wav"
+                           "--output" "/tmp/session.tjm.json")))
+          (should (plist-get captured-plist :noquery))
+          (should (functionp (plist-get captured-plist :sentinel)))
+          (should (equal (with-current-buffer buffer (buffer-string)) ""))
+          (should (equal last-message
+                         "Started eve transcribe -> /tmp/session.tjm.json")))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest eve-transcribe-errors-when-directory-has-no-media ()
+  "Directory command rejects directories without supported media files."
+  (let* ((directory (make-temp-file "eve-transcribe-empty" t))
+         (expanded-directory (file-name-as-directory
+                              (expand-file-name directory)))
+         err)
+    (unwind-protect
+        (progn
+          (with-temp-file (expand-file-name "notes.txt" expanded-directory)
+            (insert "todo"))
+          (setq err (should-error (eve-transcribe expanded-directory)
+                                  :type 'user-error))
+          (should (equal (cadr err)
+                         (format "No media files found in %s"
+                                 expanded-directory))))
+      (delete-directory directory t))))
+
+(ert-deftest eve-transcribe-delegates-directory-media-files ()
+  "Directory command filters media files and delegates to the async launcher."
+  (let* ((directory (make-temp-file "eve-transcribe-files" t))
+         (expanded-directory (file-name-as-directory
+                              (expand-file-name directory)))
+         (clip (expand-file-name "clip.mp4" expanded-directory))
+         (voice (expand-file-name "voice.WAV" expanded-directory))
+         captured-files
+         captured-output)
+    (unwind-protect
+        (progn
+          (with-temp-file clip
+            (insert "video"))
+          (with-temp-file voice
+            (insert "audio"))
+          (make-directory (expand-file-name "nested" expanded-directory))
+          (with-temp-file (expand-file-name "notes.txt" expanded-directory)
+            (insert "ignore"))
+          (cl-letf (((symbol-function 'eve--transcribe-async)
+                     (lambda (files output-path)
+                       (setq captured-files files
+                             captured-output output-path))))
+            (eve-transcribe expanded-directory))
+          (should (equal captured-files (list clip voice)))
+          (should (equal captured-output
+                         (expand-file-name
+                          (concat
+                           (file-name-nondirectory
+                            (directory-file-name expanded-directory))
+                           ".tjm.json")
+                          expanded-directory))))
+      (delete-directory directory t))))
+
+(ert-deftest eve-dired-transcribe-errors-outside-dired ()
+  "Dired entry point rejects calls outside Dired buffers."
+  (let (err)
+    (cl-letf (((symbol-function 'derived-mode-p)
+               (lambda (&rest _modes)
+                 nil))
+              ((symbol-function 'dired-get-marked-files)
+               (lambda (&rest _args)
+                 (ert-fail "should not request marked files outside Dired"))))
+      (setq err (should-error (eve-dired-transcribe)
+                              :type 'user-error))
+      (should (equal (cadr err) "Not in a Dired buffer")))))
+
+(ert-deftest eve-dired-transcribe-errors-when-no-media-selected ()
+  "Dired entry point rejects marked selections without supported media."
+  (let (err)
+    (cl-letf (((symbol-function 'derived-mode-p)
+               (lambda (&rest _modes)
+                 t))
+              ((symbol-function 'dired-get-marked-files)
+               (lambda (&rest _args)
+                 '("/tmp/session/notes.txt" "/tmp/session/outline.md"))))
+      (setq err (should-error (eve-dired-transcribe)
+                              :type 'user-error))
+      (should (equal (cadr err) "No media files selected")))))
+
+(ert-deftest eve-dired-transcribe-delegates-marked-media-files ()
+  "Dired entry point filters marked files and preserves media order."
+  (let (captured-files
+        captured-output)
+    (cl-letf (((symbol-function 'derived-mode-p)
+               (lambda (&rest _modes)
+                 t))
+              ((symbol-function 'dired-get-marked-files)
+               (lambda (&rest _args)
+                 '("/tmp/session/voice.WAV"
+                   "/tmp/session/notes.txt"
+                   "/tmp/session/clip.mp4")))
+              ((symbol-function 'eve--transcribe-async)
+               (lambda (files output-path)
+                 (setq captured-files files
+                       captured-output output-path))))
+      (eve-dired-transcribe)
+      (should (equal captured-files
+                     '("/tmp/session/voice.WAV"
+                       "/tmp/session/clip.mp4")))
+      (should (equal captured-output
+                     "/tmp/session/session.tjm.json")))))
+
+(ert-deftest eve-transcribe-async-opens-output-on-success ()
+  "Successful completion visits the output manifest without surfacing the log."
+  (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+        captured-plist
+        opened
+        popped
+        messages)
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'make-process)
+                     (lambda (&rest args)
+                       (setq captured-plist args)
+                       'fake-process))
+                    ((symbol-function 'process-buffer)
+                     (lambda (_process)
+                       buffer))
+                    ((symbol-function 'process-status)
+                     (lambda (_process)
+                       'exit))
+                    ((symbol-function 'process-exit-status)
+                     (lambda (_process)
+                       0))
+                    ((symbol-function 'find-file)
+                     (lambda (file)
+                       (setq opened file)))
+                    ((symbol-function 'pop-to-buffer)
+                     (lambda (buf &rest _args)
+                       (setq popped buf)))
+                    ((symbol-function 'message)
+                     (lambda (format-string &rest args)
+                       (push (apply #'format format-string args) messages))))
+            (eve--transcribe-async '("/tmp/clip.mp4") "/tmp/session.tjm.json")
+            (funcall (plist-get captured-plist :sentinel) 'fake-process "finished\n"))
+          (should (equal opened "/tmp/session.tjm.json"))
+          (should-not popped)
+          (should (member "eve transcribe finished: /tmp/session.tjm.json" messages)))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest eve-transcribe-async-surfaces-buffer-on-failure ()
+  "Non-zero completion shows the transcribe buffer and reports the failure."
+  (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+        captured-plist
+        opened
+        popped
+        messages)
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'make-process)
+                     (lambda (&rest args)
+                       (setq captured-plist args)
+                       'fake-process))
+                    ((symbol-function 'process-buffer)
+                     (lambda (_process)
+                       buffer))
+                    ((symbol-function 'process-status)
+                     (lambda (_process)
+                       'exit))
+                    ((symbol-function 'process-exit-status)
+                     (lambda (_process)
+                       1))
+                    ((symbol-function 'find-file)
+                     (lambda (file)
+                       (setq opened file)))
+                    ((symbol-function 'pop-to-buffer)
+                     (lambda (buf &rest _args)
+                       (setq popped buf)))
+                    ((symbol-function 'message)
+                     (lambda (format-string &rest args)
+                       (push (apply #'format format-string args) messages))))
+            (eve--transcribe-async '("/tmp/clip.mp4") "/tmp/session.tjm.json")
+            (funcall (plist-get captured-plist :sentinel)
+                     'fake-process
+                     "exited abnormally with code 1\n"))
+          (should-not opened)
+          (should (eq popped buffer))
+          (should (member "eve transcribe failed: exited abnormally with code 1"
+                          messages)))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here

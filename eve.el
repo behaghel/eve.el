@@ -48,6 +48,9 @@
 (require 'outline)
 
 (declare-function image-file-name-p "image-mode" (filename))
+(declare-function dired-get-marked-files "dired"
+                  (&optional localp arg filter distinguish-one-marked
+                             error-if-none-p))
 
 (defgroup eve nil
   "Editing spoken-word video manifests in Emacs."
@@ -78,6 +81,11 @@ meaningful timing inconsistencies."
 (defcustom eve-show-words-by-default nil
   "If non-nil, show per-word timings when rendering segments."
   :type 'boolean
+  :group 'eve)
+
+(defcustom eve-media-extensions '("mp4" "mov" "wav" "mp3" "mkv" "m4a")
+  "Supported media extensions for transcription inputs."
+  :type '(repeat string)
   :group 'eve)
 
 (defface eve-heading-face
@@ -190,6 +198,9 @@ meaningful timing inconsistencies."
 (defvar-local eve--pending-origin nil
   "Origin buffer associated with a compilation run.")
 
+(defconst eve--transcribe-buffer-name "*eve transcribe*"
+  "Buffer name used for async `eve transcribe` runs.")
+
 (defun eve--default-output-file ()
   "Compute the default output mp4 path for the current TJM buffer."
   (when buffer-file-name
@@ -231,6 +242,24 @@ meaningful timing inconsistencies."
 		     (format "%s-%s" base slug)
 		   base)))
       (expand-file-name (concat name ".mp4") dir))))
+
+(defun eve--filter-media-files (files)
+  "Return FILES limited to supported media extensions."
+  (seq-filter (lambda (file)
+		(let ((extension (file-name-extension file)))
+		  (and extension
+		       (member (downcase extension) eve-media-extensions))))
+	      files))
+
+(defun eve--infer-manifest-path (files)
+  "Infer a TJM manifest path for FILES."
+  (when files
+    (if (= (length files) 1)
+	(concat (file-name-sans-extension (car files)) ".tjm.json")
+      (let* ((dir (file-name-as-directory
+		   (file-name-directory (car files))))
+	     (name (file-name-nondirectory (directory-file-name dir))))
+	(expand-file-name (concat name ".tjm.json") dir)))))
 
 (defun eve--write-json-file (data path)
   "Write DATA as JSON to PATH."
@@ -311,6 +340,37 @@ meaningful timing inconsistencies."
       (user-error "Output file not found: %s" abs))
     (eve--play-with-mpv abs nil nil)
     (message "Playing %s" (file-name-nondirectory abs))))
+
+(defun eve--transcribe-finished (process event output-path)
+  "Handle completion of transcribe PROCESS EVENT for OUTPUT-PATH."
+  (let ((buffer (process-buffer process)))
+    (if (and (eq (process-status process) 'exit)
+             (= (process-exit-status process) 0))
+        (progn
+          (message "eve transcribe finished: %s" output-path)
+          (find-file output-path))
+      (when (buffer-live-p buffer)
+        (pop-to-buffer buffer))
+      (message "eve transcribe failed: %s" (string-trim event)))))
+
+(defun eve--transcribe-async (files output-path)
+  "Launch `eve transcribe` for FILES, writing OUTPUT-PATH asynchronously."
+  (let* ((output-file (expand-file-name output-path))
+         (buffer (get-buffer-create eve--transcribe-buffer-name))
+         (command (append (list "eve" "transcribe")
+                          files
+                          (list "--output" output-file))))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)))
+    (make-process :name "eve-transcribe"
+                  :buffer buffer
+                  :command command
+                  :noquery t
+                  :sentinel (lambda (process event)
+                              (eve--transcribe-finished
+                               process event output-file)))
+    (message "Started eve transcribe -> %s" output-file)))
 
 (defun eve--compilation-finished (buffer status)
   "Handle completion of an `eve text-edit` BUFFER with STATUS."
@@ -1885,6 +1945,31 @@ Optional COUNT moves backward multiple segments."
 	 (buf (get-buffer-create raw-name)))
     (eve--populate-raw-buffer buf buffer-file-name)
     (switch-to-buffer buf)))
+
+(defun eve-transcribe (directory)
+  "Transcribe supported media files from DIRECTORY."
+  (interactive "DDirectory to transcribe: ")
+  (let* ((expanded-directory (file-name-as-directory
+				      (expand-file-name directory)))
+	 (files (seq-filter #'file-regular-p
+			    (directory-files expanded-directory t
+					     directory-files-no-dot-files-regexp)))
+	 (media-files (eve--filter-media-files files)))
+    (unless media-files
+      (user-error "No media files found in %s" expanded-directory))
+    (eve--transcribe-async media-files
+			  (eve--infer-manifest-path media-files))))
+
+(defun eve-dired-transcribe ()
+  "Transcribe supported marked media files from the current Dired buffer."
+  (interactive)
+  (unless (derived-mode-p 'dired-mode)
+    (user-error "Not in a Dired buffer"))
+  (let ((media-files (eve--filter-media-files (dired-get-marked-files t))))
+    (unless media-files
+      (user-error "No media files selected"))
+    (eve--transcribe-async media-files
+                          (eve--infer-manifest-path media-files))))
 
 (defun eve-play-segment (&optional segment)
   "Play SEGMENT using `eve-play-program', or the rendered section when on a marker."

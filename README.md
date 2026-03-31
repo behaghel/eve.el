@@ -50,6 +50,29 @@ install it with your preferred package manager.
 
 Opening a `*.tjm.json` file enables `eve-mode` automatically.
 
+## Emacs Transcription Commands
+
+The package also ships two interactive entry points for starting `eve transcribe`
+from Emacs:
+
+- `M-x eve-transcribe` prompts for a directory, scans its immediate regular files
+  non-recursively, keeps only supported media files, infers the output manifest
+  path, and starts `eve transcribe` asynchronously.
+- `M-x eve-dired-transcribe` runs from Dired, using the marked files or the
+  current file when nothing is marked, then applies the same media filtering,
+  manifest inference, and async launch.
+- On success, the generated `.tjm.json` manifest is opened immediately, which
+  enables `eve-mode` automatically.
+- On failure, Emacs shows the `*eve transcribe*` buffer so you can inspect the
+  command output.
+
+If you want a Dired key for the command, add one in your own Emacs config:
+
+```elisp
+(with-eval-after-load 'dired
+  (define-key dired-mode-map (kbd "C-c C-t") #'eve-dired-transcribe))
+```
+
 ## Project Layout
 
 - main library: `eve.el`

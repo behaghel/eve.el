@@ -92,7 +92,22 @@ normative.
 
 ## 3. Editing Workflow in Emacs
 
-We plan to ship a custom major mode (building on ideas from `subed`) that understands TJM files:
+The repository already ships two Emacs entry points for creating TJM manifests
+before editing:
+
+- `eve-transcribe` prompts for a directory, scans only its immediate regular
+  files, filters that non-recursive list to supported media, infers the output
+  `.tjm.json` path, and launches `eve transcribe` asynchronously.
+- `eve-dired-transcribe` runs from Dired, using marked files or the current
+  file when nothing is marked, then applies the same media filtering, manifest
+  inference, and async launch.
+- A successful transcription opens the generated manifest immediately, so the
+  buffer comes up in `eve-mode`; failures surface the `*eve transcribe*`
+  buffer for inspection.
+
+Beyond those shipped entry points, the broader editing workflow continues to
+evolve around a custom major mode (building on ideas from `subed`) that
+understands TJM files:
 
 - Presents each `segment` as a top-level heading with commands to expand/hide the per-word list. Navigation keys jump to next/previous segment or word.
 - Playback integration: using `subed` APIs or `mpv` via D-Bus, pressing `RET` plays the active segment; `M-p`/`M-n` jump between words.
@@ -143,7 +158,7 @@ The TJM major mode should cover:
 - **Validation & Tooling**
   - On save, run validators: check that `start < end`, no negative times, `words` array fits within bounds, `broll` assets exist (optional configurable check).
   - Provide interactive commands to preview b-roll (open overlay file) or mark segments needing b-roll.
-  - Support inserting new segments from clipboard text by invoking alignment tooling (`eve transcribe` on selection) directly within Emacs.
+  - Support inserting new segments from clipboard text by invoking alignment tooling directly within Emacs.
 
 - **Extensibility Hooks**
   - Allow user-defined elisp hooks before/after saving or playback (e.g., to update outlines, push changes to git).
