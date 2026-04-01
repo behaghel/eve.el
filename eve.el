@@ -224,9 +224,13 @@ meaningful timing inconsistencies."
     (unless output
       (user-error "Unable to determine output filename"))
 
-    (format "eve text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
+    (let ((program (or (executable-find eve-cli-program)
+                       (user-error "Cannot find eve CLI executable: %s"
+                                   eve-cli-program))))
+      (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
+	    (shell-quote-argument program)
 	    (shell-quote-argument file)
-	    (shell-quote-argument output))))
+	    (shell-quote-argument output)))))
 
 (defun eve--slugify (title)
   "Return a filesystem-safe slug for TITLE."
@@ -491,11 +495,15 @@ meaningful timing inconsistencies."
 	     (subset (eve--section-segments segment)))
 	(unless subset
 	  (user-error "Marker has no following segments to compile"))
-	(let* ((temp (make-temp-file "eve-section" nil ".json"))
+	(let* ((program (or (executable-find eve-cli-program)
+	                    (user-error "Cannot find eve CLI executable: %s"
+	                                eve-cli-program)))
+	       (temp (make-temp-file "eve-section" nil ".json"))
 	       (data (copy-tree eve--data t))
 	       (segments-copy (mapcar (lambda (seg) (copy-tree seg t)) subset))
 	       (output (eve--output-path slug))
-	       (cmd (format "eve text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
+	       (cmd (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
+			    (shell-quote-argument program)
 			    (shell-quote-argument temp)
 			    (shell-quote-argument output))))
 	  (setf (alist-get 'segments data) segments-copy)

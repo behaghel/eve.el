@@ -228,6 +228,85 @@
     (should (equal (eve--infer-manifest-path files)
 		   (expand-file-name "session.tjm.json" dir)))))
 
+(ert-deftest eve-compile-command-uses-resolved-cli-program ()
+  "Compile commands shell out via the resolved CLI executable path."
+  (with-temp-buffer
+    (let* ((buffer-file-name "/tmp/session dir/session.tjm.json")
+           (eve-cli-program "eve-custom")
+           (program "/opt/eve tools/eve custom")
+           (output "/tmp/session dir/session dir.mp4"))
+      (cl-letf (((symbol-function 'executable-find)
+                 (lambda (candidate)
+                   (should (equal candidate eve-cli-program))
+                   program)))
+        (should (equal (eve--compile-command)
+                       (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
+                               (shell-quote-argument program)
+                               (shell-quote-argument buffer-file-name)
+                               (shell-quote-argument output))))))))
+
+(ert-deftest eve-compile-command-errors-when-cli-program-is-missing ()
+  "Compile commands fail early when the configured CLI is unavailable."
+  (with-temp-buffer
+    (let ((buffer-file-name "/tmp/session dir/session.tjm.json")
+          (eve-cli-program "missing-eve")
+          err)
+      (cl-letf (((symbol-function 'executable-find)
+                 (lambda (candidate)
+                   (should (equal candidate eve-cli-program))
+                   nil)))
+        (setq err (should-error (eve--compile-command)
+                                :type 'user-error))
+        (should (equal (cadr err)
+                       "Cannot find eve CLI executable: missing-eve"))))))
+
+(ert-deftest eve-compile-marker-uses-resolved-cli-program ()
+  "Marker compilation uses the resolved CLI executable path in the shell command."
+  (eve-test-with-buffer
+   (setq-local buffer-file-name "/tmp/session dir/session.tjm.json")
+   (let* ((segment (copy-tree (car (eve--segments)) t))
+          (marker (list (cons 'id "marker-001")
+                        (cons 'kind "marker")
+                        (cons 'title "Launch Plan")))
+          (eve-cli-program "eve-custom")
+          (program "/opt/eve tools/eve custom")
+          (temp "/tmp/eve section.json")
+          (output "/tmp/session dir/session dir-launch-plan.mp4")
+          captured-command
+          captured-output
+          captured-temp
+          captured-data
+          captured-data-path)
+     (setf (alist-get 'segments eve--data) (list marker segment))
+     (eve--render)
+     (should (eve--goto-segment "marker-001"))
+     (cl-letf (((symbol-function 'executable-find)
+                (lambda (candidate)
+                  (should (equal candidate eve-cli-program))
+                  program))
+               ((symbol-function 'make-temp-file)
+                (lambda (&rest _args)
+                  temp))
+               ((symbol-function 'eve--write-json-file)
+                (lambda (data path)
+                  (setq captured-data data
+                        captured-data-path path)))
+               ((symbol-function 'eve--run-compile)
+                (lambda (command resolved-output &optional resolved-temp)
+                  (setq captured-command command
+                        captured-output resolved-output
+                        captured-temp resolved-temp))))
+       (eve-compile)
+       (should (equal captured-command
+                      (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
+                              (shell-quote-argument program)
+                              (shell-quote-argument temp)
+                              (shell-quote-argument output))))
+       (should (equal captured-output output))
+       (should (equal captured-temp temp))
+       (should (equal captured-data-path temp))
+       (should (= (length (alist-get 'segments captured-data)) 1))))))
+
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
   (let ((eve-cli-program "eve-custom")
