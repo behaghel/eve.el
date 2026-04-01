@@ -61,6 +61,11 @@
   :type 'string
   :group 'eve)
 
+(defcustom eve-cli-program "eve"
+  "Executable used for `eve` CLI commands."
+  :type 'string
+  :group 'eve)
+
 (defcustom eve-play-args '("--quiet" "--no-terminal" "--really-quiet")
   "Additional arguments passed to `eve-play-program'."
   :type '(repeat string)
@@ -355,9 +360,12 @@ meaningful timing inconsistencies."
 
 (defun eve--transcribe-async (files output-path)
   "Launch `eve transcribe` for FILES, writing OUTPUT-PATH asynchronously."
-  (let* ((output-file (expand-file-name output-path))
+  (let* ((program (or (executable-find eve-cli-program)
+                      (user-error "Cannot find eve CLI executable: %s"
+                                  eve-cli-program)))
+         (output-file (expand-file-name output-path))
          (buffer (get-buffer-create eve--transcribe-buffer-name))
-         (command (append (list "eve" "transcribe")
+         (command (append (list program "transcribe")
                           files
                           (list "--output" output-file))))
     (with-current-buffer buffer

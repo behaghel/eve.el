@@ -230,14 +230,19 @@
 
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
-  (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+  (let ((eve-cli-program "eve-custom")
+        (buffer (get-buffer-create eve--transcribe-buffer-name))
         captured-plist
         last-message)
     (unwind-protect
         (progn
           (with-current-buffer buffer
             (insert "stale output"))
-          (cl-letf (((symbol-function 'make-process)
+          (cl-letf (((symbol-function 'executable-find)
+                     (lambda (program)
+                       (should (equal program eve-cli-program))
+                       "/opt/eve/bin/eve-custom"))
+                    ((symbol-function 'make-process)
                      (lambda (&rest args)
                        (setq captured-plist args)
                        'fake-process))
@@ -249,7 +254,7 @@
           (should (equal (plist-get captured-plist :name) "eve-transcribe"))
           (should (eq (plist-get captured-plist :buffer) buffer))
           (should (equal (plist-get captured-plist :command)
-                         '("eve" "transcribe"
+                         '("/opt/eve/bin/eve-custom" "transcribe"
                            "/tmp/clip.mp4" "/tmp/voice.wav"
                            "--output" "/tmp/session.tjm.json")))
           (should (plist-get captured-plist :noquery))
@@ -259,6 +264,23 @@
                          "Started eve transcribe -> /tmp/session.tjm.json")))
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
+
+(ert-deftest eve-transcribe-async-errors-when-cli-program-is-missing ()
+  "Launcher reports a missing CLI executable before starting the process."
+  (let ((eve-cli-program "missing-eve")
+        err)
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (program)
+                 (should (equal program eve-cli-program))
+                 nil))
+              ((symbol-function 'make-process)
+               (lambda (&rest _args)
+                 (ert-fail "should not start a process when the CLI is missing"))))
+      (setq err (should-error (eve--transcribe-async '("/tmp/clip.mp4")
+                                                      "/tmp/session.tjm.json")
+                              :type 'user-error))
+      (should (equal (cadr err)
+                     "Cannot find eve CLI executable: missing-eve")))))
 
 (ert-deftest eve-transcribe-errors-when-directory-has-no-media ()
   "Directory command rejects directories without supported media files."
@@ -362,18 +384,21 @@
 (ert-deftest eve-transcribe-async-opens-output-on-success ()
   "Successful completion visits the output manifest without surfacing the log."
   (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
-        captured-plist
-        opened
+         captured-plist
+         opened
         popped
         messages)
     (unwind-protect
         (progn
-          (cl-letf (((symbol-function 'make-process)
+          (cl-letf (((symbol-function 'executable-find)
+                     (lambda (_program)
+                       "/opt/eve/bin/eve"))
+                    ((symbol-function 'make-process)
                      (lambda (&rest args)
                        (setq captured-plist args)
                        'fake-process))
-                    ((symbol-function 'process-buffer)
-                     (lambda (_process)
+                     ((symbol-function 'process-buffer)
+                      (lambda (_process)
                        buffer))
                     ((symbol-function 'process-status)
                      (lambda (_process)
@@ -401,18 +426,21 @@
 (ert-deftest eve-transcribe-async-surfaces-buffer-on-failure ()
   "Non-zero completion shows the transcribe buffer and reports the failure."
   (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
-        captured-plist
-        opened
+         captured-plist
+         opened
         popped
         messages)
     (unwind-protect
         (progn
-          (cl-letf (((symbol-function 'make-process)
+          (cl-letf (((symbol-function 'executable-find)
+                     (lambda (_program)
+                       "/opt/eve/bin/eve"))
+                    ((symbol-function 'make-process)
                      (lambda (&rest args)
                        (setq captured-plist args)
                        'fake-process))
-                    ((symbol-function 'process-buffer)
-                     (lambda (_process)
+                     ((symbol-function 'process-buffer)
+                      (lambda (_process)
                        buffer))
                     ((symbol-function 'process-status)
                      (lambda (_process)
