@@ -247,6 +247,9 @@ which is typically blue or grey in most themes."
 (defvar-local eve--ruler-overlays nil
   "List of right-margin ruler overlays for the current buffer.")
 
+(defvar-local eve--ruler-total-duration 0.0
+  "Cached total rendered duration in seconds, updated by `eve--update-ruler'.")
+
 (defvar-local eve--last-echo-id nil
   "Segment id that was last echoed in the minibuffer.")
 
@@ -1114,6 +1117,9 @@ This is a buffer-local mode for `eve-mode' buffers."
   (add-hook 'window-configuration-change-hook #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
   (eve-hide-deleted-mode 1)
+  (setq-local mode-line-format
+              (append (default-value 'mode-line-format)
+                      '((:eval (eve--ruler-mode-line-string)))))
   (eve-reload)
   (eve--apply-visual-wrap))
 
@@ -2705,11 +2711,20 @@ joined into a single annotation."
          (hide-deleted eve-hide-deleted-mode)
          (cumulative (eve--rendered-cumulative-times segments hide-deleted))
          (milestones (eve--ruler-milestones cumulative eve-ruler-interval)))
+    (setq eve--ruler-total-duration
+          (eve--rendered-total-duration segments hide-deleted))
+    (force-mode-line-update)
     (when milestones
       (setq-local right-margin-width 12)
       (dolist (win (get-buffer-window-list nil nil t))
         (set-window-margins win (car (window-margins win)) 12))
       (eve--ruler-create-overlays milestones))))
+
+(defun eve--ruler-mode-line-string ()
+  "Return mode-line segment showing total rendered duration, or empty string."
+  (if (> eve--ruler-total-duration 0.0)
+      (concat " " (eve--format-ruler-time eve--ruler-total-duration))
+    ""))
 
 (defun eve--segment-summary (segment)
   (when segment

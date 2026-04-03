@@ -1066,6 +1066,21 @@
        (eve--update-ruler)
        (should (= (length eve--ruler-overlays) count-before))))))
 
+(ert-deftest eve-ruler-mode-line-string-returns-duration ()
+  "After eve--update-ruler, mode-line string includes duration."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve--update-ruler)
+     (should (> eve--ruler-total-duration 0.0))
+     (should (string-match-p "\\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\\]"
+                             (eve--ruler-mode-line-string))))))
+
+(ert-deftest eve-ruler-mode-line-string-empty-when-zero ()
+  "When total duration is 0, mode-line string is empty."
+  (eve-test-with-buffer
+   (setq-local eve--ruler-total-duration 0.0)
+   (should (string= "" (eve--ruler-mode-line-string)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here
