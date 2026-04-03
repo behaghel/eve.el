@@ -59,22 +59,184 @@
 	    (alist-get 'token word))
 	  (alist-get 'words segment)))
 
-(ert-deftest eve-delete-word-updates-segment ()
-  "Deleting a word rewrites text, words array, and timings."
+(defun eve-test--face-contains-p (face-prop face)
+  "Return non-nil when FACE-PROP includes FACE."
+  (cond
+   ((null face-prop) nil)
+   ((eq face-prop face) t)
+   ((consp face-prop)
+    (or (eve-test--face-contains-p (car face-prop) face)
+        (eve-test--face-contains-p (cdr face-prop) face)))
+   (t nil)))
+
+(defun eve-test--span-has-face-p (start end face)
+  "Return non-nil when every character in START..END includes FACE."
+  (cl-loop for pos from start below end
+           always (eve-test--face-contains-p
+                   (get-text-property pos 'face)
+                   face)))
+
+(defun eve-test--match-range (text)
+  "Return the buffer range for the first match of TEXT."
+  (save-excursion
+    (goto-char (point-min))
+    (when (search-forward text nil t)
+      (cons (- (point) (length text)) (point)))))
+
+(ert-deftest eve-visual-features-render-filler-word-uses-filler-face ()
+  "Nested filler metadata highlights the visible word span."
   (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment)))
+          range)
+     (setf (alist-get 'edit word) '((kind . "filler")))
+     (eve--render)
+     (setq range (eve-test--match-range "beta"))
+     (should range)
+     (should (eve-test--span-has-face-p (car range) (cdr range) 'eve-filler-face)))))
+
+(ert-deftest eve-visual-features-render-legacy-word-kind-does-not-highlight-filler ()
+  "Top-level word kind no longer drives filler highlighting."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (words (alist-get 'words segment))
+          (word (nth 1 words))
+          range)
+     (setf (nth 1 words) (eve--alist-set word 'kind "filler"))
+     (eve--render)
+     (setq range (eve-test--match-range "beta"))
+     (should range)
+      (should-not (eve-test--span-has-face-p (car range) (cdr range) 'eve-filler-face)))))
+
+(ert-deftest eve-visual-features-prefers-segment-edit-broll-over-legacy-root ()
+  "Segment rendering prefers nested edit b-roll metadata over legacy root data."
+  (eve-test-with-buffer
+   (let ((segment (car (eve--segments))))
+     (setf (alist-get 'broll segment) '((file . "legacy.mp4")))
+     (setf (alist-get 'edit segment) '((broll . ((file . "nested.mp4")))))
+     (eve--render)
+     (should (string-match-p "\\[b-roll\\] file=nested\\.mp4"
+                             (buffer-substring-no-properties (point-min) (point-max)))))))
+
+(ert-deftest eve-visual-features-render-deleted-segment-respects-hide-mode ()
+  "Deleted segments hide or strike through based on hide mode."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          range)
+     (setf (alist-get 'edit segment) '((deleted . t)))
+     (setq-local eve-hide-deleted-mode t)
+     (eve--render)
+     (should (equal (buffer-string) ""))
+     (setq-local eve-hide-deleted-mode nil)
+     (eve--render)
+     (setq range (eve-test--match-range "alpha beta gamma delta"))
+     (should range)
+     (should (eve-test--span-has-face-p (car range) (cdr range) 'eve-deleted-face)))))
+
+(ert-deftest eve-visual-features-render-deleted-word-respects-hide-mode ()
+  "Deleted words hide or strike through based on hide mode."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment)))
+          range)
+     (setf (alist-get 'edit word) '((deleted . t)))
+     (setq-local eve-hide-deleted-mode t)
+     (eve--render)
+     (should (equal (buffer-string) "alpha gamma delta"))
+     (setq-local eve-hide-deleted-mode nil)
+     (eve--render)
+     (setq range (eve-test--match-range "beta"))
+     (should range)
+     (should (eve-test--span-has-face-p (car range) (cdr range) 'eve-deleted-face)))))
+
+(ert-deftest eve-visual-features-delete-word-toggles-nested-deleted-flag ()
+  "Deleting a word toggles nested edit metadata without rewriting the segment."
+  (eve-test-with-buffer
+   (setq-local eve-hide-deleted-mode nil)
+   (should (eve--goto-segment "seg-1"))
+   (should (eve--goto-word-by-index "seg-1" 1))
+   (forward-char 1)
+   (call-interactively #'eve-delete-word)
+   (let* ((segments (eve--segments))
+          (segment (car segments))
+          (word (nth 1 (alist-get 'words segment))))
+     (should (= 1 (length segments)))
+     (should (equal (alist-get 'id segment) "seg-1"))
+     (should (equal (eve-test--segment-tokens segment)
+                    '("alpha" "beta" "gamma" "delta")))
+     (should (equal (alist-get 'text segment) "alpha beta gamma delta"))
+     (should (= (alist-get 'start segment) 1.0))
+     (should (= (alist-get 'end segment) 4.0))
+     (should (eq (alist-get 'deleted (alist-get 'edit word)) t)))))
+
+(ert-deftest eve-visual-features-delete-word-second-invocation-restores-word ()
+  "Deleting the same word twice clears the nested deleted flag."
+  (eve-test-with-buffer
+   (setq-local eve-hide-deleted-mode nil)
+   (should (eve--goto-segment "seg-1"))
+   (should (eve--goto-word-by-index "seg-1" 1))
+   (forward-char 1)
+   (call-interactively #'eve-delete-word)
    (should (eve--goto-segment "seg-1"))
    (should (eve--goto-word-by-index "seg-1" 1))
    (forward-char 1)
    (call-interactively #'eve-delete-word)
    (let* ((segment (car (eve--segments)))
-	  (words (alist-get 'words segment)))
-     (should (= 3 (length words)))
+          (word (nth 1 (alist-get 'words segment))))
+     (should (= 1 (length (eve--segments))))
      (should (equal (eve-test--segment-tokens segment)
-		    '("alpha" "gamma" "delta")))
-     (should (= (alist-get 'start segment) 1.0))
-     (should (= (alist-get 'end segment) 4.0))
-     (should (equal (alist-get 'text segment) "alpha gamma delta"))
-     (should (looking-at "gamma")))))
+                    '("alpha" "beta" "gamma" "delta")))
+     (should (equal (alist-get 'text segment) "alpha beta gamma delta"))
+     (should-not (alist-get 'deleted (alist-get 'edit word))))))
+
+(ert-deftest eve-visual-features-delete-segment-toggles-nested-deleted-flag ()
+  "Deleting a segment toggles nested edit metadata without removing it."
+  (eve-test-with-buffer
+   (setq-local eve-hide-deleted-mode nil)
+   (cl-letf (((symbol-function 'yes-or-no-p)
+              (lambda (_prompt) t)))
+     (should (eve--goto-segment "seg-1"))
+     (call-interactively #'eve-delete-segment))
+   (let* ((segments (eve--segments))
+          (segment (car segments)))
+     (should (= 1 (length segments)))
+     (should (equal (alist-get 'id segment) "seg-1"))
+     (should (eq (alist-get 'deleted (alist-get 'edit segment)) t)))))
+
+(ert-deftest eve-visual-features-delete-segment-second-invocation-restores-segment ()
+  "Deleting the same segment twice clears the nested deleted flag."
+  (eve-test-with-buffer
+   (setq-local eve-hide-deleted-mode nil)
+   (cl-letf (((symbol-function 'yes-or-no-p)
+              (lambda (_prompt) t)))
+     (should (eve--goto-segment "seg-1"))
+     (call-interactively #'eve-delete-segment)
+     (should (eve--goto-segment "seg-1"))
+     (call-interactively #'eve-delete-segment))
+   (let* ((segments (eve--segments))
+          (segment (car segments)))
+     (should (= 1 (length segments)))
+     (should (equal (alist-get 'id segment) "seg-1"))
+     (should-not (alist-get 'deleted (alist-get 'edit segment))))))
+
+(ert-deftest eve-visual-features-tag-fillers-tags-matching-words-and-rerenders ()
+  "Tagging fillers stores nested edit metadata and rerenders the buffer."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment)))
+          (render-count 0)
+          (original-render (symbol-function 'eve--render)))
+     (setf (alist-get 'token word) "um")
+     (setf (alist-get 'text segment) "alpha um gamma delta")
+     (funcall original-render)
+     (setq-local eve-filler-regex '("\\`um\\'"))
+      (cl-letf (((symbol-function 'eve--render)
+                 (lambda (&optional preserve-point)
+                   (setq render-count (1+ render-count))
+                   (funcall original-render preserve-point))))
+        (call-interactively #'eve-tag-fillers))
+      (should (equal (eve--edit-kind word) "filler"))
+      (should (> render-count 0)))))
 
 (ert-deftest eve-split-segment-creates-new-entry ()
   "Splitting a segment duplicates metadata and assigns a fresh id."
@@ -150,8 +312,8 @@
      (setf (alist-get 'segments eve--data) (cons marker segments))
      (eve--render)
      (should (eve--goto-segment "marker-001"))
-     (let ((responses '("intro.mp4" "overlay" "mute" "" "" "n" "n")))
-       (cl-letf (((symbol-function 'read-string)
+    (let ((responses '("intro.mp4" "overlay" "mute" "" "" "n" "n")))
+      (cl-letf (((symbol-function 'read-string)
 		  (lambda (_prompt &optional default)
 		    (or (prog1 (car responses)
 			  (setq responses (cdr responses)))
@@ -160,7 +322,7 @@
      (eve--render)
      (should (eve--goto-segment "marker-001"))
      (let* ((segment (eve--segment-at-point))
-	    (broll (alist-get 'broll segment)))
+	    (broll (eve--segment-broll segment)))
        (should broll)
        (should (string= (alist-get 'file broll) "intro.mp4")))
      (should (string-match-p "\\[b-roll\\] file=intro\\.mp4"
@@ -175,10 +337,10 @@
      (unwind-protect
 	 (progn
 	   (let* ((segment (car (eve--segments))))
-	     (setf (alist-get 'broll segment)
-		   (list (cons 'file template-file))))
+	     (eve--set-segment-broll segment
+				      (list (cons 'file template-file))))
 	   (let ((segment (car (eve--segments))))
-	     (should (alist-get 'broll segment)))
+	     (should (eve--segment-broll segment)))
 	   (eve--render)
 	   (should (eve--goto-segment "seg-1"))
 	   (let ((responses '("Join us" "" "speaker" "Ari" "")))
@@ -189,7 +351,7 @@
 			      default))))
 	       (call-interactively #'eve-edit-broll-placeholders)))
 	   (let* ((segment (car (eve--segments)))
-		  (broll (alist-get 'broll segment))
+		  (broll (eve--segment-broll segment))
 		  (placeholders (eve--aget 'placeholders broll)))
 	     (should placeholders)
 	     (should (equal (alist-get "cta" placeholders nil nil #'equal) "Join us"))
@@ -228,11 +390,12 @@
     (should (equal (eve--infer-manifest-path files)
 		   (expand-file-name "session.tjm.json" dir)))))
 
-(ert-deftest eve-compile-command-uses-resolved-cli-program ()
-  "Compile commands shell out via the resolved CLI executable path."
+(ert-deftest eve-compile-command-uses-preserve-gaps-threshold ()
+  "Compile commands source the gap threshold from `eve-preserve-gaps-max'."
   (with-temp-buffer
     (let* ((buffer-file-name "/tmp/session dir/session.tjm.json")
            (eve-cli-program "eve-custom")
+           (eve-preserve-gaps-max 2.25)
            (program "/opt/eve tools/eve custom")
            (output "/tmp/session dir/session dir.mp4"))
       (cl-letf (((symbol-function 'executable-find)
@@ -240,10 +403,11 @@
                    (should (equal candidate eve-cli-program))
                    program)))
         (should (equal (eve--compile-command)
-                       (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
-                               (shell-quote-argument program)
-                               (shell-quote-argument buffer-file-name)
-                               (shell-quote-argument output))))))))
+                       (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps %s"
+                                (shell-quote-argument program)
+                                (shell-quote-argument buffer-file-name)
+                                (shell-quote-argument output)
+                                eve-preserve-gaps-max)))))))
 
 (ert-deftest eve-compile-command-errors-when-cli-program-is-missing ()
   "Compile commands fail early when the configured CLI is unavailable."
@@ -260,18 +424,19 @@
         (should (equal (cadr err)
                        "Cannot find eve CLI executable: missing-eve"))))))
 
-(ert-deftest eve-compile-marker-uses-resolved-cli-program ()
-  "Marker compilation uses the resolved CLI executable path in the shell command."
+(ert-deftest eve-compile-marker-uses-preserve-gaps-threshold ()
+  "Marker compilation sources the gap threshold from `eve-preserve-gaps-max'."
   (eve-test-with-buffer
    (setq-local buffer-file-name "/tmp/session dir/session.tjm.json")
-   (let* ((segment (copy-tree (car (eve--segments)) t))
-          (marker (list (cons 'id "marker-001")
-                        (cons 'kind "marker")
-                        (cons 'title "Launch Plan")))
-          (eve-cli-program "eve-custom")
-          (program "/opt/eve tools/eve custom")
-          (temp "/tmp/eve section.json")
-          (output "/tmp/session dir/session dir-launch-plan.mp4")
+    (let* ((segment (copy-tree (car (eve--segments)) t))
+           (marker (list (cons 'id "marker-001")
+                         (cons 'kind "marker")
+                         (cons 'title "Launch Plan")))
+           (eve-cli-program "eve-custom")
+           (eve-preserve-gaps-max 2.25)
+           (program "/opt/eve tools/eve custom")
+           (temp "/tmp/eve section.json")
+           (output "/tmp/session dir/session dir-launch-plan.mp4")
           captured-command
           captured-output
           captured-temp
@@ -298,18 +463,23 @@
                         captured-temp resolved-temp))))
        (eve-compile)
        (should (equal captured-command
-                      (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
-                              (shell-quote-argument program)
-                              (shell-quote-argument temp)
-                              (shell-quote-argument output))))
-       (should (equal captured-output output))
-       (should (equal captured-temp temp))
-       (should (equal captured-data-path temp))
+                       (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps %s"
+                               (shell-quote-argument program)
+                               (shell-quote-argument temp)
+                               (shell-quote-argument output)
+                               eve-preserve-gaps-max)))
+        (should (equal captured-output output))
+        (should (equal captured-temp temp))
+        (should (equal captured-data-path temp))
        (should (= (length (alist-get 'segments captured-data)) 1))))))
 
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
   (let ((eve-cli-program "eve-custom")
+        (eve-transcribe-backend "mlx-whisper")
+        (eve-transcribe-model "large-v3")
+        (eve-transcribe-verbatim t)
+        (eve-transcribe-tag-fillers t)
         (buffer (get-buffer-create eve--transcribe-buffer-name))
         captured-plist
         last-message)
@@ -334,13 +504,47 @@
           (should (eq (plist-get captured-plist :buffer) buffer))
           (should (equal (plist-get captured-plist :command)
                          '("/opt/eve/bin/eve-custom" "transcribe"
-                           "/tmp/clip.mp4" "/tmp/voice.wav"
-                           "--output" "/tmp/session.tjm.json")))
+                            "/tmp/clip.mp4" "/tmp/voice.wav"
+                            "--output" "/tmp/session.tjm.json"
+                            "--backend" "mlx-whisper"
+                            "--model" "large-v3"
+                            "--verbatim"
+                            "--tag-fillers")))
           (should (plist-get captured-plist :noquery))
           (should (functionp (plist-get captured-plist :sentinel)))
           (should (equal (with-current-buffer buffer (buffer-string)) ""))
           (should (equal last-message
                          "Started eve transcribe -> /tmp/session.tjm.json")))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest eve-transcribe-async-omits-disabled-boolean-flags ()
+  "Launcher keeps string flags and omits disabled boolean transcription flags."
+  (let ((eve-cli-program "eve-custom")
+        (eve-transcribe-backend "whisper.cpp")
+        (eve-transcribe-model "small.en")
+        (eve-transcribe-verbatim nil)
+        (eve-transcribe-tag-fillers nil)
+        (buffer (get-buffer-create eve--transcribe-buffer-name))
+        captured-plist)
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'executable-find)
+                     (lambda (program)
+                       (should (equal program eve-cli-program))
+                       "/opt/eve/bin/eve-custom"))
+                    ((symbol-function 'make-process)
+                     (lambda (&rest args)
+                       (setq captured-plist args)
+                       'fake-process)))
+            (eve--transcribe-async '("/tmp/clip.mp4")
+                                   "/tmp/session.tjm.json"))
+          (should (equal (plist-get captured-plist :command)
+                         '("/opt/eve/bin/eve-custom" "transcribe"
+                           "/tmp/clip.mp4"
+                           "--output" "/tmp/session.tjm.json"
+                           "--backend" "whisper.cpp"
+                           "--model" "small.en"))))
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
@@ -546,6 +750,178 @@
                           messages)))
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
+
+(ert-deftest eve-phrase-filler-tag-fillers-tags-multiword-phrase ()
+  "Tagging uses `eve-filler-phrases` to mark full multi-word phrases."
+  (eve-test-with-buffer
+   (let* ((segment
+           '((id . "seg-phrase")
+             (source . "clip")
+             (start . 5.0) (end . 8.2)
+             (text . "to be honest with you today")
+             (words .
+                    (((start . 5.0) (end . 5.3) (spoken . "to") (token . "to"))
+                     ((start . 5.3) (end . 5.5) (spoken . "be") (token . "be"))
+                     ((start . 5.5) (end . 6.0) (spoken . "honest") (token . "honest"))
+                     ((start . 6.0) (end . 6.2) (spoken . "with") (token . "with"))
+                     ((start . 6.2) (end . 6.8) (spoken . "you") (token . "you"))
+                     ((start . 6.8) (end . 7.2) (spoken . "today") (token . "today"))))))
+           (words nil))
+     (setf (alist-get 'segments eve--data) (list (copy-tree segment t)))
+     (setq-local eve-filler-phrases '("to be honest with you"))
+     (call-interactively #'eve-tag-fillers)
+     (setq words (alist-get 'words (car (eve--segments))))
+     (should (equal (eve--edit-kind (nth 0 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 1 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 2 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 3 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 4 words)) "filler"))
+     (should-not (equal (eve--edit-kind (nth 5 words)) "filler")))))
+
+(ert-deftest eve-phrase-filler-tag-fillers-normalizes-punctuation-and-case ()
+  "Phrase tagging normalizes punctuation and case before matching."
+  (eve-test-with-buffer
+   (let* ((segment
+           '((id . "seg-phrase")
+             (source . "clip")
+             (start . 5.0) (end . 8.0)
+             (text . "To be honest, with you")
+             (words .
+                    (((start . 5.0) (end . 5.3) (spoken . "To") (token . "to"))
+                     ((start . 5.3) (end . 5.5) (spoken . "be") (token . "be"))
+                     ((start . 5.5) (end . 6.0) (spoken . "honest,") (token . "honest,"))
+                     ((start . 6.0) (end . 6.2) (spoken . "with") (token . "with"))
+                     ((start . 6.2) (end . 6.8) (spoken . "you") (token . "you"))))))
+           (words nil))
+     (setf (alist-get 'segments eve--data) (list (copy-tree segment t)))
+     (setq-local eve-filler-phrases '("to be honest with you"))
+     (call-interactively #'eve-tag-fillers)
+     (setq words (alist-get 'words (car (eve--segments))))
+     (should (equal (eve--edit-kind (nth 0 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 1 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 2 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 3 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 4 words)) "filler")))))
+
+(ert-deftest eve-phrase-filler-tag-fillers-prefers-longest-match ()
+  "When phrases overlap, the longest configured phrase wins."
+  (eve-test-with-buffer
+   (let* ((segment
+           '((id . "seg-overlap")
+             (source . "clip")
+             (start . 9.0) (end . 10.5)
+             (text . "um you know what")
+             (words .
+                    (((start . 9.0) (end . 9.1) (spoken . "um") (token . "um"))
+                     ((start . 9.1) (end . 9.4) (spoken . "you") (token . "you"))
+                     ((start . 9.4) (end . 9.8) (spoken . "know") (token . "know"))
+                      ((start . 9.8) (end . 10.1) (spoken . "what") (token . "what"))))))
+           (words nil))
+     (setf (alist-get 'segments eve--data) (list (copy-tree segment t)))
+     (setq-local eve-filler-phrases '("you know" "you know what"))
+     (call-interactively #'eve-tag-fillers)
+     (setq words (alist-get 'words (car (eve--segments))))
+     (should-not (equal (eve--edit-kind (nth 0 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 1 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 2 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 3 words)) "filler")))))
+
+(ert-deftest eve-phrase-filler-add-at-point-updates-config-and-rerenders ()
+  "Adding a filler at point persists phrase config and re-tags the current word."
+  (eve-test-with-buffer
+   (let* ((segment
+           '((id . "seg-point")
+             (source . "clip")
+             (start . 11.0) (end . 12.0)
+             (text . "um alpha")
+             (words .
+                    (((start . 11.0) (end . 11.2) (spoken . "um") (token . "um"))
+                     ((start . 11.2) (end . 11.7) (spoken . "alpha") (token . "alpha"))))))
+           (saved-args nil)
+          (word nil)
+          (range nil))
+     (setf (alist-get 'segments eve--data) (list (copy-tree segment t)))
+     (setq-local eve-filler-phrases '())
+     (eve--render)
+     (should (eve--goto-segment "seg-point"))
+     (search-forward "um" nil t)
+     (backward-char 1)
+     (cl-letf (((symbol-function 'customize-save-variable)
+                (lambda (symbol value)
+                  (setq saved-args (list symbol value)))))
+       (call-interactively #'eve-add-filler-at-point))
+     (setq word (car (alist-get 'words (car (eve--segments)))))
+     (setq range (eve-test--match-range "um"))
+     (should (member "um" eve-filler-phrases))
+     (should (equal (eve--edit-kind word) "filler"))
+     (should (equal saved-args (list 'eve-filler-phrases eve-filler-phrases)))
+     (should range)
+     (should (eve-test--span-has-face-p (car range) (cdr range) 'eve-filler-face)))))
+
+(ert-deftest eve-phrase-filler-add-region-updates-config-and-rerenders ()
+  "Adding a filler from region persists phrase config and re-tags words."
+  (eve-test-with-buffer
+   (let* ((segment
+           '((id . "seg-region")
+             (source . "clip")
+             (start . 13.0) (end . 14.5)
+             (text . "you know what")
+             (words .
+                    (((start . 13.0) (end . 13.3) (spoken . "you") (token . "you"))
+                     ((start . 13.3) (end . 13.7) (spoken . "know") (token . "know"))
+                      ((start . 13.7) (end . 14.1) (spoken . "what") (token . "what"))))))
+           (saved-args nil)
+          (words nil)
+          (region nil))
+     (setf (alist-get 'segments eve--data) (list (copy-tree segment t)))
+     (setq-local eve-filler-phrases '())
+     (eve--render)
+     (setq region (eve-test--match-range "you know"))
+     (goto-char (car region))
+     (set-mark (car region))
+     (goto-char (cdr region))
+     (activate-mark)
+     (cl-letf (((symbol-function 'customize-save-variable)
+                (lambda (symbol value)
+                  (setq saved-args (list symbol value)))))
+       (call-interactively #'eve-add-filler-region))
+     (setq words (alist-get 'words (car (eve--segments))))
+     (should (member "you know" eve-filler-phrases))
+     (should (equal (eve--edit-kind (nth 0 words)) "filler"))
+     (should (equal (eve--edit-kind (nth 1 words)) "filler"))
+     (should-not (equal (eve--edit-kind (nth 2 words)) "filler"))
+     (should (equal saved-args (list 'eve-filler-phrases eve-filler-phrases))))))
+
+(ert-deftest eve-phrase-filler-startup-autotags-configured-fillers ()
+  "Reload/startup automatically applies filler tags from configured phrases."
+  (eve-test-with-buffer
+   (setq-local eve-filler-phrases '("um"))
+   (cl-letf (((symbol-function 'eve--load-data)
+              (lambda ()
+                (setq-local eve--data
+                            (list (cons 'version 1)
+                                  (cons 'sources
+                                        (list (list (cons 'id "clip")
+                                                    (cons 'file "clip.mp4"))))
+                                  (cons 'segments
+                                        (list (list (cons 'id "seg-startup")
+                                                    (cons 'source "clip")
+                                                    (cons 'start 21.0)
+                                                    (cons 'end 22.0)
+                                                    (cons 'text "um hello")
+                                                    (cons 'words
+                                                          (list (list (cons 'start 21.0)
+                                                                      (cons 'end 21.2)
+                                                                      (cons 'spoken "um")
+                                                                      (cons 'token "um"))
+                                                                (list (cons 'start 21.2)
+                                                                      (cons 'end 21.8)
+                                                                      (cons 'spoken "hello")
+                                                                      (cons 'token "hello"))))))))))))
+     (eve-reload))
+   (let* ((segment (car (eve--segments)))
+          (word (car (alist-get 'words segment))))
+     (should (equal (eve--edit-kind word) "filler")))))
 
 (provide 'eve-test)
 

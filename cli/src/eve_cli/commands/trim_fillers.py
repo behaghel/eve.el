@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -12,20 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from .common import add_json_flag
+from ..utils.fillers import DEFAULT_FILLERS, build_filler_set, is_filler
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 
-DEFAULT_FILLERS = ["um", "uh"]
 DEFAULT_MODEL = "base.en"
 DEFAULT_LANGUAGE = "en"
 DEFAULT_PAD = 0.05
-
-_WORD_RE = re.compile(r"[^a-z0-9']+")
-
-
-def _normalise(word: str) -> str:
-    return _WORD_RE.sub("", word.lower())
 
 
 def _load_whisper_model() -> Any:
@@ -122,6 +115,11 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
 
 
 def run(args: Namespace) -> int:
+    print(
+        "eve trim-fillers is deprecated and will be removed in a future release; use eve tag-fillers instead",
+        file=sys.stderr,
+    )
+
     if args.list_fillers:
         fillers = sorted({word.lower() for word in DEFAULT_FILLERS})
         if args.filler:
@@ -141,10 +139,8 @@ def run(args: Namespace) -> int:
         )
         return 2
 
-    fillers = [word.lower() for word in DEFAULT_FILLERS]
-    if args.filler:
-        fillers.extend([word.lower() for word in args.filler])
-    filler_set = {_normalise(word) for word in fillers if _normalise(word)}
+    fillers = [*DEFAULT_FILLERS, *(args.filler or [])]
+    filler_set = build_filler_set(fillers)
 
     with tempfile.TemporaryDirectory() as temporary_directory:
         audio_path = Path(temporary_directory) / "audio.wav"
@@ -178,10 +174,7 @@ def run(args: Namespace) -> int:
             for word in segment.words:
                 if word.start is None or word.end is None:
                     continue
-                cleaned = _normalise(word.word)
-                if not cleaned:
-                    continue
-                if cleaned in filler_set:
+                if is_filler(word.word, filler_set):
                     start = max(0.0, word.start - args.pad)
                     end = word.end + args.pad
                     if end > start:

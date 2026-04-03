@@ -58,6 +58,8 @@ This document uses the following terms:
 - `marker segment`: a segment whose `kind` is `"marker"`.
 - `word object`: an entry in a segment's `words` array describing spoken
   content, display intent, semantic kind, and exact timing.
+- `edit namespace`: an optional object on a segment or word that carries
+  mutable editorial intent without changing source-local transcript facts.
 - `spoken text`: the faithful spoken form represented by words.
 - `display text`: the text intended for subtitles, review UIs, or other display
   consumers.
@@ -179,8 +181,14 @@ Producers MUST NOT emit duplicate source identifiers.
 The `segments` array defines timeline order. Consumers MUST process segments in
 array order.
 
-Reordering a manifest is achieved by rearranging entries in `segments`.
-Deleting content is achieved by removing entries.
+Reordering a manifest is achieved by rearranging entries in `segments`. This
+array order is the canonical way to reorder rendered output because each
+segment's timing fields remain factual, source-local metadata attached to that
+segment regardless of where it appears in the timeline.
+
+Removing a segment from `segments` deletes it from the manifest. Producers that
+need a non-destructive edit history MAY instead preserve the segment and mark
+it for omission from rendered output with `segment.edit.deleted`.
 
 ### 7.2 Segment identity
 
@@ -220,14 +228,40 @@ A media segment MAY additionally contain:
 - `display_text`: display-form string;
 - `words`: array of word objects;
 - `speaker`: string or `null`;
-- `tags`: array of strings;
-- `notes`: string, empty string, or `null`;
-- `broll`: b-roll object or `null`.
+- `edit`: segment edit metadata object.
 
 Unknown segment members are allowed. Editors SHOULD preserve unknown members
 when round-tripping.
 
-### 8.3 Spoken and display semantics
+### 8.3 Segment edit namespace
+
+When present, `segment.edit` MUST be an object. It carries mutable editorial
+instructions while `source`, `start_tick`, `end_tick`, `spoken_text`, and
+`words` remain the factual transcript and timing record.
+
+The following interoperable `segment.edit` members are defined in TJM v1.1:
+
+- `deleted`: OPTIONAL boolean;
+- `tags`: OPTIONAL array of strings;
+- `notes`: OPTIONAL string, empty string, or `null`;
+- `broll`: OPTIONAL b-roll object or `null`.
+
+When `segment.edit.deleted` is `true`, the segment's content is marked for
+removal from rendered output without erasing the segment's source-local timing
+metadata from the manifest.
+
+The same `segment.edit` namespace is available on both media segments and
+marker segments.
+
+Unknown members inside `segment.edit` are allowed for forward compatibility.
+Editors SHOULD preserve them when round-tripping.
+
+Future extensions: later revisions may define additional `segment.edit`
+controls such as `fade_in`, `fade_out`, `volume`, and `speed`. These names are
+reserved as plausible future video-edit controls and are non-normative in TJM
+v1.1.
+
+### 8.4 Spoken and display semantics
 
 `spoken_text` and `display_text` serve different roles:
 
@@ -240,14 +274,15 @@ values of `words`, joined with single spaces in array order.
 
 If `display_text` is absent and `words` is present, consumers SHOULD derive it
 by joining each word's display token in array order, omitting words whose
-`kind` is `"filler"` when `render.filler_policy` is `"drop"`.
+`kind` is `"filler"` when `render.filler_policy` is `"drop"`, and omitting
+words whose `word.edit.deleted` flag is `true`.
 
 The display token for a word is:
 
 1. `word.display` when present and non-empty;
 2. otherwise `word.spoken`.
 
-### 8.4 Segment-level timing and words
+### 8.5 Segment-level timing and words
 
 If a media segment supplies `words`, the segment's `start_tick` and `end_tick`
 SHOULD match the first and last remaining word timing after any editing step.
@@ -265,6 +300,7 @@ Conforming word objects use:
 - `spoken`: REQUIRED string;
 - `kind`: OPTIONAL string;
 - `display`: OPTIONAL string;
+- `edit`: OPTIONAL word edit metadata object;
 - `start`: OPTIONAL numeric seconds convenience value;
 - `end`: OPTIONAL numeric seconds convenience value.
 
@@ -282,6 +318,17 @@ Editors SHOULD preserve recognized and unrecognized `kind` values when
 round-tripping. Renderers MUST reject unknown `kind` values.
 
 `kind` is descriptive metadata. It does not itself delete or rewrite the word.
+
+When present, `word.edit` MUST be an object. The following interoperable
+`word.edit` member is defined in TJM v1.1:
+
+- `deleted`: OPTIONAL boolean.
+
+When `word.edit.deleted` is `true`, that word's content is marked for removal
+from rendered output without rewriting the underlying transcription facts.
+
+Unknown members inside `word.edit` are allowed for forward compatibility.
+Editors SHOULD preserve them when round-tripping.
 
 Producers SHOULD trim surrounding whitespace from `spoken` and SHOULD omit
 zero-content words.
@@ -336,26 +383,27 @@ A marker segment MAY also contain:
 - `start_tick`: source-relative time hint;
 - `start`: seconds convenience hint;
 - `display_text`: fallback display text;
-- `broll`: renderable b-roll metadata;
+- `edit`: segment edit metadata object;
 - `duration`: renderer-facing duration value.
 
 ### 11.2 Semantics
 
 Markers are logical headings in the segment stream. A marker without renderable
-b-roll does not itself contribute playable media and MUST be ignored for normal
-segment rendering.
+`segment.edit.broll` does not itself contribute playable media and MUST be
+ignored for normal segment rendering.
 
 Markers MAY still contribute structure to downstream consumers, such as section
 labels or subtitle annotations.
 
-If a marker includes renderable b-roll metadata, a renderer MAY treat it as a
-timeline unit only when enough information exists to derive duration.
+If a marker includes renderable `segment.edit.broll` metadata, a renderer MAY
+treat it as a timeline unit only when enough information exists to derive
+duration.
 
 ## 12. B-roll Object
 
 ### 12.1 Core structure
 
-The `broll` member, when present, MUST be an object with at least:
+The `segment.edit.broll` member, when present, MUST be an object with at least:
 
 - `file`: REQUIRED string path.
 
@@ -408,8 +456,8 @@ values are absent.
 
 ### 12.5 Time values
 
-`broll.start_offset`, `broll.duration`, and marker `duration` MAY be expressed
-as either:
+`segment.edit.broll.start_offset`, `segment.edit.broll.duration`, and marker
+`duration` MAY be expressed as either:
 
 - a JSON number of seconds; or
 - a string in one of these forms:
@@ -431,8 +479,8 @@ template JSON descriptor.
 
 ### 12.7 Template JSON extension
 
-If `broll.file` names a `.json` file, a renderer MAY interpret it as a template
-descriptor rather than as media directly.
+If `segment.edit.broll.file` names a `.json` file, a renderer MAY interpret it
+as a template descriptor rather than as media directly.
 
 The current repository renderer expects such a template file to decode to a JSON
 object with:
@@ -441,11 +489,11 @@ object with:
 - `overlays`: OPTIONAL array of drawtext-like overlay descriptors;
 - `placeholders`: OPTIONAL object mapping placeholder names to values.
 
-If both the template file and the segment's `broll` object provide
+If both the template file and the segment's `segment.edit.broll` object provide
 `placeholders`, the segment-local `placeholders` override template defaults.
 
-If the segment's `broll` object provides `overlays`, those entries replace the
-template's `overlays` for that segment.
+If the segment's `segment.edit.broll` object provides `overlays`, those entries
+replace the template's `overlays` for that segment.
 
 ## 13. Deterministic Render Contract
 
@@ -467,7 +515,14 @@ A renderer MUST walk `segments` in file order.
 
 For a normal media segment, the renderer renders the interval from
 `start_tick` to `end_tick` from the referenced source, optionally modified by
-`broll` and `render.filler_policy`.
+`segment.edit.broll` and `render.filler_policy`.
+
+If `segment.edit.deleted` is `true`, the renderer MUST omit that segment from
+rendered output while leaving the manifest entry itself intact.
+
+If `word.edit.deleted` is `true`, consumers MUST omit that word from rendered
+output and from display-text derivation in the same way they would omit any
+other word intentionally removed by an edit workflow.
 
 ### 13.3 Filler policy behavior
 
@@ -476,8 +531,8 @@ selection by themselves.
 
 When `render.filler_policy` is `"drop"` and a segment has `words`, the renderer
 MUST remove the source-media intervals covered by words whose `kind` is
-`"filler"`. The remaining non-filler intervals from that segment MUST be
-concatenated in word order.
+`"filler"`. The remaining non-filler, non-deleted intervals from that segment
+MUST be concatenated in word order.
 
 ### 13.4 Missing source and zero-duration behavior
 
@@ -490,7 +545,7 @@ A renderer MUST treat the following as errors:
 - any retained media interval with zero or negative duration;
 - unknown segment `kind`;
 - unknown word `kind`;
-- unsupported b-roll `mode` or `audio` values.
+- unsupported `segment.edit.broll.mode` or `segment.edit.broll.audio` values.
 
 Unlike TJM v1, source-less b-roll fallback is not part of the v1.1 deterministic
 render contract.
@@ -522,7 +577,7 @@ For consumers that derive subtitles from TJM:
 - segment cue text MUST be determined as follows:
   1. use non-empty `display_text` when present;
   2. otherwise derive text from `words` using the display-token rules in
-     Section 8.3;
+     Section 8.4;
   3. otherwise fall back to the segment `id`.
 
 If `speaker` is present and cue text is non-empty, consumers SHOULD prefix the
@@ -544,7 +599,8 @@ A conforming TJM v1.1 producer:
 - MUST emit `start_tick` and `end_tick` for every media segment;
 - MUST ensure every referenced `source` exists in `sources`;
 - MUST ensure segment order reflects intended output order;
-- MUST emit supported `broll.mode` and `broll.audio` values only;
+- MUST emit supported `segment.edit.broll.mode` and
+  `segment.edit.broll.audio` values only;
 - MUST emit supported `render.filler_policy` values only;
 - SHOULD emit stable, unique `id` values for sources and segments;
 - SHOULD emit `display_text` explicitly on spoken media segments;
@@ -568,7 +624,7 @@ A conforming TJM v1.1 consumer:
 - MUST use tick fields as the authoritative timing source;
 - MUST support media segments;
 - MUST support marker segments as non-playable structural entries unless they
-  carry renderable b-roll with usable duration data;
+  carry renderable `segment.edit.broll` with usable duration data;
 - SHOULD preserve unknown members for forward compatibility when operating as an
   editor or round-tripper.
 
@@ -582,8 +638,9 @@ the following as invalid for media segments:
 - a `words` entry with `end_tick <= start_tick`;
 - a word timing that falls outside the enclosing media segment;
 - a source without a valid `timebase`;
+- a non-boolean `segment.edit.deleted` or `word.edit.deleted` value;
 - `still: true` combined with `audio: "broll"`;
-- unsupported `broll.mode` or `broll.audio` values;
+- unsupported `segment.edit.broll.mode` or `segment.edit.broll.audio` values;
 - unsupported `render.filler_policy` values.
 
 The following checks are RECOMMENDED for robust implementations:
@@ -672,9 +729,11 @@ At minimum, a v1.1 implementation SHOULD be tested against these cases:
           "spoken": "world"
         }
       ],
-      "tags": [],
-      "notes": "",
-      "broll": null
+      "edit": {
+        "tags": [],
+        "notes": "",
+        "broll": null
+      }
     }
   ]
 }
@@ -765,11 +824,13 @@ At minimum, a v1.1 implementation SHOULD be tested against these cases:
       "start_tick": 0,
       "end_tick": 48000,
       "display_text": "shipping update",
-      "broll": {
-        "file": "broll/card.mp4",
-        "mode": "replace",
-        "audio": "source",
-        "duration": "00:01.000"
+      "edit": {
+        "broll": {
+          "file": "broll/card.mp4",
+          "mode": "replace",
+          "audio": "source",
+          "duration": "00:01.000"
+        }
       }
     }
   ]

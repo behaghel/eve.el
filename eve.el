@@ -66,6 +66,11 @@
   :type 'string
   :group 'eve)
 
+(defcustom eve-preserve-gaps-max 2.0
+  "Maximum gap duration preserved during `eve text-edit` compilation."
+  :type 'float
+  :group 'eve)
+
 (defcustom eve-play-args '("--quiet" "--no-terminal" "--really-quiet")
   "Additional arguments passed to `eve-play-program'."
   :type '(repeat string)
@@ -93,6 +98,41 @@ meaningful timing inconsistencies."
   :type '(repeat string)
   :group 'eve)
 
+(defcustom eve-transcribe-backend "faster-whisper"
+  "Backend passed to `eve transcribe'."
+  :type 'string
+  :group 'eve)
+
+(defcustom eve-transcribe-model "base.en"
+  "Model passed to `eve transcribe'."
+  :type 'string
+  :group 'eve)
+
+(defcustom eve-transcribe-verbatim t
+  "Whether `eve transcribe' should preserve verbatim output."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-transcribe-tag-fillers t
+  "Whether `eve transcribe' should tag filler words."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-filler-phrases '("um" "uh")
+  "Filler words/phrases to tag in transcripts.
+Each entry is a plain string; single words (\"um\") and multi-word
+phrases (\"you know\") are both supported. Case, punctuation, and
+repeated whitespace are ignored during matching."
+  :type '(repeat string)
+  :group 'eve)
+
+(defcustom eve-filler-regex '("\\`um\\'" "\\`uh\\'")
+  "Regexps matched against word text when tagging filler words.
+Each regexp is checked against both `spoken' and legacy `token' values when
+present."
+  :type '(repeat regexp)
+  :group 'eve)
+
 (defface eve-heading-face
   '((t :inherit font-lock-keyword-face :weight bold))
   "Face for segment headings."
@@ -101,6 +141,16 @@ meaningful timing inconsistencies."
 (defface eve-text-face
   '((t :inherit default))
   "Face for segment prose."
+  :group 'eve)
+
+(defface eve-filler-face
+  '((t :inherit font-lock-warning-face :slant italic))
+  "Face used for filler words."
+  :group 'eve)
+
+(defface eve-deleted-face
+  '((t :inherit shadow :strike-through t))
+  "Face used for deleted content when shown."
   :group 'eve)
 
 (defface eve-broll-face
@@ -215,6 +265,17 @@ meaningful timing inconsistencies."
 		  (file-name-directory buffer-file-name)))))
       (expand-file-name (concat name ".mp4") parent))))
 
+(defun eve--text-edit-command (input output)
+  "Build the `eve text-edit` command for INPUT and OUTPUT."
+  (let ((program (or (executable-find eve-cli-program)
+                     (user-error "Cannot find eve CLI executable: %s"
+                                 eve-cli-program))))
+    (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps %s"
+            (shell-quote-argument program)
+            (shell-quote-argument input)
+            (shell-quote-argument output)
+            eve-preserve-gaps-max)))
+
 (defun eve--compile-command ()
   "Build the `eve text-edit` command for the current buffer."
   (let* ((file buffer-file-name)
@@ -224,13 +285,7 @@ meaningful timing inconsistencies."
     (unless output
       (user-error "Unable to determine output filename"))
 
-    (let ((program (or (executable-find eve-cli-program)
-                       (user-error "Cannot find eve CLI executable: %s"
-                                   eve-cli-program))))
-      (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
-	    (shell-quote-argument program)
-	    (shell-quote-argument file)
-	    (shell-quote-argument output)))))
+    (eve--text-edit-command file output)))
 
 (defun eve--slugify (title)
   "Return a filesystem-safe slug for TITLE."
@@ -367,11 +422,17 @@ meaningful timing inconsistencies."
   (let* ((program (or (executable-find eve-cli-program)
                       (user-error "Cannot find eve CLI executable: %s"
                                   eve-cli-program)))
-         (output-file (expand-file-name output-path))
-         (buffer (get-buffer-create eve--transcribe-buffer-name))
-         (command (append (list program "transcribe")
-                          files
-                          (list "--output" output-file))))
+          (output-file (expand-file-name output-path))
+          (buffer (get-buffer-create eve--transcribe-buffer-name))
+          (command (append (list program "transcribe")
+                           files
+                           (list "--output" output-file
+                                 "--backend" eve-transcribe-backend
+                                 "--model" eve-transcribe-model)
+                           (when eve-transcribe-verbatim
+                             '("--verbatim"))
+                           (when eve-transcribe-tag-fillers
+                             '("--tag-fillers")))))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
         (erase-buffer)))
@@ -446,12 +507,12 @@ meaningful timing inconsistencies."
       (while (and (null previous) (>= scan 0))
 	(let ((candidate (nth scan segments)))
 	  (when (and (not (eve--marker-p candidate))
-		     (alist-get 'broll candidate))
+		     (eve--segment-broll candidate))
 	    (setq previous candidate))
 	  (setq scan (1- scan))))
       (unless previous
 	(user-error "No previous segment with b-roll metadata found"))
-      (let* ((prev-broll (copy-alist (alist-get 'broll previous)))
+      (let* ((prev-broll (copy-alist (eve--segment-broll previous)))
 	     (curr-broll (copy-alist prev-broll))
 	     (prev-offset (alist-get 'start_offset prev-broll))
 	     (prev-duration (alist-get 'duration prev-broll))
@@ -474,7 +535,7 @@ meaningful timing inconsistencies."
 		  (if (> remaining 0.0)
 		      (eve--seconds->time-like prev-duration remaining)
 		    nil))))
-	(setf (alist-get 'broll segment) curr-broll)
+	(eve--set-segment-broll segment curr-broll)
 	(eve--mark-dirty)
 	(eve--render t)
 	(eve--goto-segment (alist-get 'id segment))
@@ -495,17 +556,11 @@ meaningful timing inconsistencies."
 	     (subset (eve--section-segments segment)))
 	(unless subset
 	  (user-error "Marker has no following segments to compile"))
-	(let* ((program (or (executable-find eve-cli-program)
-	                    (user-error "Cannot find eve CLI executable: %s"
-	                                eve-cli-program)))
-	       (temp (make-temp-file "eve-section" nil ".json"))
+	(let* ((temp (make-temp-file "eve-section" nil ".json"))
 	       (data (copy-tree eve--data t))
 	       (segments-copy (mapcar (lambda (seg) (copy-tree seg t)) subset))
 	       (output (eve--output-path slug))
-	       (cmd (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps 1.5"
-			    (shell-quote-argument program)
-			    (shell-quote-argument temp)
-			    (shell-quote-argument output))))
+	       (cmd (eve--text-edit-command temp output)))
 	  (setf (alist-get 'segments data) segments-copy)
 	  (eve--write-json-file data temp)
 	  (eve--run-compile cmd output temp))))))
@@ -584,6 +639,142 @@ _M-j_       marker _C-c C-w_ word      _C-c C-s_ split
    ((stringp value) value)
    (t (format "%s" value))))
 
+(defun eve--word-strings (word)
+  "Return non-empty candidate text strings for WORD.
+Both `spoken' and legacy `token' values are included when present."
+  (delete-dups
+   (delq nil
+         (mapcar (lambda (value)
+                   (let ((text (string-trim (eve--stringify value))))
+                     (unless (string-empty-p text)
+                       text)))
+                 (list (alist-get 'spoken word)
+                       (alist-get 'token word))))))
+
+(defun eve--word-matches-filler-p (word)
+  "Return non-nil when WORD matches `eve-filler-regex'."
+  (let ((strings (eve--word-strings word)))
+    (and strings
+         (seq-some (lambda (text)
+                     (seq-some (lambda (regexp)
+                                 (string-match-p regexp text))
+                               eve-filler-regex))
+                   strings))))
+
+(defun eve--normalize-word-tokens (text)
+  "Return TEXT as lowercase alnum tokens.
+Downcases, removes non-alphanumeric/non-space characters, collapses
+whitespace, and splits on spaces. Returns nil for empty input."
+  (let* ((lower (downcase (or (eve--stringify text) "")))
+         (stripped (replace-regexp-in-string "[^[:alnum:][:space:]]" " " lower))
+         (collapsed (replace-regexp-in-string "\\s-+" " " stripped))
+         (trimmed (string-trim collapsed)))
+    (unless (string-empty-p trimmed)
+      (split-string trimmed " " t))))
+
+(defun eve--normalize-filler-text (text)
+  "Backward-compatible alias for `eve--normalize-word-tokens'."
+  (eve--normalize-word-tokens text))
+
+(defun eve--phrase-matches-at-p (normalized-words phrase-tokens start-idx)
+  "Return non-nil when PHRASE-TOKENS match NORMALIZED-WORDS at START-IDX."
+  (let ((plen (length phrase-tokens))
+        (wlen (length normalized-words)))
+    (and (> plen 0)
+         (<= (+ start-idx plen) wlen)
+         (cl-loop for j from 0 below plen
+                  always (string= (nth j phrase-tokens)
+                                  (nth (+ start-idx j) normalized-words))))))
+
+(defun eve--legacy-filler-regexp-literal (regexp)
+  "Extract a literal filler phrase from anchored REGEXP.
+Returns nil when REGEXP is not a simple anchored literal like `\\`um\\'' or
+contains regex metacharacters."
+  (when (and (stringp regexp)
+             (string-match "\\`\\\\`\\(.+\\)\\\\'\\'" regexp))
+    (let ((candidate (match-string 1 regexp)))
+      (when (string-match-p "\\`[[:alnum:][:space:]-]+\\'" candidate)
+        candidate))))
+
+(defun eve--filler-phrase-list ()
+  "Return normalized phrase-token lists for configured filler settings.
+Combines `eve-filler-phrases' with literal-compatible entries from
+`eve-filler-regex'. Returned phrases are deduplicated and sorted longest-first."
+  (let (result)
+    (dolist (phrase eve-filler-phrases)
+      (let ((tokens (eve--normalize-word-tokens phrase)))
+        (when tokens
+          (cl-pushnew tokens result :test #'equal))))
+    (when (null result)
+      (dolist (regexp eve-filler-regex)
+        (let* ((literal (eve--legacy-filler-regexp-literal regexp))
+               (tokens (and literal (eve--normalize-word-tokens literal))))
+          (when tokens
+            (cl-pushnew tokens result :test #'equal)))))
+    (sort result (lambda (a b) (> (length a) (length b))))))
+
+(defun eve--apply-filler-tags ()
+  "Apply filler tags to words in all segments.
+Returns the count of words newly tagged. Does not render, message, mark dirty,
+or record undo state."
+  (let ((phrases (eve--filler-phrase-list))
+        (tagged 0))
+    (dolist (segment (eve--segments))
+      (let ((words (alist-get 'words segment)))
+        (when (listp words)
+          (let* ((normalized-words
+                  (mapcar (lambda (word)
+                            (let* ((text (or (and (alist-get 'spoken word)
+                                                  (eve--stringify (alist-get 'spoken word)))
+                                             (and (alist-get 'token word)
+                                                  (eve--stringify (alist-get 'token word)))
+                                             ""))
+                                   (tokens (eve--normalize-word-tokens text)))
+                              (or (car tokens) "")))
+                          words))
+                 (len (length words))
+                 (i 0))
+            (while (< i len)
+              (let ((match-len
+                     (cl-loop for phrase in phrases
+                              when (eve--phrase-matches-at-p normalized-words phrase i)
+                              return (length phrase)
+                              finally return nil)))
+                (if match-len
+                    (progn
+                      (cl-loop for j from 0 below match-len
+                               do (let ((word (nth (+ i j) words)))
+                                    (unless (equal (eve--edit-kind word) "filler")
+                                      (eve--set-word-edit-kind word "filler")
+                                      (setq tagged (1+ tagged)))))
+                      (setq i (+ i match-len)))
+                  (setq i (1+ i)))))))))
+    tagged))
+
+(defun eve--alist-set (alist key value)
+  "Return ALIST with KEY set to VALUE, mutating in place when possible."
+  (let ((cell (assq key alist)))
+    (if cell
+        (setcdr cell value)
+      (setq alist (if alist
+                      (nconc alist (list (cons key value)))
+                    (list (cons key value)))))
+    alist))
+
+(defun eve--set-word-edit-kind (word kind)
+  "Set WORD's nested edit KIND while preserving other edit members."
+  (eve--set-edit-field word 'kind kind))
+
+(defun eve--set-edit-deleted (item deleted)
+  "Set ITEM's nested edit deleted flag while preserving other edit members."
+  (eve--set-edit-field item 'deleted deleted))
+
+(defun eve--toggle-edit-deleted (item)
+  "Toggle ITEM's nested edit deleted flag, returning the new state."
+  (let ((deleted (not (eve--edit-deleted-p item))))
+    (eve--set-edit-deleted item deleted)
+    deleted))
+
 (defun eve--aget (key alist)
   "Fetch KEY from ALIST supporting both symbol and string lookups."
   (cond
@@ -591,11 +782,66 @@ _M-j_       marker _C-c C-w_ word      _C-c C-s_ split
    ((symbolp key)
     (or (alist-get key alist)
 	(alist-get (symbol-name key) alist nil nil #'equal)))
-   ((stringp key)
-    (or (alist-get key alist nil nil #'equal)
+    ((stringp key)
+     (or (alist-get key alist nil nil #'equal)
 	(let ((sym (ignore-errors (intern key))))
 	  (and (symbolp sym) (alist-get sym alist)))))
-   (t (alist-get key alist nil nil #'equal))))
+    (t (alist-get key alist nil nil #'equal))))
+
+(defun eve--edit-key-present-p (key alist)
+  "Return non-nil when ALIST contains KEY as a symbol or string entry."
+  (cond
+   ((null alist) nil)
+   ((symbolp key)
+    (or (assq key alist)
+        (assoc (symbol-name key) alist)))
+   ((stringp key)
+    (or (assoc key alist)
+        (let ((sym (ignore-errors (intern key))))
+          (and (symbolp sym) (assq sym alist)))))
+   (t (assoc key alist))))
+
+(defun eve--edit-field (item key &optional legacy-key)
+  "Return ITEM edit KEY, falling back to LEGACY-KEY on ITEM itself."
+  (let ((edit (eve--edit-metadata item))
+        (fallback (or legacy-key key)))
+    (cond
+     ((eve--edit-key-present-p key edit) (eve--aget key edit))
+     ((eve--edit-key-present-p fallback item) (eve--aget fallback item))
+     (t nil))))
+
+(defun eve--set-edit-field (item key value)
+  "Set ITEM nested edit KEY to VALUE while preserving other edit members."
+  (let ((edit (eve--edit-metadata item)))
+    (unless (listp edit)
+      (setq edit nil))
+    (setq edit (copy-tree edit t))
+    (setq edit (eve--alist-set edit key value))
+    (eve--alist-set item 'edit edit)))
+
+(defun eve--segment-tags (segment)
+  "Return SEGMENT tags, preferring nested edit metadata."
+  (eve--edit-field segment 'tags))
+
+(defun eve--segment-notes (segment)
+  "Return SEGMENT notes, preferring nested edit metadata."
+  (eve--edit-field segment 'notes))
+
+(defun eve--segment-broll (segment)
+  "Return SEGMENT b-roll metadata, preferring nested edit metadata."
+  (eve--edit-field segment 'broll))
+
+(defun eve--set-segment-tags (segment tags)
+  "Set SEGMENT tags inside nested edit metadata."
+  (eve--set-edit-field segment 'tags tags))
+
+(defun eve--set-segment-notes (segment notes)
+  "Set SEGMENT notes inside nested edit metadata."
+  (eve--set-edit-field segment 'notes notes))
+
+(defun eve--set-segment-broll (segment broll)
+  "Set SEGMENT b-roll metadata inside nested edit metadata."
+  (eve--set-edit-field segment 'broll broll))
 
 (defun eve--segment-kind (segment)
   (let ((kind (alist-get 'kind segment)))
@@ -695,7 +941,8 @@ Returns the updated PLACEHOLDERS alist."
     placeholders))
 
 (defun eve--merge-placeholder-maps (&rest maps)
-  "Return the merged associative list from MAPS, later maps overriding earlier ones."
+  "Return the merged associative list from MAPS,
+later maps overriding earlier ones."
   (let ((result nil))
     (dolist (map maps)
       (dolist (entry map)
@@ -822,6 +1069,14 @@ Returns the updated PLACEHOLDERS alist."
   (unless (fboundp 'json-parse-buffer)
     (user-error "This mode requires native JSON parsing (Emacs 27+)")))
 
+(define-minor-mode eve-hide-deleted-mode
+  "Hide deleted words and segments when rendering.
+This is a buffer-local mode for `eve-mode' buffers."
+  :init-value nil
+  :lighter nil
+  (when (and (derived-mode-p 'eve-mode) eve--data)
+    (eve--render t)))
+
 ;;;###autoload
 (define-derived-mode eve-mode special-mode "EVE"
   "Major mode for Textual Join Manifest files (.tjm.json)."
@@ -842,6 +1097,7 @@ Returns the updated PLACEHOLDERS alist."
   (add-hook 'post-command-hook #'eve--post-command nil t)
   (add-hook 'window-configuration-change-hook #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
+  (eve-hide-deleted-mode 1)
   (eve-reload)
   (eve--apply-visual-wrap))
 
@@ -852,6 +1108,7 @@ Returns the updated PLACEHOLDERS alist."
   "Reload TJM data from disk and re-render the buffer."
   (interactive)
   (eve--load-data)
+  (eve--apply-filler-tags)
   (eve--render t)
   (setq eve--dirty nil)
   (setq eve--undo-stack nil
@@ -929,93 +1186,211 @@ Returns the updated PLACEHOLDERS alist."
 	parsed)))
    (t nil)))
 
+(defun eve--edit-metadata (item)
+  "Return ITEM's nested edit metadata alist, if any."
+  (let ((edit (alist-get 'edit item)))
+    (when (listp edit)
+      edit)))
+
+(defun eve--ensure-edit-metadata-cell (item)
+  "Ensure ITEM has a nested `edit' cell for in-place mutation."
+  (when (and (listp item)
+             (not (assq 'edit item)))
+    (nconc item (list (cons 'edit nil))))
+  item)
+
+(defun eve--edit-kind (item)
+  "Return ITEM edit kind from nested edit metadata only."
+  (eve--aget 'kind (eve--edit-metadata item)))
+
+(defun eve--edit-deleted-p (item)
+  "Return non-nil when ITEM is marked deleted via nested edit metadata."
+  (alist-get 'deleted (eve--edit-metadata item)))
+
+(defun eve--merge-faces (&rest faces)
+  "Merge FACES into a single face value."
+  (let ((merged nil))
+    (dolist (face faces)
+      (cond
+       ((null face))
+       ((listp face)
+        (dolist (item face)
+          (unless (memq item merged)
+            (setq merged (append merged (list item))))))
+       ((memq face merged))
+       (t
+        (setq merged (append merged (list face))))))
+    (pcase merged
+      (`() nil)
+      (`(,only) only)
+      (_ merged))))
+
+(defun eve--normalize-segment-text (text)
+  "Normalize segment TEXT for rendering."
+  (string-trim (replace-regexp-in-string "\\s-+" " " (eve--stringify text))))
+
+(defun eve--word-render-text (word)
+  "Return the preferred visible text for WORD."
+  (or (car (eve--word-strings word)) ""))
+
+(defun eve--segment-render-data (segment)
+  "Return SEGMENT render data as (:text TEXT :word-spans SPANS).
+Each entry in SPANS is (START END WORD) over the returned TEXT."
+  (let* ((words (alist-get 'words segment))
+         (text (eve--normalize-segment-text (alist-get 'text segment)))
+         (source-spans (and words (eve--segment-word-spans text)))
+         (pieces nil)
+         (word-spans nil)
+         (cursor 0))
+    (if (and words (= (length words) (length source-spans)))
+        (cl-loop for word in words
+                 for span in source-spans
+                 do
+                 (unless (and eve-hide-deleted-mode (eve--edit-deleted-p word))
+                   (let ((word-text (nth 2 span)))
+                     (unless (string-empty-p word-text)
+                       (when pieces
+                         (setq cursor (1+ cursor)))
+                       (push word-text pieces)
+                       (push (list cursor (+ cursor (length word-text)) word) word-spans)
+                       (setq cursor (+ cursor (length word-text)))))))
+      (if words
+          (dolist (word words)
+            (unless (and eve-hide-deleted-mode (eve--edit-deleted-p word))
+              (let ((word-text (string-trim (eve--word-render-text word))))
+                (unless (string-empty-p word-text)
+                  (when pieces
+                    (setq cursor (1+ cursor)))
+                  (push word-text pieces)
+                  (push (list cursor (+ cursor (length word-text)) word) word-spans)
+                  (setq cursor (+ cursor (length word-text)))))))
+        (setq pieces (unless (string-empty-p text) (list text)))))
+    (list :text (if pieces
+                    (string-join (nreverse pieces) " ")
+                  "")
+          :word-spans (nreverse word-spans))))
+
 (defun eve--render (&optional preserve-point)
   "Render `eve--data' into the current buffer."
   (let* ((segments (eve--segments))
 	 (current-id (and preserve-point (eve--segment-id-at-point)))
-	 (last-id (and segments (alist-get 'id (car (last segments)))))
 	 (inhibit-read-only t))
     (setq eve--last-echo-id nil)
     (setq eve--visual-separators
 	  (cl-remove-if-not (lambda (id)
 			      (seq-some (lambda (segment)
-					  (equal id (alist-get 'id segment)))
-					segments))
+				  (equal id (alist-get 'id segment)))
+				segments))
 			    eve--visual-separators))
     (erase-buffer)
-    (dolist (segment segments)
-      (let* ((id (or (alist-get 'id segment) ""))
-	     (tags (seq-filter (lambda (tag)
-				 (let ((s (eve--stringify tag)))
-				   (and s (not (string-empty-p s)))))
-			       (alist-get 'tags segment)))
-	     (notes (let ((s (eve--stringify (alist-get 'notes segment))))
-		      (unless (string-empty-p s) s)))
-	     (broll (alist-get 'broll segment))
-	     (start-pos (point)))
-	(when (and (eve--marker-p segment)
-		   (> (point) (point-min)))
-	  (let* ((start (max (point-min) (- (point) 2)))
-		 (need-extra
-		  (not (and (> (point) start)
-			    (string= "\n\n"
-				     (buffer-substring-no-properties
-				      start (point)))))))
-	    (when need-extra
-	      (unless (eq (char-before) ?\n)
-		(insert "\n"))
-	      (insert "\n"))))
-	(if (eve--marker-p segment)
-	    (progn
-	      (let* ((title (string-trim (eve--stringify (alist-get 'title segment))))
-		     (display (format "# %s" (if (string-empty-p title)
-						 "(Untitled marker)"
-					       title))))
-		(setq start-pos (point))
-		(insert display)
-		(add-text-properties start-pos (point)
-				     (list 'face 'eve-marker-face
-					   'font-lock-face 'eve-marker-face
-					   'eve-segment segment
-					   'eve-segment-id id
-					   'eve-tags tags
-					   'eve-notes notes
-					   'eve-broll broll
-					   'eve-marker t))))
-	  (let* ((raw-text (eve--stringify (alist-get 'text segment)))
-		 (text (string-trim (replace-regexp-in-string "\s-+" " " raw-text))))
-	    (setq start-pos (point))
-	    (insert text)
-	    (add-text-properties start-pos (point)
-				 (list 'face (if broll 'eve-broll-face 'eve-text-face)
-				       'font-lock-face (if broll 'eve-broll-face 'eve-text-face)
-				       'eve-segment segment
-				       'eve-segment-id id
-				       'eve-tags tags
-				       'eve-notes notes
-				       'eve-broll broll))
-	    (when (and eve--words-visible (alist-get 'words segment))
-	      (insert (propertize (format "\n[words] %s"
-					  (eve--format-words (alist-get 'words segment)))
-				  'face 'eve-meta-face)))))
-	(let ((meta-inserted (eve--render-broll-summary segment)))
-	  (cond
-	   ((equal id last-id)
-	    ;; no delimiter after final segment
-	    )
-	   ((eve--marker-p segment)
-	    (insert "\n\n"))
-	   ((member id eve--visual-separators)
-	    (insert "\n\n"))
-	   (meta-inserted
-	    (insert "\n"))
-	   (t
-	    (insert " "))))))
+    (let ((previous-id nil)
+	  (previous-marker nil)
+	  (previous-meta-inserted nil)
+	  (rendered-any nil))
+	  (dolist (segment segments)
+	    (let* ((id (or (alist-get 'id segment) ""))
+		   (_segment-edit (eve--ensure-edit-metadata-cell segment))
+		   (_word-edits (mapc #'eve--ensure-edit-metadata-cell
+				      (alist-get 'words segment)))
+		   (segment-deleted (eve--edit-deleted-p segment))
+		   (tags (seq-filter (lambda (tag)
+				       (let ((s (eve--stringify tag)))
+					 (and s (not (string-empty-p s)))))
+				     (eve--segment-tags segment)))
+		   (notes (let ((s (eve--stringify (eve--segment-notes segment))))
+			    (unless (string-empty-p s) s)))
+		   (broll (eve--segment-broll segment))
+		   (markerp (eve--marker-p segment))
+		   (render-data (unless markerp (eve--segment-render-data segment)))
+		   (text (and render-data (plist-get render-data :text)))
+		   (word-spans (and render-data (plist-get render-data :word-spans)))
+		   (base-face (if broll 'eve-broll-face 'eve-text-face))
+		   (segment-face (eve--merge-faces (when segment-deleted 'eve-deleted-face)
+					      (if markerp 'eve-marker-face base-face)))
+		   (segment-visible
+		    (and (not (and eve-hide-deleted-mode segment-deleted))
+			 (or markerp
+			     (not (string-empty-p text))
+			     (and eve--words-visible (alist-get 'words segment))
+			     broll))))
+	      (when segment-visible
+		(when rendered-any
+		  (cond
+		   ((or previous-marker
+			(member previous-id eve--visual-separators))
+		    (insert "\n\n"))
+		   (previous-meta-inserted
+		    (insert "\n"))
+		   (t
+		    (insert " "))))
+		(when (and markerp
+			   (> (point) (point-min)))
+		  (let* ((start (max (point-min) (- (point) 2)))
+			 (need-extra
+			  (not (and (> (point) start)
+				    (string= "\n\n"
+					     (buffer-substring-no-properties start (point)))))))
+		    (when need-extra
+		      (unless (eq (char-before) ?\n)
+			(insert "\n"))
+		      (insert "\n"))))
+		(if markerp
+		    (let* ((title (string-trim (eve--stringify (alist-get 'title segment))))
+			   (display (format "# %s"
+					    (if (string-empty-p title)
+						"(Untitled marker)"
+					      title)))
+			   (start-pos (point)))
+		      (insert display)
+		      (add-text-properties start-pos (point)
+					   (list 'face segment-face
+						 'font-lock-face segment-face
+						 'eve-segment segment
+						 'eve-segment-id id
+						 'eve-tags tags
+						 'eve-notes notes
+						 'eve-broll broll
+						 'eve-marker t)))
+		  (let ((start-pos (point)))
+		    (insert text)
+		    (when (> (point) start-pos)
+		      (add-text-properties start-pos (point)
+					   (list 'face segment-face
+						 'font-lock-face segment-face
+						 'eve-segment segment
+						 'eve-segment-id id
+						 'eve-tags tags
+						 'eve-notes notes
+						 'eve-broll broll))
+		      (dolist (span word-spans)
+			(let* ((word (nth 2 span))
+			       (word-face
+				(eve--merge-faces
+				 (when (equal (eve--edit-kind word) "filler")
+				   'eve-filler-face)
+				 (when (eve--edit-deleted-p word)
+				   'eve-deleted-face)
+				 segment-face)))
+			  (when (and word-face
+				     (> (nth 1 span) (nth 0 span)))
+			    (add-text-properties (+ start-pos (nth 0 span))
+						 (+ start-pos (nth 1 span))
+						 (list 'face word-face
+						       'font-lock-face word-face))))))
+		    (when (and eve--words-visible (alist-get 'words segment))
+		      (insert (propertize (format "\n[words] %s"
+						  (eve--format-words (alist-get 'words segment)))
+					  'face 'eve-meta-face)))))
+		(let ((meta-inserted (eve--render-broll-summary segment)))
+		  (setq rendered-any t
+			previous-id id
+			previous-marker markerp
+			previous-meta-inserted meta-inserted)))))
     (goto-char (point-min))
     (when current-id
       (eve--goto-segment current-id))
     (eve--update-focus-overlay)
-    (eve--apply-visual-wrap)))
+    (eve--apply-visual-wrap))))
 
 (defun eve--format-words (words)
   (mapconcat (lambda (word)
@@ -1023,7 +1398,10 @@ Returns the updated PLACEHOLDERS alist."
 		     (start (eve--format-time (alist-get 'start word)))
 		     (end (eve--format-time (alist-get 'end word))))
 		 (format "%s[%s-%s]" token start end)))
-	     words " "))
+	     (if eve-hide-deleted-mode
+		 (seq-remove #'eve--edit-deleted-p words)
+	       words)
+	     " "))
 
 (defun eve--summarize-broll (broll)
   (let* ((file (eve--stringify (alist-get 'file broll)))
@@ -1066,7 +1444,7 @@ Returns the updated PLACEHOLDERS alist."
 (defun eve--render-broll-summary (segment)
   "Insert a descriptive summary line for SEGMENT's b-roll metadata.
 Returns non-nil when a summary was inserted."
-  (let ((broll (alist-get 'broll segment)))
+  (let ((broll (eve--segment-broll segment)))
     (when broll
       (let* ((summary (or (eve--summarize-broll broll) ""))
 	     (line (if (string-empty-p (string-trim summary))
@@ -1368,93 +1746,74 @@ Optional COUNT moves backward multiple segments."
     (message "TJM redo")))
 
 (defun eve-delete-segment ()
-  "Delete the segment at point."
+  "Toggle the deleted flag on the segment at point."
   (interactive)
   (let* ((segment (eve--segment-at-point))
-	 (segments (eve--segments)))
+	 (segments (eve--segments))
+	 (segment-id (and segment (alist-get 'id segment)))
+	 (segment-index (and segment (cl-position segment segments :test #'eq)))
+	 (next-id (and segment-index
+		       (< (1+ segment-index) (length segments))
+		       (alist-get 'id (nth (1+ segment-index) segments))))
+	 (previous-id (and segment-index
+			 (> segment-index 0)
+			 (alist-get 'id (nth (1- segment-index) segments)))))
     (unless segment
       (user-error "No segment at point"))
-    (when (yes-or-no-p (format "Delete segment %s? " (alist-get 'id segment)))
+    (when (or (eve--edit-deleted-p segment)
+	      (yes-or-no-p (format "Delete segment %s? " segment-id)))
       (eve--record-state)
-      (let* ((segment-index (cl-position segment segments :test #'eq))
-	     (remaining (cl-remove segment segments :test #'eq))
-	     (next-id (cond
-		       ((and segment-index
-			     remaining
-			     (< segment-index (length remaining)))
-			(alist-get 'id (nth segment-index remaining)))
-		       ((and remaining segment-index)
-			(alist-get 'id (car (last remaining))))
-		       (remaining
-			(alist-get 'id (car remaining))))))
-	(setf (alist-get 'segments eve--data) remaining)
+	      (let ((deleted (eve--toggle-edit-deleted segment)))
 	(eve--mark-dirty)
 	(eve--render t)
-	(when next-id
-	  (eve--goto-segment next-id)
-	  (eve--update-focus-overlay)
-	  (eve--echo-segment-info))
-	(message "Segment deleted")))))
+	(or (eve--goto-segment segment-id)
+	    (and next-id (eve--goto-segment next-id))
+	    (and previous-id (eve--goto-segment previous-id)))
+	(eve--update-focus-overlay)
+	(eve--echo-segment-info)
+	(message "Segment %s" (if deleted "deleted" "restored"))))))
 
 (defun eve-delete-word ()
-  "Delete the word at point from the current segment."
+  "Toggle the deleted flag on the word at point."
   (interactive)
   (let* ((info (eve--word-info-at-point))
 	 (segment (plist-get info :segment))
 	 (segment-id (plist-get info :segment-id))
-	 (segment-start (eve--coerce-number (alist-get 'start segment)))
 	 (word-index (plist-get info :word-index))
 	 (word-text (plist-get info :word-text))
-	 (word-spans (plist-get info :word-spans))
-	 (words (alist-get 'words segment)))
+	 (words (alist-get 'words segment))
+	 (token-index (eve--find-word-token-index words word-text word-index))
+	 (fallback-token-index (and words (numberp word-index)
+				    (<= 0 word-index)
+				    (< word-index (length words))
+				    word-index))
+	 (effective-token-index (or token-index fallback-token-index))
+	 (word (and words
+		    (numberp effective-token-index)
+		    (<= 0 effective-token-index)
+		    (< effective-token-index (length words))
+		    (nth effective-token-index words))))
+    (unless word
+      (user-error "Segment has no word timings to delete"))
     (eve--record-state)
-    (let* ((new-spans (eve--remove-nth word-index word-spans))
-	   (new-text (eve--spans->text new-spans))
-	   (token-index (eve--find-word-token-index words word-text word-index))
-	   (fallback-token-index (and words (numberp word-index)
-				      (<= 0 word-index)
-				      (< word-index (length words))
-				      word-index))
-	   (effective-token-index (or token-index fallback-token-index))
-	   (new-length (length new-spans))
-	   (target-index (cond
-			  ((> new-length word-index) word-index)
-			  ((> word-index 0) (1- word-index))
-			  (t nil))))
-      (setf (alist-get 'text segment) new-text)
-      (when (and words (numberp effective-token-index))
-	(let ((updated (eve--remove-nth effective-token-index words)))
-	  (setf (alist-get 'words segment) (and updated updated))))
-      (let ((words-after (alist-get 'words segment)))
-	(if words-after
-	    (let* ((first-word (car words-after))
-		   (last-word (car (last words-after))))
-	      (setf (alist-get 'start segment)
-		    (eve--coerce-number (alist-get 'start first-word)))
-	      (setf (alist-get 'end segment)
-		    (eve--coerce-number (alist-get 'end last-word))))
-	  (when (and (string-empty-p new-text)
-		     segment-start)
-	    ;; Collapse the segment when no words remain so validation highlights it.
-	    (setf (alist-get 'end segment) segment-start)
-	    (setf (alist-get 'start segment) segment-start))))
-      (when (and words (null (alist-get 'words segment)))
-	(setf (alist-get 'words segment) nil))
+    (let ((deleted (eve--toggle-edit-deleted word)))
       (eve--mark-dirty)
       (eve--render t)
-      (eve--goto-segment segment-id)
-      (when (and target-index (>= target-index 0))
-	(eve--goto-word-by-index segment-id target-index))
+      (or (eve--goto-word-by-index segment-id word-index)
+	  (and (> word-index 0)
+	       (eve--goto-word-by-index segment-id (1- word-index)))
+	  (eve--goto-segment segment-id))
       (eve--update-focus-overlay)
       (eve--echo-segment-info)
-      (message "Deleted word '%s'" word-text))))
+      (message "Word '%s' %s" word-text (if deleted "deleted" "restored")))))
 
 (defun eve-split-segment ()
-  "Split the current segment at point, creating a new segment that starts at the word under point."
+  "Split the current segment at point, creating a new segment
+that starts at the word under point."
   (interactive)
   (let* ((info (eve--word-info-at-point))
 	 (segment (plist-get info :segment))
-	 (broll-orig (let ((b (alist-get 'broll segment)))
+	 (broll-orig (let ((b (eve--segment-broll segment)))
 		       (and b (copy-alist b))))
 	 (segment-id (plist-get info :segment-id))
 	 (word-index (plist-get info :word-index))
@@ -1481,7 +1840,7 @@ Optional COUNT moves backward multiple segments."
 	;; Update text and timings for the first half
 	(setf (alist-get 'text segment-before) (eve--spans->text before-spans))
 	(setf (alist-get 'words segment-before) before-words)
-	(setf (alist-get 'broll segment-before) (and broll-orig (copy-alist broll-orig)))
+	(eve--set-segment-broll segment-before (and broll-orig (copy-alist broll-orig)))
 	(let ((first before-words)
 	      (last (last before-words)))
 	  (when (and first last)
@@ -1493,7 +1852,7 @@ Optional COUNT moves backward multiple segments."
 	(setf (alist-get 'id segment-after) new-id)
 	(setf (alist-get 'text segment-after) (eve--spans->text after-spans))
 	(setf (alist-get 'words segment-after) after-words)
-	(setf (alist-get 'broll segment-after) (and broll-orig (copy-alist broll-orig)))
+	(eve--set-segment-broll segment-after (and broll-orig (copy-alist broll-orig)))
 	(let ((first after-words)
 	      (last (last after-words)))
 	  (when (and first last)
@@ -1514,12 +1873,10 @@ Optional COUNT moves backward multiple segments."
 	(eve--mark-dirty)
 	(eve--render t)
 	(when broll-orig
-	  (let* ((broll-before (alist-get 'broll segment-before))
-		 (broll-after (alist-get 'broll segment-after))
+	  (let* ((broll-before (eve--segment-broll segment-before))
+		 (broll-after (eve--segment-broll segment-after))
 		 (start-before (eve--coerce-number (alist-get 'start segment-before)))
 		 (end-before (eve--coerce-number (alist-get 'end segment-before)))
-		 (start-after (eve--coerce-number (alist-get 'start segment-after)))
-		 (end-after (eve--coerce-number (alist-get 'end segment-after)))
 		 (duration-before (and start-before end-before (- end-before start-before)))
 		 (orig-offset (alist-get 'start_offset broll-orig))
 		 (orig-duration (alist-get 'duration broll-orig))
@@ -1592,34 +1949,36 @@ Optional COUNT moves backward multiple segments."
 	     (end-a (eve--coerce-number (alist-get 'end segment)))
 	     (start-b (eve--coerce-number (alist-get 'start next)))
 	     (end-b (eve--coerce-number (alist-get 'end next)))
-	     (note-a (eve--stringify (alist-get 'notes segment)))
-	     (note-b (eve--stringify (alist-get 'notes next)))
-	     (tag-a (copy-sequence (alist-get 'tags segment)))
-	     (tag-b (copy-sequence (alist-get 'tags next)))
+	     (note-a (eve--stringify (eve--segment-notes segment)))
+	     (note-b (eve--stringify (eve--segment-notes next)))
+	     (tag-a (copy-sequence (eve--segment-tags segment)))
+	     (tag-b (copy-sequence (eve--segment-tags next)))
 	     (next-id (alist-get 'id next))
-	     (next-had-broll (alist-get 'broll next)))
+	     (next-had-broll (eve--segment-broll next)))
 	(setf (alist-get 'text segment)
 	      (and (not (string-empty-p combined-text)) combined-text))
 	(setf (alist-get 'words segment) (and merged-words merged-words))
 	(let ((notes (seq-filter (lambda (chunk)
 				   (and chunk (not (string-empty-p chunk))))
 				 (list note-a note-b))))
-	  (setf (alist-get 'notes segment)
-		(cond
-		 ((null notes) nil)
-		 ((= (length notes) 1) (car notes))
-		 (t (mapconcat #'identity notes "\n\n")))))
+	  (eve--set-segment-notes
+	   segment
+	   (cond
+	    ((null notes) nil)
+	    ((= (length notes) 1) (car notes))
+	    (t (mapconcat #'identity notes "\n\n")))))
 	(let* ((combined-tags (append tag-a tag-b))
 	       (clean-tags
 		(seq-filter (lambda (tag)
 			      (let ((as-string (eve--stringify tag)))
 				(and as-string (not (string-empty-p as-string)))))
 			    combined-tags)))
-	  (setf (alist-get 'tags segment)
-		(when clean-tags
-		  (cl-delete-duplicates clean-tags
-					:test #'string=
-					:key #'eve--stringify))))
+	  (eve--set-segment-tags
+	   segment
+	   (when clean-tags
+	     (cl-delete-duplicates clean-tags
+				   :test #'string=
+				   :key #'eve--stringify))))
 	(if merged-words
 	    (let ((first-word (car merged-words))
 		  (last-word (car (last merged-words))))
@@ -1718,9 +2077,9 @@ Optional COUNT moves backward multiple segments."
   (interactive (list (or (eve--segment-at-point)
 			 (user-error "No segment at point"))))
   (eve--record-state)
-  (let* ((current (alist-get 'notes segment))
+  (let* ((current (eve--segment-notes segment))
 	 (new (read-string "Notes (blank to clear): " (or current ""))))
-    (setf (alist-get 'notes segment) (unless (string-empty-p new) new))
+    (eve--set-segment-notes segment (unless (string-empty-p new) new))
     (eve--mark-dirty)
     (eve--render t)))
 
@@ -1764,12 +2123,12 @@ Optional COUNT moves backward multiple segments."
 	 (tag (read-string "Tag: ")))
      (list seg tag)))
   (eve--record-state)
-  (let* ((tags (copy-sequence (alist-get 'tags segment)))
+  (let* ((tags (copy-sequence (eve--segment-tags segment)))
 	 (existing (member tag tags)))
     (if existing
 	(setq tags (delete tag tags))
       (setq tags (append tags (list tag))))
-    (setf (alist-get 'tags segment) tags)
+    (eve--set-segment-tags segment tags)
     (eve--mark-dirty)
     (eve--render t)))
 
@@ -1778,7 +2137,7 @@ Optional COUNT moves backward multiple segments."
   (interactive (list (or (eve--segment-at-point)
 			 (user-error "No segment at point"))))
   (eve--record-state)
-  (let* ((broll (copy-alist (alist-get 'broll segment)))
+  (let* ((broll (copy-alist (eve--segment-broll segment)))
 	 (file (read-string "B-roll file (blank to clear): "
 			    (eve--stringify (alist-get 'file broll))))
 	 (mode (read-string "Mode (overlay/replace/pip): "
@@ -1841,7 +2200,7 @@ Optional COUNT moves backward multiple segments."
     (when (and still (string= (downcase audio) "broll"))
       (user-error "Still images cannot use b-roll audio"))
     (if (string-empty-p file)
-	(setf (alist-get 'broll segment) nil)
+	(eve--set-segment-broll segment nil)
       (progn
 	(setf (alist-get 'file broll nil t) file)
 	(setf (alist-get 'mode broll nil t) (unless (string-empty-p mode) mode))
@@ -1850,7 +2209,7 @@ Optional COUNT moves backward multiple segments."
 	(setf (alist-get 'duration broll nil t) duration)
 	(setf (alist-get 'still broll nil t) (and still t))
 	(setf (alist-get 'continue broll nil t) (and continue t))
-	(setf (alist-get 'broll segment) broll)
+	(eve--set-segment-broll segment broll)
 	(when (and template
 		   (null (eve--aget 'placeholders broll))
 		   (eve--aget 'placeholders template))
@@ -1862,11 +2221,11 @@ Optional COUNT moves backward multiple segments."
   "Edit placeholder overrides for SEGMENT's b-roll metadata."
   (interactive (list (or (eve--segment-at-point)
 			 (user-error "No segment at point"))))
-  (let ((broll (alist-get 'broll segment)))
+  (let ((broll (eve--segment-broll segment)))
     (unless broll
       (user-error "Segment has no b-roll metadata")))
   (eve--record-state)
-  (let* ((broll (copy-alist (alist-get 'broll segment)))
+  (let* ((broll (copy-alist (eve--segment-broll segment)))
 	 (existing (copy-tree (eve--aget 'placeholders broll)))
 	 (template (eve--broll-template-data broll))
 	 (template-defaults (copy-tree (eve--aget 'placeholders template)))
@@ -1898,7 +2257,7 @@ Optional COUNT moves backward multiple segments."
     (if overrides
 	(setf (alist-get 'placeholders broll nil t #'equal) overrides)
       (setf (alist-get 'placeholders broll nil t #'equal) nil))
-    (setf (alist-get 'broll segment) broll)
+    (eve--set-segment-broll segment broll)
     (eve--mark-dirty)
     (eve--render t)
     (message "Updated b-roll placeholders")))
@@ -1909,6 +2268,61 @@ Optional COUNT moves backward multiple segments."
   (setq eve--words-visible (not eve--words-visible))
   (eve--render t)
   (message "Word timings %s" (if eve--words-visible "enabled" "hidden")))
+
+(defun eve-tag-fillers ()
+  "Tag filler words/phrases in `eve--data'."
+  (interactive)
+  (eve--record-state)
+  (let ((tagged (eve--apply-filler-tags)))
+    (when (> tagged 0)
+      (eve--mark-dirty))
+    (eve--render t)
+    (message (if (> tagged 0)
+                 "Tagged %d filler word%s"
+               "No filler words matched")
+             tagged
+             (if (= tagged 1) "" "s"))))
+
+(defun eve-add-filler-at-point ()
+  "Add the word at point to `eve-filler-phrases', then re-tag and render."
+  (interactive)
+  (let* ((info (eve--word-info-at-point))
+         (word-text (plist-get info :word-text))
+         (tokens (eve--normalize-word-tokens word-text))
+         (phrase (and tokens (string-join tokens " "))))
+    (when (or (null phrase) (string-empty-p phrase))
+      (user-error "No word at point"))
+    (unless (member phrase eve-filler-phrases)
+      (setq eve-filler-phrases (append eve-filler-phrases (list phrase)))
+      (condition-case nil
+          (customize-save-variable 'eve-filler-phrases eve-filler-phrases)
+        (error nil)))
+    (eve--record-state)
+    (let ((tagged (eve--apply-filler-tags)))
+      (when (> tagged 0)
+        (eve--mark-dirty)))
+    (eve--render t)
+    (message "Added filler phrase: %s" phrase)))
+
+(defun eve-add-filler-region (start end)
+  "Add region text START..END to `eve-filler-phrases', then re-tag and render."
+  (interactive "r")
+  (let* ((raw (buffer-substring-no-properties start end))
+         (tokens (eve--normalize-word-tokens raw))
+         (phrase (and tokens (string-join tokens " "))))
+    (when (or (null phrase) (string-empty-p phrase))
+      (user-error "Region normalizes to empty string"))
+    (unless (member phrase eve-filler-phrases)
+      (setq eve-filler-phrases (append eve-filler-phrases (list phrase)))
+      (condition-case nil
+          (customize-save-variable 'eve-filler-phrases eve-filler-phrases)
+        (error nil)))
+    (eve--record-state)
+    (let ((tagged (eve--apply-filler-tags)))
+      (when (> tagged 0)
+        (eve--mark-dirty)))
+    (eve--render t)
+    (message "Added filler phrase: %s" phrase)))
 
 (defun eve-toggle-separator ()
   "Toggle a visual separator after the current segment."
@@ -2135,9 +2549,9 @@ If SILENT is non-nil, only produce messages when failures occur."
 	     (source (eve--stringify (alist-get 'source segment)))
 	     (start (or (eve--display-time (alist-get 'start segment)) ""))
 	     (end (or (eve--display-time (alist-get 'end segment)) ""))
-	     (tags (alist-get 'tags segment))
-	     (notes (eve--stringify (alist-get 'notes segment)))
-	     (broll (alist-get 'broll segment))
+	     (tags (eve--segment-tags segment))
+	     (notes (eve--stringify (eve--segment-notes segment)))
+	     (broll (eve--segment-broll segment))
 	     (parts (delq nil (list (format "[%s]" id)
 				    speaker
 				    (format "(%s %s-%s)" source start end)

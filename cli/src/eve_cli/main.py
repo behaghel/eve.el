@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 from collections.abc import Sequence
 
 from eve_cli import __version__
 from eve_cli.commands import batch, denoise, doctor, text_edit, transcribe, trim_fillers
+
+tag_fillers = importlib.import_module("eve_cli.commands.tag_fillers")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.register(subparsers)
     transcribe.register(subparsers)
     text_edit.register(subparsers)
+    tag_fillers.register(subparsers)
     trim_fillers.register(subparsers)
     denoise.register(subparsers)
     batch.register(subparsers)

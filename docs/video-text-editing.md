@@ -104,6 +104,34 @@ before editing:
 - A successful transcription opens the generated manifest immediately, so the
   buffer comes up in `eve-mode`; failures surface the `*eve transcribe*`
   buffer for inspection.
+- Emacs forwards `eve-transcribe-backend`, `eve-transcribe-model`,
+  `eve-transcribe-verbatim`, and `eve-transcribe-tag-fillers` to the CLI, so
+  backend choice, model choice, verbatim bias, and filler tagging are all
+  configurable from the editor side.
+
+The current CLI transcription path supports three backends:
+
+- `--backend faster-whisper` is the default and uses the built-in dependency
+  set from `cli/pyproject.toml`.
+- `--backend transformers` and `--backend nemo` are optional backends. Install
+  their extras from the repo root with `uv sync --project cli --extra
+  transformers` or `uv sync --project cli --extra nemo`, or from `cli/` with
+  `uv pip install .[transformers]` or `uv pip install .[nemo]`.
+- `--verbatim` currently changes decoding behavior on the `faster-whisper`
+  path, where it biases output toward spoken disfluencies and other verbatim
+  details.
+- For the optional backends, the practical verbatim lever is model selection
+  through `--model` (or `eve-transcribe-model` in Emacs). Recommended starting
+  points are `nyrahealth/CrisperWhisper` via `transformers` and
+  `nvidia/parakeet-ctc-1.1b` via `nemo`.
+- `--tag-fillers` runs a non-destructive manifest pass before writing output,
+  tagging matching words with `kind: "filler"` instead of trimming audio or
+  video.
+
+The standalone `eve tag-fillers` command applies that same non-destructive
+filler pass to an existing manifest. `eve trim-fillers` is still present for
+older media-trimming workflows, but it is now deprecated and warns users to use
+`eve tag-fillers` instead.
 
 Beyond those shipped entry points, the broader editing workflow continues to
 evolve around a custom major mode (building on ideas from `subed`) that
@@ -112,18 +140,20 @@ understands TJM files:
 - Presents each `segment` as a top-level heading with commands to expand/hide the per-word list. Navigation keys jump to next/previous segment or word.
 - Playback integration: using `subed` APIs or `mpv` via D-Bus, pressing `RET` plays the active segment; `M-p`/`M-n` jump between words.
 - Editing actions:
-  - Delete segment/word: remove the JSON object; mode keeps IDs stable or regenerates them on save.
+  - Delete segment/word: deleting a whole segment removes its JSON object. Deleting a word follows the current segment-boundary bridge: removing the first or last word trims that segment's `start`/`end`, removing the only word deletes the segment, and removing an interior word splits one segment into two adjacent segments because the current Python renderer only sees `segments` boundaries, not holes inside one segment's `words`.
   - Insert segment: split an existing segment by editing `words` and adjusting `start`/`end`.
   - Merge adjacent segments: with point on the first segment, invoke `C-c m` (`J` in Evil) to span overlays like b-roll across the combined text.
   - Insert marker segments: `M-j` (or `C-c C-m`) prompts for a title, optional `source`, and optional `start` so you can outline sections without altering media order.
-  - Proposed v1.1 filler review: a manifest-aware filler pass can tag matching
-    words with `kind: "filler"` so the editor or renderer can review those
-    words before deciding whether to cut, hide, mute, or delete them.
+  - Current filler review: `eve transcribe --tag-fillers` and
+    `eve tag-fillers` can tag matching words with `kind: "filler"` so the
+    editor or renderer can review those words before deciding whether to cut,
+    hide, mute, or delete them. This tagging pass updates the manifest only; it
+    does not trim media.
   - Set b-roll metadata: choose files (relative paths welcome), switch overlay mode, flag still images (renderer synthesises a looping frame), and enter optional `start_offset`/`duration` values (seconds or `HH:MM:SS.mmm`) to begin partway through the clip without importing its audio.
   - Toggle b-roll continuity: `; B` flips the `continue` flag so an overlay can span multiple consecutive segments.
   - Reorder: drag segments around; the new ordering directly controls the final video timeline.
   - Tagging: quick keybinds to toggle `tags` (e.g., `C-c t b` to toggle `broll`).
-  - Compile: `C-c C-c` runs `eve text-edit` on the open manifest, producing `<parent-directory>.mp4` with subtitles and short-gap preservation while streaming output in a small compilation buffer below.
+  - Compile: `C-c C-c` runs `eve text-edit` on the open manifest, producing `<parent-directory>.mp4` with subtitles and short-gap preservation while streaming output in a small compilation buffer below. The short-gap threshold is an Emacs-side compile setting that defaults to `2.0` seconds and is passed through as `--preserve-short-gaps`.
   - When triggered on a section marker, compilation renders only the following segments up to the next marker (or file end) into `<parent-directory>-<section-slug>.mp4`.
 - Saving writes canonical, pretty-printed JSON so external tools can consume it. We may accompany the JSON with a minimal `.vtt` or `.srt` render for review players, but the JSON remains the source of truth.
 
@@ -149,10 +179,11 @@ The TJM major mode should cover:
 
 - **Editing Primitives**
   - Deleting a segment removes its node and closes timing gaps by simply omitting it in the array.
+  - Deleting a word uses the current renderer bridge: trim the segment when the deleted word is at either edge, delete the segment when it only contained that one word, or split the segment into leading/trailing neighbours when the deletion lands in the interior.
   - Splitting and merging segments should adjust `start`/`end` and regenerate word lists.
   - Moving segments between sources (changing `source` id) with interactive completion.
   - Inline editing of `broll` metadata with schema-aware prompts (mode ensures only valid keys/values are added).
-  - Compiling via `C-c C-c` should integrate with Emacs’ Compile framework, defaulting the command to `eve text-edit <file> --output <parent>.mp4 --subtitles --preserve-short-gaps 1.5` and displaying the results in a bottom window (~12 lines high).
+  - Compiling via `C-c C-c` should integrate with Emacs' Compile framework, defaulting the command to `eve text-edit <file> --output <parent>.mp4 --subtitles --preserve-short-gaps <threshold>` where `<threshold>` comes from an Emacs customization that defaults to `2.0`, and displaying the results in a bottom window (~12 lines high).
   - Commands to normalise timings (e.g., `eve-normalize` to rebuild `text` from `words` or ensure monotonic timestamps).
 
 - **Validation & Tooling**
@@ -170,6 +201,7 @@ The TJM major mode should cover:
 
 1. Validate all sources exist and pre-load durations.
 2. Walk the `segments` array **in file order** (post-edit). Deleted segments simply disappear; reordering is achieved by rearranging array entries.
+   The current renderer derives cuts from segment boundaries, so an interior word deletion must already be represented in the manifest as two adjacent segments rather than a hole inside one segment.
 3. For each segment, emit FFmpeg filter instructions:
    - `trim`/`aselect` on the source clip.
    - Optional overlay commands if `broll` is provided (`overlay`, `replace`, `pip` modes map to different filter graphs).

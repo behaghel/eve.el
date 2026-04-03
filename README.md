@@ -65,6 +65,9 @@ from Emacs:
   enables `eve-mode` automatically.
 - On failure, Emacs shows the `*eve transcribe*` buffer so you can inspect the
   command output.
+- Emacs passes transcription settings through the customizable variables
+  `eve-transcribe-backend`, `eve-transcribe-model`,
+  `eve-transcribe-verbatim`, and `eve-transcribe-tag-fillers`.
 
 If you want a Dired key for the command, add one in your own Emacs config:
 
@@ -72,6 +75,35 @@ If you want a Dired key for the command, add one in your own Emacs config:
 (with-eval-after-load 'dired
   (define-key dired-mode-map (kbd "C-c C-t") #'eve-dired-transcribe))
 ```
+
+If you want to change the backend or model that Emacs launches, customize the
+same variables it forwards to `eve transcribe`:
+
+```elisp
+(setq eve-transcribe-backend "faster-whisper"
+      eve-transcribe-model "base.en"
+      eve-transcribe-verbatim t
+      eve-transcribe-tag-fillers t)
+```
+
+`eve transcribe` currently supports `faster-whisper`, `transformers`, and
+`nemo` backends. `--verbatim` biases decoding toward spoken disfluencies on the
+`faster-whisper` path; for the optional backends, pick a verbatim-friendly
+model with `--model` or `eve-transcribe-model` instead. Practical starting
+points are `nyrahealth/CrisperWhisper` with `--backend transformers` and
+`nvidia/parakeet-ctc-1.1b` with `--backend nemo`.
+
+The optional `transformers` and `nemo` backends need extra Python dependencies.
+From the repo root, install them with `uv sync --project cli --extra
+transformers` or `uv sync --project cli --extra nemo`; from `cli/`, use
+`uv pip install .[transformers]` or `uv pip install .[nemo]`.
+
+`--tag-fillers` and `eve-transcribe-tag-fillers` apply non-destructive filler
+review during transcription by marking matching manifest words with
+`kind: "filler"`. The standalone `eve tag-fillers` command applies the same
+tagging to an existing TJM manifest without trimming media. `eve trim-fillers`
+still exists today, but it is deprecated in favor of this manifest-tagging
+workflow.
 
 ## Project Layout
 
@@ -121,9 +153,10 @@ consuming Emacs configuration rather than in the package itself.
 commands that support the Emacs workflow.
 
 Today the Python package provides the canonical `eve` command with migrated
-subcommands for `transcribe`, `text-edit`, `trim-fillers`, `denoise`, and
-`batch`. The Emacs package calls this CLI rather than embedding or depending on
-Nix-hosted business logic.
+subcommands for `transcribe`, `text-edit`, `tag-fillers`, `trim-fillers`,
+`denoise`, and `batch`. The Emacs package calls this CLI rather than embedding
+or depending on Nix-hosted business logic. `trim-fillers` remains available for
+now but prints a deprecation warning that points users to `eve tag-fillers`.
 
 ## Verification
 

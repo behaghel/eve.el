@@ -22,6 +22,16 @@ dependencies = [
   "faster-whisper>=1.1.1",
 ]
 
+[project.optional-dependencies]
+transformers = [
+  "torch>=2.8.0",
+  "transformers>=4.55.0",
+]
+nemo = [
+  "nemo_toolkit[asr]>=2.4.0",
+  "torch>=2.8.0",
+]
+
 [project.scripts]
 eve = "eve_cli.main:main"
 
