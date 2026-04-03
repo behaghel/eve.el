@@ -1185,6 +1185,7 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (add-hook 'post-command-hook #'eve--post-command nil t)
   (add-hook 'window-configuration-change-hook #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
+  (add-hook 'kill-buffer-hook #'eve--ipc-teardown nil t)
   (eve-hide-deleted-mode 1)
   (eve-ruler-mode 1)
   (setq-local mode-line-format
@@ -2649,13 +2650,97 @@ that starts at the word under point."
 	(eve--play-with-mpv abs-file start end)
 	(message "Playing %s [%s-%s]" file start end)))))
 
+(defun eve--ipc-connect (socket-path)
+  "Connect to the mpv JSON IPC socket at SOCKET-PATH.
+Stores the network process in `eve--ipc-process' and sets up a filter
+to accumulate incoming data in the process buffer.  Returns the process."
+  (let* ((buf (generate-new-buffer " *eve-ipc*"))
+         (proc (condition-case err
+                   (make-network-process
+                    :name "eve-ipc"
+                    :buffer buf
+                    :family 'local
+                    :service socket-path
+                    :coding 'utf-8-unix
+                    :noquery t)
+                 (error
+                  (kill-buffer buf)
+                  (signal (car err) (cdr err))))))
+    (setq eve--ipc-process proc)
+    proc))
+
+(defun eve--ipc-send (command)
+  "Send COMMAND (a list of strings) as a JSON IPC message to mpv.
+COMMAND is e.g. \='(\"get_property\" \"playback-time\").
+Silently does nothing if `eve--ipc-process' is not live."
+  (condition-case nil
+      (when (and eve--ipc-process (process-live-p eve--ipc-process))
+        (process-send-string
+         eve--ipc-process
+         (concat (json-encode `(("command" . ,command))) "\n")))
+    (error nil)))
+
+(defun eve--ipc-get-property (property)
+  "Query mpv for PROPERTY via IPC and return the value, or nil on error.
+Sends a get_property request and waits up to 0.1s for the response."
+  (condition-case nil
+      (when (and eve--ipc-process (process-live-p eve--ipc-process))
+        (let ((buf (process-buffer eve--ipc-process)))
+          ;; Clear existing output
+          (with-current-buffer buf (erase-buffer))
+          (eve--ipc-send (list "get_property" property))
+          (accept-process-output eve--ipc-process 0.1)
+          (with-current-buffer buf
+            (condition-case nil
+                (let* ((json-str (buffer-string))
+                       ;; Take last complete JSON object (mpv may send multiple)
+                       (last-obj (and (not (string-empty-p json-str))
+                                      (json-parse-string
+                                       (car (last (split-string
+                                                   (string-trim json-str) "\n" t)))))))
+                  (when (hash-table-p last-obj)
+                    (gethash "data" last-obj)))
+              (error nil)))))
+    (error nil)))
+
+(defun eve--ipc-teardown ()
+  "Tear down mpv IPC: kill process, cancel timer, remove overlay, delete socket.
+This is the single cleanup entry point called from all exit paths."
+  ;; Cancel poll timer
+  (when (timerp eve--playback-timer)
+    (cancel-timer eve--playback-timer)
+    (setq eve--playback-timer nil))
+  ;; Remove playback overlay
+  (when (overlayp eve--playback-overlay)
+    (delete-overlay eve--playback-overlay)
+    (setq eve--playback-overlay nil))
+  ;; Kill IPC process and its buffer
+  (when (process-live-p eve--ipc-process)
+    (condition-case nil (kill-process eve--ipc-process) (error nil)))
+  (when (and eve--ipc-process (process-buffer eve--ipc-process))
+    (condition-case nil
+        (kill-buffer (process-buffer eve--ipc-process))
+      (error nil)))
+  (setq eve--ipc-process nil)
+  ;; Delete socket file (Unix sockets persist after process death)
+  (when (and eve--ipc-socket-path (file-exists-p eve--ipc-socket-path))
+    (condition-case nil (delete-file eve--ipc-socket-path) (error nil)))
+  (setq eve--ipc-socket-path nil)
+  ;; Clear remaining state
+  (setq eve--playback-mode nil
+        eve--playback-time-map nil
+        eve--playback-source-segments nil))
+
 (defun eve-stop-playback ()
-  "Stop current playback process if any."
+  "Stop current playback process and clean up IPC state."
   (interactive)
-  (when (process-live-p eve--mpv-process)
-    (kill-process eve--mpv-process)
-    (setq eve--mpv-process nil)
-    (message "Playback stopped")))
+  (let ((was-playing (process-live-p eve--mpv-process)))
+    (eve--ipc-teardown)
+    (when (process-live-p eve--mpv-process)
+      (condition-case nil (kill-process eve--mpv-process) (error nil))
+      (setq eve--mpv-process nil))
+    (when was-playing
+      (message "Playback stopped"))))
 
 (defun eve--play-with-mpv (file start end)
   (unless (executable-find eve-play-program)

@@ -1159,6 +1159,34 @@
     (should (equal "seg-a" (eve--playback-rendered-segment-at-time 0.0  ctimes)))
     (should (equal "seg-a" (eve--playback-rendered-segment-at-time 15.0 ctimes)))))
 
+(ert-deftest eve-ipc-teardown-is-idempotent ()
+  "Calling eve--ipc-teardown when nothing is active leaves state nil."
+  (eve-test-with-buffer
+   ;; State already nil from fresh buffer — should not error
+   (eve--ipc-teardown)
+   (should-not eve--ipc-process)
+   (should-not eve--playback-timer)
+   (should-not eve--playback-overlay)
+   ;; Second call also safe
+   (eve--ipc-teardown)
+   (should-not eve--ipc-process)))
+
+(ert-deftest eve-ipc-send-nil-process-is-safe ()
+  "eve--ipc-send does not error when eve--ipc-process is nil."
+  (eve-test-with-buffer
+   (setq-local eve--ipc-process nil)
+   ;; Must not signal
+   (should-not (eve--ipc-send '("get_property" "playback-time")))))
+
+(ert-deftest eve-stop-playback-calls-teardown ()
+  "eve-stop-playback invokes eve--ipc-teardown."
+  (eve-test-with-buffer
+   (let ((teardown-called nil))
+     (cl-letf (((symbol-function 'eve--ipc-teardown)
+                (lambda () (setq teardown-called t))))
+       (eve-stop-playback)
+       (should teardown-called)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here
