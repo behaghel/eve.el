@@ -1030,6 +1030,42 @@
   (let ((times '(("seg-a" . 5.0))))
     (should (= 6 (length (eve--ruler-milestones times 0))))))
 
+(ert-deftest eve-ruler-update-ruler-creates-overlays ()
+  "After eve--update-ruler, ruler overlays are created."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve--update-ruler)
+     (should (> (length eve--ruler-overlays) 0)))))
+
+(ert-deftest eve-ruler-clear-overlays-removes-all ()
+  "After eve--ruler-clear-overlays, the list is empty."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve--update-ruler)
+     (should (> (length eve--ruler-overlays) 0))
+     (eve--ruler-clear-overlays)
+     (should (null eve--ruler-overlays)))))
+
+(ert-deftest eve-ruler-overlay-has-margin-display ()
+  "Ruler overlays have a before-string with right-margin display spec."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve--update-ruler)
+     (when eve--ruler-overlays
+       (let* ((o (car eve--ruler-overlays))
+              (bs (overlay-get o 'before-string)))
+         (should bs)
+         (should (get-text-property 0 'display bs)))))))
+
+(ert-deftest eve-ruler-overlays-survive-re-render ()
+  "After a re-render that calls eve--update-ruler, overlays are recreated."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve--update-ruler)
+     (let ((count-before (length eve--ruler-overlays)))
+       (eve--update-ruler)
+       (should (= (length eve--ruler-overlays) count-before))))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here

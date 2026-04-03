@@ -133,6 +133,11 @@ present."
   :type '(repeat regexp)
   :group 'eve)
 
+(defcustom eve-ruler-interval 30.0
+  "Interval in seconds between right-margin timestamp ruler markers."
+  :type 'float
+  :group 'eve)
+
 (defface eve-heading-face
   '((t :inherit font-lock-keyword-face :weight bold))
   "Face for segment headings."
@@ -174,6 +179,11 @@ present."
   "Face used to highlight the segment under point.
 Uses a green tint so it remains visually distinct from the region face,
 which is typically blue or grey in most themes."
+  :group 'eve)
+
+(defface eve-ruler-face
+  '((t :inherit font-lock-comment-face :slant italic))
+  "Face used for right-margin timestamp ruler markers."
   :group 'eve)
 
 (defvar eve-mode-map
@@ -233,6 +243,9 @@ which is typically blue or grey in most themes."
 
 (defvar-local eve--focus-overlay nil
   "Overlay highlighting the current segment.")
+
+(defvar-local eve--ruler-overlays nil
+  "List of right-margin ruler overlays for the current buffer.")
 
 (defvar-local eve--last-echo-id nil
   "Segment id that was last echoed in the minibuffer.")
@@ -2646,6 +2659,57 @@ If SILENT is non-nil, only produce messages when failures occur."
                      'eve-current-segment-face))
       (overlay-put eve--focus-overlay 'priority -50)
       (overlay-put eve--focus-overlay 'evaporate t))))
+
+(defun eve--ruler-clear-overlays ()
+  "Delete all ruler overlays and clear the tracking list."
+  (mapc #'delete-overlay eve--ruler-overlays)
+  (setq eve--ruler-overlays nil))
+
+(defun eve--ruler-create-overlays (milestones)
+  "Create right-margin ruler overlays for MILESTONES.
+MILESTONES is a list of (segment-id . formatted-time-string) from
+`eve--ruler-milestones'.  Multiple milestones for the same segment are
+joined into a single annotation."
+  (when milestones
+    ;; Group milestones by segment-id preserving first-occurrence order
+    (let ((grouped nil)
+          (seen nil))
+      (dolist (m milestones)
+        (let ((id (car m))
+              (ts (cdr m)))
+          (if (member id seen)
+              (let ((entry (assoc id grouped)))
+                (setcdr entry (concat (cdr entry) " " ts)))
+            (push id seen)
+            (push (cons id ts) grouped))))
+      (setq grouped (nreverse grouped))
+      ;; Create one overlay per group
+      (dolist (group grouped)
+        (let* ((id (car group))
+               (label (cdr group))
+               (bounds (eve--segment-bounds id)))
+          (when bounds
+            (let* ((o (make-overlay (car bounds) (1+ (car bounds)) nil t))
+                   (text (propertize label 'face 'eve-ruler-face))
+                   (margin-str (propertize " " 'display
+                                           (list (list 'margin 'right-margin) text))))
+              (overlay-put o 'before-string margin-str)
+              (overlay-put o 'evaporate t)
+              (overlay-put o 'priority -100)
+              (push o eve--ruler-overlays))))))))
+
+(defun eve--update-ruler ()
+  "Recompute and redraw the right-margin timestamp ruler."
+  (eve--ruler-clear-overlays)
+  (let* ((segments (eve--segments))
+         (hide-deleted eve-hide-deleted-mode)
+         (cumulative (eve--rendered-cumulative-times segments hide-deleted))
+         (milestones (eve--ruler-milestones cumulative eve-ruler-interval)))
+    (when milestones
+      (setq-local right-margin-width 12)
+      (dolist (win (get-buffer-window-list nil nil t))
+        (set-window-margins win (car (window-margins win)) 12))
+      (eve--ruler-create-overlays milestones))))
 
 (defun eve--segment-summary (segment)
   (when segment
