@@ -2693,7 +2693,11 @@ Collects all non-deleted segments from the same source, stores them in
       (setq eve--playback-mode 'source)
       (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock"))
             (start-time (or (alist-get 'start seg) 0.0)))
-        (eve--play-with-mpv abs-file start-time nil socket-path)))))
+        (eve--play-with-mpv abs-file start-time nil socket-path)
+        ;; Override SPC to pause/resume during playback
+        (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
+        ;; Add seek hook
+        (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)))))
 
 (defun eve-play-rendered ()
   "Play the compiled rendered video, auto-compiling if stale.
@@ -2716,14 +2720,64 @@ using the rendered timeline from `eve--rendered-cumulative-times'."
     (if output-fresh
         ;; Up-to-date: play directly
         (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
-          (eve--play-with-mpv output 0.0 nil socket-path))
+          (eve--play-with-mpv output 0.0 nil socket-path)
+          ;; Override SPC to pause/resume during playback
+          (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
+          ;; Add seek hook
+          (add-hook 'post-command-hook #'eve--playback-seek-hook nil t))
       ;; Stale or missing: save and compile first, play after
       (when (buffer-modified-p)
         (save-buffer))
       ;; Override compilation-finished to start IPC playback
       (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
         (setq-local eve--pending-play-socket socket-path)
-        (eve--run-compile (eve--compile-command) output)))))
+        (eve--run-compile (eve--compile-command) output)
+        ;; Wire controls (playback will start after compile finishes)
+        (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
+        (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)))))
+
+(defun eve-playback-pause-resume ()
+  "Pause or resume mpv playback via IPC."
+  (interactive)
+  (if (process-live-p eve--mpv-process)
+      (progn
+        (eve--ipc-send '("cycle" "pause"))
+        ;; Query the new state and report it
+        (run-with-timer 0.05 nil
+                        (lambda ()
+                          (let ((paused (eve--ipc-get-property "pause")))
+                            (message (if paused "Paused" "Resumed"))))))
+    (message "No playback active")))
+
+(defun eve--playback-seek-hook ()
+  "Post-command hook: seek mpv to the segment at point during playback."
+  (when (and (process-live-p eve--mpv-process)
+             (timerp eve--playback-timer))
+    (let* ((seg (eve--segment-at-point))
+           (seg-id (and seg (alist-get 'id seg)))
+           ;; ID of segment currently highlighted by playback overlay
+           (current-id (and (overlayp eve--playback-overlay)
+                            (overlay-buffer eve--playback-overlay)
+                            (get-text-property
+                             (overlay-start eve--playback-overlay)
+                             'eve-segment-id))))
+      (when (and seg-id (not (equal seg-id current-id)))
+        (let ((seek-time
+               (pcase eve--playback-mode
+                 ('source
+                  (or (alist-get 'start seg) 0.0))
+                 ('rendered
+                  ;; Find the cumulative START time for this segment
+                  (let ((prev 0.0))
+                    (cl-loop for (id . end) in eve--playback-time-map
+                             until (equal id seg-id)
+                             do (setq prev end))
+                    prev))
+                 (_ nil))))
+          (when seek-time
+            (eve--ipc-send (list "seek"
+                                 (number-to-string seek-time)
+                                 "absolute"))))))))
 
 (defun eve--ipc-connect (socket-path)
   "Connect to the mpv JSON IPC socket at SOCKET-PATH.
@@ -2804,7 +2858,11 @@ This is the single cleanup entry point called from all exit paths."
   ;; Clear remaining state
   (setq eve--playback-mode nil
         eve--playback-time-map nil
-        eve--playback-source-segments nil))
+        eve--playback-source-segments nil)
+  ;; Restore SPC to normal play-segment behavior
+  (define-key eve-mode-map (kbd "SPC") #'eve-play-segment)
+  ;; Remove seek hook
+  (remove-hook 'post-command-hook #'eve--playback-seek-hook t))
 
 (defun eve--playback-update-overlay (segment-id)
   "Highlight SEGMENT-ID with `eve-playback-face' as the currently-playing segment.

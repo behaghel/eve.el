@@ -1264,6 +1264,29 @@
        (eve-play-rendered)
        (should compile-called)))))
 
+(ert-deftest eve-playback-pause-resume-sends-cycle ()
+  "eve-playback-pause-resume sends cycle/pause IPC command when mpv is live."
+  (eve-test-with-buffer
+   (let ((sent-commands nil))
+     (cl-letf (((symbol-function 'eve--ipc-send)
+                (lambda (cmd) (push cmd sent-commands)))
+               ((symbol-function 'process-live-p)
+                (lambda (_p) t)))
+       (setq-local eve--mpv-process (make-process :name "fake" :command '("true")))
+       (eve-playback-pause-resume)
+       (should (member '("cycle" "pause") sent-commands))
+       (ignore-errors (delete-process eve--mpv-process))))))
+
+(ert-deftest eve-ipc-teardown-restores-spc ()
+  "eve--ipc-teardown restores SPC to eve-play-segment."
+  (eve-test-with-buffer
+   ;; Override SPC as would happen during playback
+   (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
+   ;; Teardown should restore it
+   (eve--ipc-teardown)
+   (should (eq #'eve-play-segment
+               (lookup-key eve-mode-map (kbd "SPC"))))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here
