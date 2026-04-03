@@ -1318,6 +1318,42 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
         (push (cons id cumulative) result)))
     (nreverse result)))
 
+(defun eve--format-ruler-time (seconds)
+  "Format SECONDS as a ruler timestamp string [hh:mm:ss]."
+  (let* ((total (max 0 (floor seconds)))
+         (hh (/ total 3600))
+         (mm (/ (mod total 3600) 60))
+         (ss (mod total 60)))
+    (format "[%02d:%02d:%02d]" hh mm ss)))
+
+(defun eve--ruler-milestones (cumulative-times interval)
+  "Return milestones as ((segment-id . formatted-time) ...) list.
+CUMULATIVE-TIMES is an alist of (id . end-time) from
+`eve--rendered-cumulative-times'. INTERVAL is the spacing in seconds.
+Always includes time 0, mapped to the first segment."
+  (when cumulative-times
+    (let* ((safe-interval (max 1.0 (or interval 30.0)))
+           (total (cdr (car (last cumulative-times))))
+           (last-seg (caar (last cumulative-times)))
+           (milestones nil)
+           (t-val 0.0))
+      (while (<= t-val (+ total 0.001))
+        (let ((seg-id
+               (cond
+                ((<= t-val 0.0) (caar cumulative-times))
+                (t
+                 (or (catch 'segment
+                       (let ((prev 0.0))
+                         (cl-loop for (id . end) in cumulative-times do
+                                  (when (and (> t-val prev)
+                                             (<= t-val end))
+                                    (throw 'segment id))
+                                  (setq prev end))))
+                     last-seg)))))
+          (push (cons seg-id (eve--format-ruler-time t-val)) milestones))
+        (setq t-val (+ t-val safe-interval)))
+      (nreverse milestones))))
+
 (defun eve--render (&optional preserve-point)
   "Render `eve--data' into the current buffer."
   (let* ((segments (eve--segments))

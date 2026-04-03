@@ -999,6 +999,37 @@
                     (words . (((start . 4.0) (end . 5.0) (token . "hello")))))))
     (should (= 0.0 (eve--rendered-segment-duration segment t)))))
 
+(ert-deftest eve-ruler-format-time-zero ()
+  (should (equal "[00:00:00]" (eve--format-ruler-time 0))))
+
+(ert-deftest eve-ruler-format-time-one-minute-one-second ()
+  (should (equal "[00:01:01]" (eve--format-ruler-time 61))))
+
+(ert-deftest eve-ruler-format-time-one-hour ()
+  (should (equal "[01:01:01]" (eve--format-ruler-time 3661))))
+
+(ert-deftest eve-ruler-milestones-standard-interval ()
+  (let ((times '(("seg-a" . 45.0) ("seg-b" . 90.0)))
+        (result nil))
+    (setq result (eve--ruler-milestones times 30.0))
+    (should (= 4 (length result)))
+    (should (equal "seg-a" (car (nth 0 result))))
+    (should (equal "[00:00:00]" (cdr (nth 0 result))))
+    (should (equal "seg-a" (car (nth 1 result))))
+    (should (equal "[00:00:30]" (cdr (nth 1 result))))
+    (should (equal "seg-b" (car (nth 2 result))))
+    (should (equal "[00:01:00]" (cdr (nth 2 result))))
+    (should (equal "seg-b" (car (nth 3 result))))
+    (should (equal "[00:01:30]" (cdr (nth 3 result))))))
+
+(ert-deftest eve-ruler-milestones-interval-exceeds-duration ()
+  (let ((times '(("seg-x" . 20.0))))
+    (should (= 1 (length (eve--ruler-milestones times 60.0))))))
+
+(ert-deftest eve-ruler-milestones-zero-interval-clamped ()
+  (let ((times '(("seg-a" . 5.0))))
+    (should (= 6 (length (eve--ruler-milestones times 0))))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here
