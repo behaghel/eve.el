@@ -169,8 +169,11 @@ present."
   :group 'eve)
 
 (defface eve-current-segment-face
-  '((t :background "#2f3844" :extend t))
-  "Face used to highlight the segment under point."
+  '((((background dark)) :background "#2e3b28" :extend t)
+    (t                   :background "#eef3e6" :extend t))
+  "Face used to highlight the segment under point.
+Uses a green tint so it remains visually distinct from the region face,
+which is typically blue or grey in most themes."
   :group 'eve)
 
 (defvar eve-mode-map
@@ -2534,7 +2537,14 @@ If SILENT is non-nil, only produce messages when failures occur."
       (setq eve--focus-overlay (make-overlay (car bounds) (cdr bounds)))
       (overlay-put eve--focus-overlay 'face 'eve-current-segment-face)
       (overlay-put eve--focus-overlay 'priority 100)
-      (overlay-put eve--focus-overlay 'evaporate t))))
+      (overlay-put eve--focus-overlay 'evaporate t)
+      ;; Fringe triangle on every display line so the active segment is
+      ;; identifiable even when the entire text is covered by a region selection.
+      (let ((indicator (propertize " " 'display
+                                   '(left-fringe right-triangle
+                                                 eve-current-segment-face))))
+        (overlay-put eve--focus-overlay 'line-prefix indicator)
+        (overlay-put eve--focus-overlay 'wrap-prefix indicator)))))
 
 (defun eve--segment-summary (segment)
   (when segment
