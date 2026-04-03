@@ -2731,6 +2731,69 @@ This is the single cleanup entry point called from all exit paths."
         eve--playback-time-map nil
         eve--playback-source-segments nil))
 
+(defun eve--playback-update-overlay (segment-id)
+  "Highlight SEGMENT-ID with `eve-playback-face' as the currently-playing segment.
+If SEGMENT-ID is nil, just remove any existing playback overlay."
+  (when (overlayp eve--playback-overlay)
+    (delete-overlay eve--playback-overlay)
+    (setq eve--playback-overlay nil))
+  (when segment-id
+    (let ((bounds (eve--segment-bounds segment-id)))
+      (when bounds
+        (setq eve--playback-overlay
+              (make-overlay (car bounds) (cdr bounds)))
+        (overlay-put eve--playback-overlay 'face 'eve-playback-face)
+        (overlay-put eve--playback-overlay 'priority 200)
+        (overlay-put eve--playback-overlay 'evaporate t)))))
+
+(defun eve--playback-start-timer ()
+  "Start a 0.25-second repeating timer to poll mpv playback position."
+  (when (timerp eve--playback-timer)
+    (cancel-timer eve--playback-timer))
+  (setq eve--playback-timer
+        (run-with-timer 0.25 0.25 #'eve--playback-poll (current-buffer))))
+
+(defun eve--playback-poll (buf)
+  "Timer callback: query mpv position and update the playback overlay.
+BUF is the eve-mode buffer to update."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      ;; If mpv is dead, tear everything down
+      (unless (process-live-p eve--mpv-process)
+        (eve--ipc-teardown)
+        (cl-return-from eve--playback-poll nil))
+      ;; Query current playback time
+      (let ((time (condition-case nil
+                      (eve--ipc-get-property "playback-time")
+                    (error nil))))
+        (when (numberp time)
+          ;; Map time to segment
+          (let* ((seg-or-id
+                  (pcase eve--playback-mode
+                    ('source
+                     (eve--playback-source-segment-at-time
+                      time eve--playback-source-segments))
+                    ('rendered
+                     (eve--playback-rendered-segment-at-time
+                      time eve--playback-time-map))
+                    (_ nil)))
+                 (segment-id
+                  (pcase eve--playback-mode
+                    ('source (and seg-or-id (alist-get 'id seg-or-id)))
+                    ('rendered seg-or-id)
+                    (_ nil))))
+            ;; Only update if segment changed
+            (let ((current-id (and (overlayp eve--playback-overlay)
+                                   (overlay-buffer eve--playback-overlay)
+                                   (get-text-property
+                                    (overlay-start eve--playback-overlay)
+                                    'eve-segment-id))))
+              (unless (equal segment-id current-id)
+                (eve--playback-update-overlay segment-id)
+                (when segment-id
+                  (save-excursion
+                    (eve--goto-segment segment-id)))))))))))
+
 (defun eve-stop-playback ()
   "Stop current playback process and clean up IPC state."
   (interactive)

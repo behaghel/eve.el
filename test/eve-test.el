@@ -1187,6 +1187,34 @@
        (eve-stop-playback)
        (should teardown-called)))))
 
+(ert-deftest eve-playback-update-overlay-creates-overlay ()
+  "eve--playback-update-overlay creates overlay with playback face and priority 200."
+  (eve-test-with-buffer
+   (let ((seg-id (alist-get 'id (car (eve--segments)))))
+     (eve--playback-update-overlay seg-id)
+     (should (overlayp eve--playback-overlay))
+     (should (eq 'eve-playback-face (overlay-get eve--playback-overlay 'face)))
+     (should (= 200 (overlay-get eve--playback-overlay 'priority))))))
+
+(ert-deftest eve-playback-update-overlay-nil-removes ()
+  "eve--playback-update-overlay nil removes any existing overlay."
+  (eve-test-with-buffer
+   (let ((seg-id (alist-get 'id (car (eve--segments)))))
+     (eve--playback-update-overlay seg-id)
+     (should (overlayp eve--playback-overlay))
+     (eve--playback-update-overlay nil)
+     (should-not eve--playback-overlay))))
+
+(ert-deftest eve-playback-overlay-distinct-from-focus ()
+  "Playback and focus overlays are different objects."
+  (eve-test-with-buffer
+   (let ((seg-id (alist-get 'id (car (eve--segments)))))
+     (eve--update-focus-overlay)
+     (eve--playback-update-overlay seg-id)
+     (should (overlayp eve--playback-overlay))
+     (should (overlayp eve--focus-overlay))
+     (should-not (eq eve--playback-overlay eve--focus-overlay)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here
