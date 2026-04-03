@@ -1109,6 +1109,27 @@
    (setq-local eve--ruler-total-duration 0.0)
    (should (string= "" (eve--ruler-mode-line-string)))))
 
+(ert-deftest eve-resolve-cli-uses-executable-find ()
+  "Resolver returns executable-find result when it succeeds."
+  (cl-letf (((symbol-function 'executable-find)
+             (lambda (_prog) "/usr/local/bin/eve")))
+    (should (equal "/usr/local/bin/eve" (eve--resolve-cli)))))
+
+(ert-deftest eve-resolve-cli-falls-back-to-run-cli ()
+  "Resolver falls back to scripts/run-cli.sh when executable-find fails."
+  (let ((eve--source-directory eve-test--root))
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (_prog) nil)))
+      (let ((result (eve--resolve-cli)))
+        (should (and result (string-match-p "scripts/run-cli\\.sh" result)))))))
+
+(ert-deftest eve-resolve-cli-returns-nil-when-both-fail ()
+  "Resolver returns nil when executable-find fails and no run-cli.sh exists."
+  (let ((eve--source-directory "/nonexistent/"))
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (_prog) nil)))
+      (should-not (eve--resolve-cli)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here

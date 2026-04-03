@@ -186,6 +186,21 @@ which is typically blue or grey in most themes."
   "Face used for right-margin timestamp ruler markers."
   :group 'eve)
 
+(defvar eve--source-directory
+  (file-name-directory (or load-file-name (locate-library "eve") ""))
+  "Directory from which `eve' was loaded.")
+
+(defun eve--resolve-cli ()
+  "Find the eve CLI executable.
+Try `executable-find' on `eve-cli-program' first; fall back to
+scripts/run-cli.sh relative to the package source directory."
+  (or (executable-find eve-cli-program)
+      (when (string= eve-cli-program "eve")
+        (let ((run-cli (expand-file-name "scripts/run-cli.sh"
+                                         eve--source-directory)))
+          (when (file-executable-p run-cli)
+            run-cli)))))
+
 (defvar eve-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
@@ -286,7 +301,7 @@ which is typically blue or grey in most themes."
 
 (defun eve--text-edit-command (input output)
   "Build the `eve text-edit` command for INPUT and OUTPUT."
-  (let ((program (or (executable-find eve-cli-program)
+  (let ((program (or (eve--resolve-cli)
                      (user-error "Cannot find eve CLI executable: %s"
                                  eve-cli-program))))
     (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps %s"
@@ -438,7 +453,7 @@ which is typically blue or grey in most themes."
 
 (defun eve--transcribe-async (files output-path)
   "Launch `eve transcribe` for FILES, writing OUTPUT-PATH asynchronously."
-  (let* ((program (or (executable-find eve-cli-program)
+  (let* ((program (or (eve--resolve-cli)
                       (user-error "Cannot find eve CLI executable: %s"
                                   eve-cli-program)))
           (output-file (expand-file-name output-path))
