@@ -31,6 +31,9 @@ The mode is designed to work alongside the `eve` CLI, especially
 - b-roll metadata editing, placeholder editing, and continuation support
 - validation and auto-correction for common timing issues
 - raw JSON companion buffer for low-level edits
+- phrase-level filler tagging, interactive add-at-point and add-region, and bulk delete
+- right-margin timestamp ruler showing rendered timeline milestones
+- live video playback tracking with mpv: segment highlighting, pause/resume, and seek-by-point
 
 ## Installation
 
@@ -105,6 +108,91 @@ tagging to an existing TJM manifest without trimming media. `eve trim-fillers`
 still exists today, but it is deprecated in favor of this manifest-tagging
 workflow.
 
+## Filler Words
+
+`eve-mode` supports non-destructive filler tagging. Words and phrases tagged as
+fillers are highlighted in the buffer and excluded from the rendered video by
+`eve text-edit`.
+
+### Configuration
+
+```elisp
+;; Plain strings — single words or multi-word phrases
+(setq eve-filler-phrases '("um" "uh" "you know" "to be honest with you"))
+```
+
+`eve-filler-phrases` is persisted via `customize-save-variable` when you use the
+interactive add commands.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `M-x eve-tag-fillers` | Tag all words/phrases matching `eve-filler-phrases` |
+| `M-x eve-add-filler-at-point` | Add the word at point to `eve-filler-phrases` and retag |
+| `M-x eve-add-filler-region` | Add the selected phrase to `eve-filler-phrases` and retag |
+| `M-x eve-delete-fillers` | Mark all tagged filler words as deleted |
+
+Fillers are tagged automatically on file open. The legacy
+`eve-filler-regex` defcustom is still honoured for backwards compatibility.
+
+## Timestamp Ruler
+
+`eve-ruler-mode` (active by default) displays `[hh:mm:ss]` markers in the
+right margin of the buffer. Each marker is aligned to the segment that reaches
+that time milestone in the *rendered* video — deleted words and segments are
+excluded from the running total.
+
+The total rendered duration is also shown in the mode line next to the
+filename.
+
+```elisp
+;; Change the interval between markers (seconds, default 30)
+(setq eve-ruler-interval 60.0)
+```
+
+Toggle the ruler with `M-x eve-ruler-mode`.
+
+## Video Playback and Tracking
+
+`eve-mode` integrates with `mpv` via its JSON IPC socket to track playback
+in real time. The currently-playing segment is highlighted with a vivid amber
+overlay (`eve-playback-face`) that is distinct from both the focus highlight
+and the region selection.
+
+### Playing the source file
+
+```
+M-x eve-play-source
+```
+
+Plays the source media from the current segment to the end of file, tracking
+all segments from the same source clip. The playback position maps directly to
+the original recording timestamps.
+
+### Playing the rendered output
+
+```
+M-x eve-play-rendered
+```
+
+Plays the compiled output file. If the output is missing or older than the
+TJM manifest, `eve-mode` saves the buffer and runs `eve text-edit`
+automatically before starting playback. Progress is tracked using the
+post-edit rendered timeline, so deleted content is skipped.
+
+### Playback controls
+
+During playback, `SPC` is remapped to `eve-playback-pause-resume`.
+
+| Key / Command | Action |
+|---------------|--------|
+| `SPC` | Pause / resume |
+| Move point to a segment | Seek to that segment |
+| `C-c k` / `M-x eve-stop-playback` | Stop and clean up |
+
+Stopping playback restores all keybindings to their normal state.
+
 ## Project Layout
 
 - main library: `eve.el`
@@ -157,6 +245,12 @@ subcommands for `transcribe`, `text-edit`, `tag-fillers`, `trim-fillers`,
 `denoise`, and `batch`. The Emacs package calls this CLI rather than embedding
 or depending on Nix-hosted business logic. `trim-fillers` remains available for
 now but prints a deprecation warning that points users to `eve tag-fillers`.
+
+The Emacs package locates the CLI automatically: it tries `executable-find`
+on `eve-cli-program` first, then falls back to `scripts/run-cli.sh` relative
+to the package source directory.  On a fresh clone `scripts/run-cli.sh`
+bootstraps a venv from the pre-built wheel in `cli/dist/` using plain
+`python3` — no `uv` required at runtime.
 
 ## Verification
 
