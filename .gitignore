@@ -13,6 +13,7 @@ var/
 cli/.venv/
 cli/build/
 cli/dist/
+!cli/dist/*.whl
 cli/.coverage
 cli/.python-version.local
 cli/src/*.egg-info/
