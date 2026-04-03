@@ -1134,6 +1134,31 @@
   "eve-playback-face is a valid Emacs face."
   (should (facep 'eve-playback-face)))
 
+(ert-deftest eve-playback-source-segment-at-time-within ()
+  "Returns segment when time falls within its start/end range."
+  (let ((segs '(((id . "a") (start . 0.0) (end . 2.0))
+                ((id . "b") (start . 2.0) (end . 5.0)))))
+    (should (equal "a" (alist-get 'id (eve--playback-source-segment-at-time 1.0 segs))))
+    (should (equal "b" (alist-get 'id (eve--playback-source-segment-at-time 3.0 segs))))))
+
+(ert-deftest eve-playback-source-segment-at-time-gap ()
+  "Returns nil when time falls in a gap between segments."
+  (let ((segs '(((id . "a") (start . 0.0) (end . 1.0))
+                ((id . "b") (start . 2.0) (end . 3.0)))))
+    (should-not (eve--playback-source-segment-at-time 1.5 segs))))
+
+(ert-deftest eve-playback-source-segment-at-time-before ()
+  "Returns nil when time is before all segments."
+  (let ((segs '(((id . "a") (start . 5.0) (end . 10.0)))))
+    (should-not (eve--playback-source-segment-at-time 1.0 segs))))
+
+(ert-deftest eve-playback-rendered-segment-at-time-mid ()
+  "Returns correct segment-id for time within rendered timeline."
+  (let ((ctimes '(("seg-a" . 30.0) ("seg-b" . 60.0) ("seg-c" . 90.0))))
+    (should (equal "seg-c" (eve--playback-rendered-segment-at-time 72.0 ctimes)))
+    (should (equal "seg-a" (eve--playback-rendered-segment-at-time 0.0  ctimes)))
+    (should (equal "seg-a" (eve--playback-rendered-segment-at-time 15.0 ctimes)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here

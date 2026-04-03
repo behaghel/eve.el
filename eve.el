@@ -1443,6 +1443,35 @@ Always includes time 0, mapped to the first segment."
         (setq t-val (+ t-val safe-interval)))
       (nreverse milestones))))
 
+(defun eve--playback-source-segment-at-time (time segments)
+  "Return the segment in SEGMENTS whose start <= TIME < end, or nil.
+SEGMENTS is an ordered list of segment alists with \\='start and \\='end keys.
+Returns nil if TIME is before all segments or falls in a gap."
+  (cl-loop for seg in segments
+           for seg-start = (or (alist-get 'start seg) 0.0)
+           for seg-end   = (or (alist-get 'end   seg) 0.0)
+           when (and (>= time seg-start) (< time seg-end))
+           return seg
+           finally return nil))
+
+(defun eve--playback-rendered-segment-at-time (time cumulative-times)
+  "Return the segment-id in CUMULATIVE-TIMES that contains rendered TIME.
+CUMULATIVE-TIMES is an alist of (id . cumulative-end) as produced by
+`eve--rendered-cumulative-times'.  Returns the id of the segment where
+prev-cumulative-end < TIME <= cumulative-end.  At TIME=0 returns the
+first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
+  (when cumulative-times
+    (if (<= time 0.0)
+        (caar cumulative-times)
+      (let ((prev 0.0)
+            found)
+        (cl-loop for (id . end) in cumulative-times
+                 do (when (and (> time prev) (<= time end))
+                      (setq found id)
+                      (cl-return))
+                 do (setq prev end))
+        (or found (caar (last cumulative-times)))))))
+
 (defun eve--render (&optional preserve-point)
   "Render `eve--data' into the current buffer."
   (let* ((segments (eve--segments))
