@@ -1096,6 +1096,33 @@ This is a buffer-local mode for `eve-mode' buffers."
   (when (and (derived-mode-p 'eve-mode) eve--data)
     (eve--render t)))
 
+(defun eve--ruler-reapply-margins ()
+  "Reapply right-margin width for the ruler when window configuration changes."
+  (when eve-ruler-mode
+    (set-window-margins (selected-window)
+                        (car (window-margins (selected-window)))
+                        right-margin-width)))
+
+(define-minor-mode eve-ruler-mode
+  "Show a right-margin timestamp ruler in `eve-mode' buffers.
+When active, a `[hh:mm:ss]' marker is placed in the right margin next
+to the segment containing each time milestone in the rendered timeline.
+The milestone interval is controlled by `eve-ruler-interval'."
+  :init-value nil
+  :lighter nil
+  (if eve-ruler-mode
+      (progn
+        (when (and (derived-mode-p 'eve-mode) eve--data)
+          (eve--update-ruler))
+        (add-hook 'window-configuration-change-hook
+                  #'eve--ruler-reapply-margins nil t))
+    (eve--ruler-clear-overlays)
+    (setq-local right-margin-width 0)
+    (dolist (win (get-buffer-window-list nil nil t))
+      (set-window-margins win (car (window-margins win)) 0))
+    (remove-hook 'window-configuration-change-hook
+                 #'eve--ruler-reapply-margins t)))
+
 ;;;###autoload
 (define-derived-mode eve-mode special-mode "EVE"
   "Major mode for Textual Join Manifest files (.tjm.json)."
@@ -1117,6 +1144,7 @@ This is a buffer-local mode for `eve-mode' buffers."
   (add-hook 'window-configuration-change-hook #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
   (eve-hide-deleted-mode 1)
+  (eve-ruler-mode 1)
   (setq-local mode-line-format
               (append (default-value 'mode-line-format)
                       '((:eval (eve--ruler-mode-line-string)))))
@@ -1493,6 +1521,8 @@ Always includes time 0, mapped to the first segment."
     (when current-id
       (eve--goto-segment current-id))
     (eve--update-focus-overlay)
+    (when eve-ruler-mode
+      (eve--update-ruler))
     (eve--apply-visual-wrap))))
 
 (defun eve--format-words (words)

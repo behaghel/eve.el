@@ -376,6 +376,34 @@
     (should (equal (eve--filter-media-files files)
 		   '("/tmp/INTRO.MP4" "/tmp/voice.M4A")))))
 
+(ert-deftest eve-ruler-mode-enable-creates-overlays ()
+  "Enabling eve-ruler-mode creates overlays."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve-ruler-mode -1)
+     (eve--ruler-clear-overlays)
+     (eve-ruler-mode 1)
+     (eve--update-ruler)
+     (should (> (length eve--ruler-overlays) 0)))))
+
+(ert-deftest eve-ruler-mode-disable-removes-overlays ()
+  "Disabling eve-ruler-mode removes overlays."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve-ruler-mode 1)
+     (eve--update-ruler)
+     (eve-ruler-mode -1)
+     (should (null eve--ruler-overlays))
+     (should (= 0 (or right-margin-width 0))))))
+
+(ert-deftest eve-ruler-mode-render-updates-ruler ()
+  "Re-rendering when ruler is active recreates ruler overlays."
+  (eve-test-with-buffer
+   (let ((eve-ruler-interval 1.0))
+     (eve-ruler-mode 1)
+     (eve--render)
+     (should (> (length eve--ruler-overlays) 0)))))
+
 (ert-deftest eve-infer-manifest-path-for-single-file ()
   "A single media input maps to a sibling `.tjm.json' file."
   (let ((file (expand-file-name "fixtures/session/clip.mp4" eve-test--root)))
