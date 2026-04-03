@@ -314,6 +314,9 @@ scripts/run-cli.sh relative to the package source directory."
 (defvar-local eve--pending-origin nil
   "Origin buffer associated with a compilation run.")
 
+(defvar-local eve--pending-play-socket nil
+  "Socket path for IPC playback to start after compilation completes.")
+
 (defconst eve--transcribe-buffer-name "*eve transcribe*"
   "Buffer name used for async `eve transcribe` runs.")
 
@@ -510,9 +513,10 @@ scripts/run-cli.sh relative to the package source directory."
   "Handle completion of an `eve text-edit` BUFFER with STATUS."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let ((output eve--pending-output)
+	      (let ((output eve--pending-output)
 	    (temp eve--pending-temp)
-	    (origin eve--pending-origin))
+	    (origin eve--pending-origin)
+	    (play-socket eve--pending-play-socket))
 	(when (and temp (file-exists-p temp))
 	  (ignore-errors (delete-file temp)))
 	(when (and output
@@ -520,11 +524,17 @@ scripts/run-cli.sh relative to the package source directory."
 		   (buffer-live-p origin))
 	  (with-current-buffer origin
 	    (condition-case err
-		(eve--play-file output)
+		(if play-socket
+		    (progn
+		      (setq-local eve--pending-play-socket nil)
+		      (eve--play-with-mpv (expand-file-name output)
+					 0.0 nil play-socket))
+		  (eve--play-file output))
 	      (error (message "%s" (or (cadr err) err))))))
 	(setq eve--pending-output nil
 	      eve--pending-temp nil
-	      eve--pending-origin nil)))))
+	      eve--pending-origin nil
+	      eve--pending-play-socket nil)))))
 
 (defun eve--run-compile (command output &optional temp)
   "Run COMMAND via `compilation-start`, capturing OUTPUT (and TEMP manifest)."
@@ -2650,6 +2660,71 @@ that starts at the word under point."
 	(eve--play-with-mpv abs-file start end)
 	(message "Playing %s [%s-%s]" file start end)))))
 
+(defun eve-play-source ()
+  "Play source media from the current segment to end-of-file, tracking progress.
+Collects all non-deleted segments from the same source, stores them in
+`eve--playback-source-segments', and plays from the current segment's start."
+  (interactive)
+  (let* ((seg (or (eve--segment-at-point)
+                  (user-error "No segment at point")))
+         (_ (when (eve--marker-p seg)
+              (user-error "Cannot play source from a marker segment")))
+         (source-id (alist-get 'source seg))
+         (source-entry (or (eve--source-by-id source-id)
+                           (user-error "Unknown source: %s" source-id)))
+         (file (alist-get 'file source-entry))
+         (abs-file (expand-file-name file (file-name-directory buffer-file-name))))
+    (unless (file-exists-p abs-file)
+      (user-error "Source file not found: %s" abs-file))
+    ;; Collect all non-deleted segments from the same source, sorted by start
+    (let* ((all-segs (eve--segments))
+           (source-segs
+            (sort
+             (seq-filter (lambda (s)
+                           (and (equal (alist-get 'source s) source-id)
+                                (not (eve--marker-p s))
+                                (not (and eve-hide-deleted-mode
+                                          (eve--edit-deleted-p s)))))
+                         all-segs)
+             (lambda (a b)
+               (< (or (alist-get 'start a) 0.0)
+                  (or (alist-get 'start b) 0.0))))))
+      (setq eve--playback-source-segments source-segs)
+      (setq eve--playback-mode 'source)
+      (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock"))
+            (start-time (or (alist-get 'start seg) 0.0)))
+        (eve--play-with-mpv abs-file start-time nil socket-path)))))
+
+(defun eve-play-rendered ()
+  "Play the compiled rendered video, auto-compiling if stale.
+After compilation (or immediately if up-to-date), starts tracked playback
+using the rendered timeline from `eve--rendered-cumulative-times'."
+  (interactive)
+  (let* ((output (or (eve--default-output-file)
+                     (user-error "Cannot determine output file path")))
+         (tjm-file buffer-file-name)
+         (_ (unless tjm-file (user-error "Buffer is not visiting a file")))
+         (output-exists (file-exists-p output))
+         (output-fresh (and output-exists
+                            (not (time-less-p
+                                  (nth 5 (file-attributes output))
+                                  (nth 5 (file-attributes tjm-file)))))))
+    ;; Snapshot the rendered time map now (before any compile)
+    (setq eve--playback-mode 'rendered)
+    (setq eve--playback-time-map
+          (eve--rendered-cumulative-times (eve--segments) eve-hide-deleted-mode))
+    (if output-fresh
+        ;; Up-to-date: play directly
+        (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
+          (eve--play-with-mpv output 0.0 nil socket-path))
+      ;; Stale or missing: save and compile first, play after
+      (when (buffer-modified-p)
+        (save-buffer))
+      ;; Override compilation-finished to start IPC playback
+      (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
+        (setq-local eve--pending-play-socket socket-path)
+        (eve--run-compile (eve--compile-command) output)))))
+
 (defun eve--ipc-connect (socket-path)
   "Connect to the mpv JSON IPC socket at SOCKET-PATH.
 Stores the network process in `eve--ipc-process' and sets up a filter
@@ -2805,21 +2880,47 @@ BUF is the eve-mode buffer to update."
     (when was-playing
       (message "Playback stopped"))))
 
-(defun eve--play-with-mpv (file start end)
+(defun eve--deferred-ipc-connect (buf)
+  "Connect to mpv IPC socket in BUF, then start the playback poll timer."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (when (and eve--ipc-socket-path
+                 (file-exists-p eve--ipc-socket-path)
+                 (process-live-p eve--mpv-process))
+        (condition-case err
+            (progn
+              (eve--ipc-connect eve--ipc-socket-path)
+              (eve--playback-start-timer))
+          (error
+           (message "eve: failed to connect to mpv IPC: %s" (cadr err))))))))
+
+(defun eve--play-with-mpv (file start end &optional ipc-socket)
   (unless (executable-find eve-play-program)
     (user-error "Executable '%s' not found" eve-play-program))
   (eve-stop-playback)
   (let* ((start-arg (format "--start=%f" (or start 0.0)))
-	 (end-arg (and end (format "--end=%f" end)))
-	 (args (append eve-play-args (list start-arg)
-		       (when end-arg (list end-arg))
-		       (list file))))
+         (end-arg (and end (format "--end=%f" end)))
+         (ipc-arg (and ipc-socket
+                       (format "--input-ipc-server=%s" ipc-socket)))
+         (args (append eve-play-args
+                       (list start-arg)
+                       (when end-arg (list end-arg))
+                       (when ipc-arg (list ipc-arg))
+                       (list file)))
+         (sentinel-buf (current-buffer)))
+    (when ipc-socket
+      (setq eve--ipc-socket-path ipc-socket))
     (setq eve--mpv-process
-	  (apply #'start-process "eve-mpv" "*eve-mpv*"
-		 eve-play-program args))
+          (apply #'start-process "eve-mpv" "*eve-mpv*"
+                 eve-play-program args))
     (set-process-sentinel eve--mpv-process
-			  (lambda (_proc _event)
-			    (setq eve--mpv-process nil))))
+                          (lambda (_proc _event)
+                            (when (buffer-live-p sentinel-buf)
+                              (with-current-buffer sentinel-buf
+                                (eve--ipc-teardown)
+                                (setq eve--mpv-process nil)))))
+    (when ipc-socket
+      (run-with-timer 0.5 nil #'eve--deferred-ipc-connect sentinel-buf)))
   (message "Playing %s" (file-name-nondirectory file)))
 
 (defun eve-validate (&optional silent)

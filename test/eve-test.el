@@ -1215,6 +1215,55 @@
      (should (overlayp eve--focus-overlay))
      (should-not (eq eve--playback-overlay eve--focus-overlay)))))
 
+(ert-deftest eve-play-source-sets-playback-mode ()
+  "eve-play-source sets eve--playback-mode to 'source."
+  (eve-test-with-buffer
+   (let ((buffer-file-name "/tmp/test.tjm.json"))
+     (cl-letf (((symbol-function 'eve--play-with-mpv)
+                (lambda (_f _s _e &optional _i) nil))
+               ((symbol-function 'file-exists-p)
+                (lambda (_f) t)))
+       (eve-play-source)
+       (should (eq 'source eve--playback-mode))))))
+
+(ert-deftest eve-play-source-populates-source-segments ()
+  "eve-play-source sets eve--playback-source-segments."
+  (eve-test-with-buffer
+   (let ((buffer-file-name "/tmp/test.tjm.json"))
+     (cl-letf (((symbol-function 'eve--play-with-mpv)
+                (lambda (_f _s _e &optional _i) nil))
+               ((symbol-function 'file-exists-p)
+                (lambda (_f) t)))
+       (eve-play-source)
+       (should eve--playback-source-segments)))))
+
+(ert-deftest eve-play-rendered-sets-rendered-mode ()
+  "eve-play-rendered sets eve--playback-mode to 'rendered."
+  (eve-test-with-buffer
+   (let ((buffer-file-name "/tmp/test.tjm.json"))
+     (cl-letf (((symbol-function 'eve--play-with-mpv)
+                (lambda (_f _s _e &optional _i) nil))
+               ((symbol-function 'file-exists-p)
+                (lambda (_f) t))
+               ((symbol-function 'file-attributes)
+                (lambda (_f) (list nil nil nil nil nil (current-time)))))
+       (eve-play-rendered)
+       (should (eq 'rendered eve--playback-mode))))))
+
+(ert-deftest eve-play-rendered-compiles-when-stale ()
+  "eve-play-rendered calls eve--run-compile when output file is stale."
+  (eve-test-with-buffer
+   (let ((buffer-file-name "/tmp/test.tjm.json")
+         (compile-called nil))
+     (cl-letf (((symbol-function 'eve--run-compile)
+                (lambda (_cmd _out &optional _tmp) (setq compile-called t)))
+               ((symbol-function 'eve--compile-command)
+                (lambda () "fake-command"))
+               ((symbol-function 'file-exists-p)
+                (lambda (_f) nil)))
+       (eve-play-rendered)
+       (should compile-called)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here
