@@ -919,9 +919,85 @@
                                                                       (cons 'spoken "hello")
                                                                       (cons 'token "hello"))))))))))))
      (eve-reload))
-   (let* ((segment (car (eve--segments)))
-          (word (car (alist-get 'words segment))))
-     (should (equal (eve--edit-kind word) "filler")))))
+    (let* ((segment (car (eve--segments)))
+           (word (car (alist-get 'words segment))))
+      (should (equal (eve--edit-kind word) "filler")))))
+
+;; Duration test helper data
+(defconst eve-test--seg-timed
+  '((id . "seg-t1")
+    (source . "clip")
+    (start . 0.0) (end . 5.0)
+    (text . "hello world")
+    (words .
+           (((start . 0.5) (end . 1.5) (token . "hello"))
+            ((start . 2.0) (end . 3.0) (token . "world")))))
+  "Segment with timed words for duration tests.")
+
+(ert-deftest eve-ruler-duration-single-segment-all-present ()
+  "Rendered segment duration uses first/last visible word bounds."
+  (let ((eve-preserve-gaps-max 2.0))
+    (should (= 2.5 (eve--rendered-segment-duration (copy-tree eve-test--seg-timed t) t)))))
+
+(ert-deftest eve-ruler-duration-deleted-word-excluded ()
+  "Deleted words are excluded when hide-deleted is enabled."
+  (let* ((eve-preserve-gaps-max 2.0)
+         (segment (copy-tree eve-test--seg-timed t))
+         (words (alist-get 'words segment)))
+    (setf (alist-get 'edit (car words)) '((deleted . t)))
+    (should (= 1.0 (eve--rendered-segment-duration segment t)))))
+
+(ert-deftest eve-ruler-duration-deleted-word-included-when-show-deleted ()
+  "Deleted words are included when hide-deleted is disabled."
+  (let* ((eve-preserve-gaps-max 2.0)
+         (segment (copy-tree eve-test--seg-timed t))
+         (words (alist-get 'words segment)))
+    (setf (alist-get 'edit (car words)) '((deleted . t)))
+    (should (= 2.5 (eve--rendered-segment-duration segment nil)))))
+
+(ert-deftest eve-ruler-duration-all-words-deleted ()
+  "Segment duration is zero when all words are deleted and hidden."
+  (let* ((segment (copy-tree eve-test--seg-timed t))
+         (words (alist-get 'words segment)))
+    (dotimes (idx (length words))
+      (setf (alist-get 'edit (nth idx words)) '((deleted . t))))
+    (should (= 0.0 (eve--rendered-segment-duration segment t)))))
+
+(ert-deftest eve-ruler-duration-marker-segment ()
+  "Marker segments always have rendered duration zero."
+  (let ((segment '((id . "m1") (kind . "marker") (title . "Section"))))
+    (should (= 0.0 (eve--rendered-segment-duration segment t)))))
+
+(ert-deftest eve-ruler-duration-no-words-key ()
+  "Segments without words render with zero duration."
+  (let ((segment '((id . "seg-empty")
+                   (source . "clip")
+                   (start . 0.0) (end . 5.0)
+                   (text . "hello world"))))
+    (should (= 0.0 (eve--rendered-segment-duration segment t)))))
+
+(ert-deftest eve-ruler-duration-cumulative-monotonic ()
+  "Cumulative times increase with positive-duration segments."
+  (let* ((seg1 (copy-tree eve-test--seg-timed t))
+         (seg2 '((id . "seg-t2")
+                 (source . "clip")
+                 (start . 5.0) (end . 8.0)
+                 (text . "again now")
+                 (words . (((start . 5.5) (end . 6.0) (token . "again"))
+                           ((start . 6.0) (end . 7.0) (token . "now"))))))
+         (times (eve--rendered-cumulative-times (list seg1 seg2) t)))
+    (should (= 2 (length times)))
+    (should (< (cdr (nth 0 times)) (cdr (nth 1 times))))))
+
+(ert-deftest eve-ruler-duration-leading-trailing-gap-trimmed ()
+  "Excessive leading/trailing gaps are trimmed from rendered duration."
+  (let* ((eve-preserve-gaps-max 2.0)
+         (segment '((id . "seg-gap")
+                    (source . "clip")
+                    (start . 0.0) (end . 10.0)
+                    (text . "hello")
+                    (words . (((start . 4.0) (end . 5.0) (token . "hello")))))))
+    (should (= 0.0 (eve--rendered-segment-duration segment t)))))
 
 (provide 'eve-test)
 

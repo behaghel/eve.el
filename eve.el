@@ -1273,6 +1273,51 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
                   "")
           :word-spans (nreverse word-spans))))
 
+(defun eve--rendered-segment-duration (segment hide-deleted)
+  "Return rendered duration in seconds for SEGMENT."
+  (if (or (eve--marker-p segment)
+          (and hide-deleted (eve--edit-deleted-p segment)))
+      0.0
+    (let* ((words (or (alist-get 'words segment) '()))
+           (visible-words (if hide-deleted
+                              (seq-remove #'eve--edit-deleted-p words)
+                            words)))
+      (if (null visible-words)
+          0.0
+        (let* ((first-word (car visible-words))
+               (last-word (car (last visible-words)))
+               (first-start (or (alist-get 'start first-word) 0.0))
+               (last-end (or (alist-get 'end last-word) 0.0))
+               (raw-duration (max 0.0 (- last-end first-start)))
+               (max-gap (or eve-preserve-gaps-max 0.0))
+               (seg-start (or (alist-get 'start segment) first-start))
+               (leading-gap (- first-start seg-start))
+               (seg-end (or (alist-get 'end segment) last-end))
+               (trailing-gap (- seg-end last-end)))
+          (when (> leading-gap max-gap)
+            (setq raw-duration (- raw-duration (- leading-gap max-gap))))
+          (when (> trailing-gap max-gap)
+            (setq raw-duration (- raw-duration (- trailing-gap max-gap))))
+          (max 0.0 raw-duration))))))
+
+(defun eve--rendered-total-duration (segments hide-deleted)
+  "Return total rendered duration in seconds for SEGMENTS."
+  (cl-reduce #'+ (mapcar (lambda (seg)
+                           (eve--rendered-segment-duration seg hide-deleted))
+                         segments)
+             :initial-value 0.0))
+
+(defun eve--rendered-cumulative-times (segments hide-deleted)
+  "Return alist of (ID . cumulative-end-time) for each segment."
+  (let ((cumulative 0.0)
+        result)
+    (dolist (segment segments)
+      (let ((id (alist-get 'id segment)))
+        (setq cumulative (+ cumulative
+                            (eve--rendered-segment-duration segment hide-deleted)))
+        (push (cons id cumulative) result)))
+    (nreverse result)))
+
 (defun eve--render (&optional preserve-point)
   "Render `eve--data' into the current buffer."
   (let* ((segments (eve--segments))
@@ -2326,6 +2371,28 @@ that starts at the word under point."
         (eve--mark-dirty)))
     (eve--render t)
     (message "Added filler phrase: %s" phrase)))
+
+(defun eve-delete-fillers ()
+  "Mark every word tagged as filler as deleted."
+  (interactive)
+  (eve--record-state)
+  (let ((count 0))
+    (dolist (segment (eve--segments))
+      (let ((words (alist-get 'words segment)))
+        (when (listp words)
+          (dolist (word words)
+            (when (and (listp word)
+                       (equal (eve--edit-kind word) "filler")
+                       (not (eve--edit-deleted-p word)))
+              (setq count (1+ count))
+              (eve--set-edit-deleted word t))))))
+    (when (> count 0)
+      (eve--mark-dirty))
+    (eve--render t)
+    (message (if (> count 0)
+                 (format "Deleted %d filler word%s" count
+                         (if (= count 1) "" "s"))
+               "No filler words to delete"))))
 
 (defun eve-toggle-separator ()
   "Toggle a visual separator after the current segment."
