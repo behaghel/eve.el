@@ -1130,6 +1130,10 @@
                (lambda (_prog) nil)))
       (should-not (eve--resolve-cli)))))
 
+(ert-deftest eve-playback-face-is-defined ()
+  "eve-playback-face is a valid Emacs face."
+  (should (facep 'eve-playback-face)))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here

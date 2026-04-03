@@ -186,6 +186,12 @@ which is typically blue or grey in most themes."
   "Face used for right-margin timestamp ruler markers."
   :group 'eve)
 
+(defface eve-playback-face
+  '((((background dark)) :background "#5c3a00" :foreground "#ffdd88" :extend t :weight bold)
+    (t                   :background "#fff3c4" :foreground "#6b4400" :extend t :weight bold))
+  "Face used to highlight the segment currently playing in mpv."
+  :group 'eve)
+
 (defvar eve--source-directory
   (file-name-directory (or load-file-name (locate-library "eve") ""))
   "Directory from which `eve' was loaded.")
@@ -264,6 +270,27 @@ scripts/run-cli.sh relative to the package source directory."
 
 (defvar-local eve--ruler-total-duration 0.0
   "Cached total rendered duration in seconds, updated by `eve--update-ruler'.")
+
+(defvar-local eve--ipc-socket-path nil
+  "Path to the mpv IPC Unix socket for the current buffer.")
+
+(defvar-local eve--ipc-process nil
+  "Network process connected to the mpv IPC socket.")
+
+(defvar-local eve--playback-timer nil
+  "Repeating timer polling mpv playback position.")
+
+(defvar-local eve--playback-overlay nil
+  "Overlay highlighting the currently-playing segment.")
+
+(defvar-local eve--playback-mode nil
+  "Current playback mode: \\='source or \\='rendered.")
+
+(defvar-local eve--playback-time-map nil
+  "Snapshot of cumulative-times alist at play-start (rendered mode).")
+
+(defvar-local eve--playback-source-segments nil
+  "Source-mode: ordered list of segments from the active source file.")
 
 (defvar-local eve--last-echo-id nil
   "Segment id that was last echoed in the minibuffer.")
