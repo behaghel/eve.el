@@ -2930,7 +2930,9 @@ This is the single cleanup entry point called from all exit paths."
   ;; Disable playback minor mode, restoring normal SPC behavior
   (eve-playback-mode -1)
   ;; Remove seek hook
-  (remove-hook 'post-command-hook #'eve--playback-seek-hook t))
+  (remove-hook 'post-command-hook #'eve--playback-seek-hook t)
+  ;; Restore Emacs frame geometry if video layout was active
+  (eve--restore-frame-geometry))
 
 (defun eve--playback-update-overlay (segment-id)
   "Highlight SEGMENT-ID with `eve-playback-face' as the currently-playing segment.
@@ -3127,7 +3129,9 @@ and --force-window-position=yes to keep the window locked in place."
          (end-arg (and end (format "--end=%f" end)))
          (ipc-arg (and ipc-socket
                        (format "--input-ipc-server=%s" ipc-socket)))
+         (layout-args (eve--mpv-geometry-args (eve--apply-video-layout)))
          (args (append eve-play-args
+                       layout-args
                        (list start-arg)
                        (when end-arg (list end-arg))
                        (when ipc-arg (list ipc-arg))

@@ -1334,6 +1334,34 @@
    (eve--save-frame-geometry)
    (should (= 999 (plist-get eve--saved-frame-geometry :left)))))
 
+(ert-deftest eve-video-layout-off-no-geometry-args ()
+  "When eve-video-layout is nil, eve--play-with-mpv does not include geometry args."
+  (eve-test-with-buffer
+   (let ((eve-video-layout nil)
+         (captured-args nil)
+         (fake-proc (make-process :name "fake" :command '("true") :noquery t)))
+     (cl-letf (((symbol-function 'start-process)
+                (lambda (_name _buf _prog &rest args)
+                  (setq captured-args args)
+                  fake-proc))
+               ((symbol-function 'executable-find)
+                (lambda (_prog) "/usr/bin/mpv"))
+               ((symbol-function 'set-process-sentinel) #'ignore)
+               ((symbol-function 'run-with-timer) #'ignore))
+       (let ((buffer-file-name "/tmp/test.tjm.json"))
+         (eve--play-with-mpv "/tmp/test.mp4" 0.0 nil "/tmp/test.sock")))
+     (should-not (seq-find (lambda (a) (string-prefix-p "--geometry=" a))
+                           captured-args)))))
+
+(ert-deftest eve-ipc-teardown-restores-frame-geometry ()
+  "eve--ipc-teardown calls eve--restore-frame-geometry."
+  (eve-test-with-buffer
+   (let ((restore-called nil))
+     (cl-letf (((symbol-function 'eve--restore-frame-geometry)
+                (lambda () (setq restore-called t))))
+       (eve--ipc-teardown)
+       (should restore-called)))))
+
 (provide 'eve-test)
 
 ;;; eve-test.el ends here
