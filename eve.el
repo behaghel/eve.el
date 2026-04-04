@@ -3063,25 +3063,37 @@ No-op when nothing is saved."
 (defun eve--compute-video-layout (workarea ratio)
   "Compute screen layout from WORKAREA and video RATIO.
 WORKAREA is a list (X Y W H) as returned by `frame-monitor-workarea'.
-RATIO is the fraction of height reserved for the video (e.g. 0.3).
+RATIO is the fraction of height reserved for the video (e.g. 0.6).
 Returns a plist:
-  :mpv-geometry  mpv --geometry string \"WxH+X+Y\"
+  :mpv-geometry  percentage-based mpv --geometry string (Retina-safe)
   :emacs-x       Emacs frame left pixel
-  :emacs-y       Emacs frame top pixel
+  :emacs-y       Emacs frame top pixel (outer frame — macOS title bar included)
   :emacs-w       Emacs frame pixel width
-  :emacs-h       Emacs frame pixel height"
+  :emacs-h       Emacs frame pixel height (text area)"
   (let* ((sx (nth 0 workarea))
          (sy (nth 1 workarea))
          (sw (nth 2 workarea))
          (sh (nth 3 workarea))
-         (video-h (floor (* sh ratio)))
-         (emacs-y (+ sy video-h))
-         (emacs-h (- sh video-h)))
-    (list :mpv-geometry (format "%dx%d+%d+%d" sw video-h sx sy)
-          :emacs-x sx
-          :emacs-y emacs-y
-          :emacs-w sw
-          :emacs-h emacs-h)))
+         (video-h  (floor (* sh ratio)))
+         ;; mpv-geometry uses percentages: safe across Retina and non-Retina.
+         ;; --macos-geometry-calculation=visible anchors to the usable area
+         ;; (below menu bar), so +0+0 is top-left of the visible screen.
+         (mpv-pct  (round (* 100 ratio)))
+         (mpv-geo  (format "100%%x%d%%+0+0" mpv-pct))
+         ;; For Emacs we use absolute pixels from frame-monitor-workarea.
+         ;; emacs-y is where the Emacs outer frame should start.  We subtract
+         ;; a hard-coded approximation of the macOS title-bar height (22 pt)
+         ;; so that the TEXT AREA begins flush with mpv's bottom edge.
+         ;; If the user has hidden the title bar, the overlap is harmless.
+         (title-bar-approx 22)
+         (mpv-bottom (+ sy video-h))
+         (emacs-outer-y (max sy (- mpv-bottom title-bar-approx)))
+         (emacs-h  (- (+ sy sh) mpv-bottom)))
+    (list :mpv-geometry   mpv-geo
+          :emacs-x        sx
+          :emacs-y        emacs-outer-y
+          :emacs-w        sw
+          :emacs-h        emacs-h)))
 
 (defun eve--apply-video-layout ()
   "Resize the Emacs frame to make room for the video window above it.
@@ -3096,29 +3108,18 @@ geometry string for the video area.  Returns nil when skipped."
             (message "eve-video-layout: skipped (Emacs is in native fullscreen)")
             nil)
         (eve--save-frame-geometry)
-        (let* ((workarea  (frame-monitor-workarea))
-               (sx  (nth 0 workarea))
-               (sy  (nth 1 workarea))
-               (sw  (nth 2 workarea))
-               (sh  (nth 3 workarea))
-               (video-h   (floor (* sh eve-video-layout-ratio)))
-               ;; mpv occupies sy .. sy+video-h
-               (mpv-bottom (+ sy video-h))
-               ;; Emacs CONTENT must start at mpv-bottom.
-               ;; Measure the title bar *before* resizing so we can compensate.
-               (title-h   (max 0 (- (frame-outer-height) (frame-pixel-height))))
-               ;; Outer frame positioned above mpv-bottom by title-bar height
-               ;; so that the content area begins exactly at mpv-bottom.
-               (outer-y   (- mpv-bottom title-h))
-               ;; Content height: fills from mpv-bottom to bottom of workarea
-               (emacs-h   (- (+ sy sh) mpv-bottom))
-               (mpv-geo   (format "%dx%d+%d+%d" sw video-h sx sy)))
-          (message "eve-layout: mpv→%s  emacs content %dx%d at y=%d (title-bar=%dpx)"
-                   mpv-geo sw emacs-h mpv-bottom title-h)
-          ;; Pixel-accurate sizing requires frame-resize-pixelwise
+        (let* ((workarea (frame-monitor-workarea))
+               (layout   (eve--compute-video-layout workarea eve-video-layout-ratio))
+               (ex  (plist-get layout :emacs-x))
+               (ey  (plist-get layout :emacs-y))
+               (ew  (plist-get layout :emacs-w))
+               (eh  (plist-get layout :emacs-h))
+               (mpv-geo (plist-get layout :mpv-geometry)))
+          (message "eve-layout: workarea=%S  mpv→%s  emacs→%dx%d at outer-y=%d"
+                   workarea mpv-geo ew eh ey)
           (setq frame-resize-pixelwise t)
-          (set-frame-position (selected-frame) sx (max sy outer-y))
-          (set-frame-size (selected-frame) sw emacs-h t)
+          (set-frame-position (selected-frame) ex ey)
+          (set-frame-size (selected-frame) ew eh t)
           mpv-geo)))))
 
 (defun eve--mpv-geometry-args (geometry-string)
@@ -3129,6 +3130,9 @@ automatically to preserve the aspect ratio within that window.
 --force-window-position locks the position so mpv respects the geometry."
   (when geometry-string
     (list (format "--geometry=%s" geometry-string)
+          ;; Use visible-area coordinates so +0+0 means top-left of the
+          ;; usable screen (below menu bar) regardless of Retina scaling.
+          "--macos-geometry-calculation=visible"
           "--no-border"
           "--ontop"
           "--force-window-position")))

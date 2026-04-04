@@ -1289,33 +1289,28 @@
    (should-not eve-playback-mode)))
 
 (ert-deftest eve-video-layout-compute-basic ()
-  "eve--compute-video-layout returns correct layout for a known workarea."
+  "eve--compute-video-layout returns percentage mpv geometry and correct Emacs dims."
   (let ((layout (eve--compute-video-layout '(0 25 1440 875) 0.3)))
-    ;; video-h = floor(875 * 0.3) = 262
-    (should (equal "[0-25-1440-613]"
-                   (format "[%d-%d-%d-%d]"
-                           (plist-get layout :emacs-x)
-                           25 ; sy
-                           (plist-get layout :emacs-w)
-                           (- 875 262)))) ; emacs-h
-    (should (string= "1440x262+0+25" (plist-get layout :mpv-geometry)))
-    (should (= 0 (plist-get layout :emacs-x)))
-    (should (= 287 (plist-get layout :emacs-y))) ; 25 + 262
+    ;; video-h = floor(875 * 0.3) = 262; pct = round(30) = 30
+    (should (string= "100%x30%+0+0" (plist-get layout :mpv-geometry)))
+    (should (= 0    (plist-get layout :emacs-x)))
     (should (= 1440 (plist-get layout :emacs-w)))
-    (should (= 613 (plist-get layout :emacs-h))))) ; 875 - 262
+    ;; emacs-h = 875 - 262 = 613
+    (should (= 613  (plist-get layout :emacs-h)))))
 
 (ert-deftest eve-video-layout-compute-ratio-0-4 ()
   "eve--compute-video-layout respects ratio 0.4."
   (let ((layout (eve--compute-video-layout '(0 0 1920 1080) 0.4)))
-    ;; video-h = floor(1080 * 0.4) = 432
-    (should (= 432 (- 1080 (plist-get layout :emacs-h))))
-    (should (string= "1920x432+0+0" (plist-get layout :mpv-geometry)))))
+    ;; video-h = floor(1080 * 0.4) = 432; emacs-h = 1080 - 432 = 648
+    (should (= 648 (plist-get layout :emacs-h)))
+    (should (string= "100%x40%+0+0" (plist-get layout :mpv-geometry)))))
 
 (ert-deftest eve-video-layout-geometry-args-basic ()
   "eve--mpv-geometry-args returns expected mpv argument list."
-  (let ((args (eve--mpv-geometry-args "1440x262+0+25")))
-    (should (= 4 (length args)))
-    (should (member "--geometry=1440x262+0+25" args))
+  (let ((args (eve--mpv-geometry-args "100%x60%+0+0")))
+    (should (= 5 (length args)))
+    (should (member "--geometry=100%x60%+0+0" args))
+    (should (member "--macos-geometry-calculation=visible" args))
     (should (member "--no-border" args))
     (should (member "--ontop" args))
     (should (member "--force-window-position" args))))
