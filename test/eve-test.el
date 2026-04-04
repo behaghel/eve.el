@@ -1488,6 +1488,8 @@
 (ert-deftest eve-dwim-filler-with-region-calls-add-filler-region ()
   (eve-test-with-buffer
    (let ((called nil))
+     (push-mark (point-min) t t)
+     (goto-char (point-max))
      (cl-letf (((symbol-function 'eve-add-filler-region)
                 (lambda (_start _end) (interactive "r") (setq called 'region)))
                ((symbol-function 'use-region-p)
