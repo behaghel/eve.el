@@ -427,6 +427,14 @@ Nil when no layout is active.")
 (defvar-local eve--redo-stack nil
   "Stack of TJM snapshots for redo operations.")
 
+(defvar-local eve-hide-deleted-mode nil
+  "Non-nil when deleted segments are hidden.
+Forward-declared for the byte-compiler.")
+
+(defvar-local eve-ruler-mode nil
+  "Non-nil when the timestamp ruler is displayed.
+Forward-declared for the byte-compiler.")
+
 (defun eve--auto-save-blocker (&rest _)
   "Predicate that prevents auto-saving visited files for TJM buffers."
   nil)
@@ -807,8 +815,8 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	(message "Copied b-roll from previous segment and set continue")))))
 
 (defun eve--pre-flight-validate (quality)
-  "Run validation and dry-run ETA check before compile; return t to proceed, nil to abort.
-QUALITY is the encoding quality string passed to --quality."
+  "Validate manifest and check ETA before compile at QUALITY.
+Return t to proceed, nil to abort."
   (when (and buffer-file-name (file-exists-p buffer-file-name))
     (let ((result (eve--validate-manifest-sync buffer-file-name)))
       (when result
@@ -3441,11 +3449,7 @@ geometry string for the video area.  Returns nil when skipped."
           mpv-geo)))))
 
 (defun eve--mpv-geometry-args (geometry-string)
-  "Return a list of mpv args for the video layout, or nil if GEOMETRY-STRING is nil.
-Uses --geometry for absolute position and size.  mpv letterboxes the video
-automatically to preserve the aspect ratio within that window.
---no-border and --ontop keep the window clean and above the Emacs frame.
---force-window-position locks the position so mpv respects the geometry."
+  "Return a list of mpv args for GEOMETRY-STRING, or nil."
   (when geometry-string
     (list (format "--geometry=%s" geometry-string)
           ;; Use visible-area coordinates so +0+0 means top-left of the

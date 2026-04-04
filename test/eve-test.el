@@ -424,6 +424,10 @@
     (let* ((buffer-file-name "/tmp/session dir/session.tjm.json")
            (eve-cli-program "eve-custom")
            (eve-preserve-gaps-max 2.25)
+           (eve-compile-quality "draft")
+           (eve-compile-jobs 0)
+           (eve-compile-scale 1.0)
+           (eve-compile-cache t)
            (program "/opt/eve tools/eve custom")
            (output "/tmp/session dir/session dir.mp4"))
       (cl-letf (((symbol-function 'executable-find)
@@ -431,11 +435,15 @@
                    (should (equal candidate eve-cli-program))
                    program)))
         (should (equal (eve--compile-command)
-                       (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps %s"
-                                (shell-quote-argument program)
-                                (shell-quote-argument buffer-file-name)
-                                (shell-quote-argument output)
-                                eve-preserve-gaps-max)))))))
+                       (string-join
+                        (list (shell-quote-argument program)
+                              "text-edit"
+                              (shell-quote-argument buffer-file-name)
+                              "--output" (shell-quote-argument output)
+                              "--subtitles"
+                              "--preserve-short-gaps" (number-to-string eve-preserve-gaps-max)
+                              "--quality" (shell-quote-argument "draft"))
+                        " ")))))))
 
 (ert-deftest eve-compile-command-errors-when-cli-program-is-missing ()
   "Compile commands fail early when the configured CLI is unavailable."
@@ -462,6 +470,10 @@
                          (cons 'title "Launch Plan")))
            (eve-cli-program "eve-custom")
            (eve-preserve-gaps-max 2.25)
+           (eve-compile-quality "draft")
+           (eve-compile-jobs 0)
+           (eve-compile-scale 1.0)
+           (eve-compile-cache t)
            (program "/opt/eve tools/eve custom")
            (temp "/tmp/eve section.json")
            (output "/tmp/session dir/session dir-launch-plan.mp4")
@@ -488,14 +500,21 @@
                 (lambda (command resolved-output &optional resolved-temp)
                   (setq captured-command command
                         captured-output resolved-output
-                        captured-temp resolved-temp))))
+                        captured-temp resolved-temp)))
+               ((symbol-function 'eve--pre-flight-validate)
+                (lambda (_quality) t)))
        (eve-compile)
        (should (equal captured-command
-                       (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps %s"
-                               (shell-quote-argument program)
-                               (shell-quote-argument temp)
-                               (shell-quote-argument output)
-                               eve-preserve-gaps-max)))
+                      (string-join
+                       (list (shell-quote-argument program)
+                             "text-edit"
+                             (shell-quote-argument temp)
+                             "--output" (shell-quote-argument output)
+                             "--subtitles"
+                             "--preserve-short-gaps"
+                             (number-to-string eve-preserve-gaps-max)
+                             "--quality" (shell-quote-argument "draft"))
+                       " ")))
         (should (equal captured-output output))
         (should (equal captured-temp temp))
         (should (equal captured-data-path temp))
