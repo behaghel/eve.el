@@ -92,10 +92,10 @@ Skipped when Emacs is in macOS native fullscreen."
   :type 'boolean
   :group 'eve)
 
-(defcustom eve-video-layout-ratio 0.3
+(defcustom eve-video-layout-ratio 0.6
   "Fraction of screen height reserved for the video window (0.0–1.0).
-The remaining fraction is given to the Emacs frame.  Default 0.3 means
-30% video on top, 70% Emacs on the bottom."
+The remaining fraction is given to the Emacs frame.  Default 0.6 means
+60% video on top, 40% Emacs on the bottom."
   :type 'float
   :group 'eve)
 
@@ -3147,7 +3147,14 @@ automatically to preserve the aspect ratio within that window.
                                 (eve--ipc-teardown)
                                 (setq eve--mpv-process nil)))))
     (when ipc-socket
-      (run-with-timer 0.5 nil #'eve--deferred-ipc-connect sentinel-buf)))
+      (run-with-timer 0.5 nil #'eve--deferred-ipc-connect sentinel-buf))
+    ;; Keep input focus on the Emacs frame — mpv steals it on macOS
+    (when eve-video-layout
+      (run-with-timer 0.4 nil
+                      (lambda ()
+                        (when (buffer-live-p sentinel-buf)
+                          (with-current-buffer sentinel-buf
+                            (select-frame-set-input-focus (selected-frame))))))))
   (message "Playing %s" (file-name-nondirectory file)))
 
 (defun eve-validate (&optional silent)
