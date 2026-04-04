@@ -3095,18 +3095,30 @@ geometry string for the video area.  Returns nil when skipped."
           (progn
             (message "eve-video-layout: skipped (Emacs is in native fullscreen)")
             nil)
-        ;; Idempotent: if geometry already saved, just recompute mpv string
         (eve--save-frame-geometry)
-        (let* ((workarea (frame-monitor-workarea))
-               (layout   (eve--compute-video-layout workarea eve-video-layout-ratio))
-               (ex  (plist-get layout :emacs-x))
-               (ey  (plist-get layout :emacs-y))
-               (ew  (plist-get layout :emacs-w))
-               (eh  (plist-get layout :emacs-h))
-               (mpv-geo (plist-get layout :mpv-geometry)))
-          (message "eve-layout: emacs→%dx%d+%d+%d  mpv→%s" ew eh ex ey mpv-geo)
-          (set-frame-position (selected-frame) ex ey)
-          (set-frame-size (selected-frame) ew eh t)
+        (let* ((workarea  (frame-monitor-workarea))
+               (sx  (nth 0 workarea))
+               (sy  (nth 1 workarea))
+               (sw  (nth 2 workarea))
+               (sh  (nth 3 workarea))
+               (video-h   (floor (* sh eve-video-layout-ratio)))
+               ;; mpv occupies sy .. sy+video-h
+               (mpv-bottom (+ sy video-h))
+               ;; Emacs CONTENT must start at mpv-bottom.
+               ;; Measure the title bar *before* resizing so we can compensate.
+               (title-h   (max 0 (- (frame-outer-height) (frame-pixel-height))))
+               ;; Outer frame positioned above mpv-bottom by title-bar height
+               ;; so that the content area begins exactly at mpv-bottom.
+               (outer-y   (- mpv-bottom title-h))
+               ;; Content height: fills from mpv-bottom to bottom of workarea
+               (emacs-h   (- (+ sy sh) mpv-bottom))
+               (mpv-geo   (format "%dx%d+%d+%d" sw video-h sx sy)))
+          (message "eve-layout: mpv→%s  emacs content %dx%d at y=%d (title-bar=%dpx)"
+                   mpv-geo sw emacs-h mpv-bottom title-h)
+          ;; Pixel-accurate sizing requires frame-resize-pixelwise
+          (setq frame-resize-pixelwise t)
+          (set-frame-position (selected-frame) sx (max sy outer-y))
+          (set-frame-size (selected-frame) sw emacs-h t)
           mpv-geo)))))
 
 (defun eve--mpv-geometry-args (geometry-string)
