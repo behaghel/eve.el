@@ -1395,7 +1395,6 @@
 
 (ert-deftest eve-mode-map-bindings ()
   "Verify new vim-inspired keybindings in eve-mode-map."
-  :expected-result :failed
   (should (eq (lookup-key eve-mode-map "j") #'eve-next-segment))
   (should (eq (lookup-key eve-mode-map "k") #'eve-previous-segment))
   (should (eq (lookup-key eve-mode-map "n") #'eve-next-segment))
@@ -1433,7 +1432,6 @@
 
 (ert-deftest eve-playback-mode-map-bindings ()
   "Verify playback keybindings in eve-playback-mode-map."
-  :expected-result :failed
   (should (eq (lookup-key eve-playback-mode-map (kbd "SPC")) #'eve-playback-pause-resume))
   (should (eq (lookup-key eve-playback-mode-map (kbd "<left>")) #'eve-seek-short-backward))
   (should (eq (lookup-key eve-playback-mode-map (kbd "<right>")) #'eve-seek-short-forward))
@@ -1443,7 +1441,6 @@
 
 (ert-deftest eve-cc-prefix-bindings ()
   "Verify C-c prefix bindings in eve-mode-map."
-  :expected-result :failed
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-c")) #'eve-compile))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-v")) #'eve-validate))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-r")) #'eve-reload))
