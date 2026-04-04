@@ -38,5 +38,8 @@ devenv.local.yaml
 # direnv
 .direnv
 
-# pre-commit
-.pre-commit-config.yaml
+# Sisyphus planning artifacts
+.sisyphus/
+
+# Screenshots and debug images
+*.png
