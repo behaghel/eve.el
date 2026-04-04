@@ -747,49 +747,73 @@ Nil when no layout is active.")
 	(eve-compile)))))
 
 (defhydra eve-hydra (:hint nil :color teal)
-	  "
-Navigation         Edit                Metadata           Misc
-───────────────   ─────────────────   ─────────────────  ───────────────────
-_RET_/_SPC_ play   _C-c e_  text       _C-c t_ toggle tag  _C-c v_ validate
-_C-t_       next   _C-c s_  speaker    _C-c b_ edit b-roll _C-c o_ raw JSON
-_C-s_       prev   _C-c C-n_ notes     _C-c C-b_ placeholders _C-c k_ stop mpv
-_C-c N_ / _M-t_ move↓  _C-c r_ timing    _C-c j_ paragraph    _C-c l_ reload
-_C-c P_ / _M-s_ move↑  _C-c d_ segment    _C-c u_ undo         _C-c R_ redo
-_M-j_       marker _C-c C-w_ word      _C-c C-s_ split
-		  _C-c m_ merge
+  "
+Navigation        Edit              Fillers           Playback
+──────────────   ──────────────   ──────────────   ──────────────────────
+_j_/_k_  next/prev  _d_ del word      _f_ filler        _SPC_/_RET_ play
+_n_/_p_  next/prev  _D_ del segment   _F_ del fillers   _<left>_/_<right>_ seek ±5s
+_J_/_K_  move up/dn _s_/|  split                        _S-<left>_/_S-<right>_ ±30s/10s
+                  _m_/_)_ merge                       During playback:
+Metadata          _u_ undo          Structure           _SPC_ pause/resume
+──────────────   _C-r_ redo         ___  separator       _q_ stop
+_t_ toggle tag    _e_ edit (DWIM)   _C-RET_ separator
+_b_ edit b-roll                    _o_ insert marker
+_B_ b-roll cont   Global C-c C-x
+_i_ speaker       ──────────────
+_r_ timestamps    _C-c C-c_ compile    _C-c C-w_ word timings
+                  _C-c C-v_ validate   _C-c C-l_ ruler mode
+_g_ reload        _C-c C-r_ reload     _C-c C-h_ hide deleted
+_q_ quit          _C-c C-o_ raw JSON   _C-c C-t_ transcribe
+_?_ this help     _C-c C-p_ play rendered  _C-c C-s_ play source
+                  _C-c C-b_ b-roll placeholders
+                  _C-c C-n_ edit notes
 "
-	  ("RET" eve-play-segment)
-	  ("SPC" eve-play-segment)
-	  ("C-t" eve-next-segment)
-	  ("C-s" eve-previous-segment)
-	  ("C-c n" eve-next-segment)
-	  ("C-c p" eve-previous-segment)
-	  ("C-c N" eve-move-segment-down)
-	  ("C-c P" eve-move-segment-up)
-	  ("M-t" eve-move-segment-down)
-	  ("M-s" eve-move-segment-up)
-	  ("C-c e" eve-edit-text)
-	  ("C-c s" eve-edit-speaker)
-	  ("C-c C-n" eve-edit-notes)
-	  ("C-c r" eve-edit-start-end)
-	  ("C-c d" eve-delete-segment)
-	  ("C-c C-w" eve-delete-word)
-	  ("C-c C-s" eve-split-segment)
-	  ("C-c m" eve-merge-with-next)
-	  ("M-j" eve-insert-marker)
-	  ("C-c C-m" eve-insert-marker)
-	  ("C-c t" eve-toggle-tag)
-	  ("C-c b" eve-edit-broll)
-	  ("C-c C-b" eve-edit-broll-placeholders)
-	  ("C-c w" eve-toggle-words)
-	  ("C-c j" eve-toggle-separator)
-	  ("C-c v" eve-validate)
-	  ("C-c o" eve-open-raw-json)
-	  ("C-c k" eve-stop-playback)
-	  ("C-c l" eve-reload)
-	  ("C-c u" eve-undo)
-	  ("C-c R" eve-redo)
-	  ("q" nil "quit"))
+  ("j" eve-next-segment)
+  ("k" eve-previous-segment)
+  ("n" eve-next-segment)
+  ("p" eve-previous-segment)
+  ("J" eve-move-segment-down)
+  ("K" eve-move-segment-up)
+  ("d" eve-delete-word)
+  ("D" eve-delete-segment)
+  ("s" eve-split-segment)
+  ("|" eve-split-segment)
+  ("m" eve-merge-with-next)
+  (")" eve-merge-with-next)
+  ("u" eve-undo)
+  ("C-r" eve-redo)
+  ("e" eve-dwim-edit)
+  ("o" eve-insert-marker)
+  ("t" eve-toggle-tag)
+  ("b" eve-edit-broll)
+  ("B" eve-toggle-broll-continue)
+  ("i" eve-edit-speaker)
+  ("r" eve-edit-start-end)
+  ("f" eve-dwim-filler)
+  ("F" eve-delete-fillers)
+  ("SPC" eve-play-segment)
+  ("RET" eve-play-segment)
+  ("<left>" eve-seek-short-backward)
+  ("<right>" eve-seek-short-forward)
+  ("S-<left>" eve-seek-long-backward)
+  ("S-<right>" eve-seek-long-forward)
+  ("_" eve-toggle-separator)
+  ("C-RET" eve-toggle-separator)
+  ("g" eve-reload)
+  ("C-c C-c" eve-compile)
+  ("C-c C-v" eve-validate)
+  ("C-c C-r" eve-reload)
+  ("C-c C-o" eve-open-raw-json)
+  ("C-c C-h" eve-hide-deleted-mode)
+  ("C-c C-w" eve-toggle-words)
+  ("C-c C-l" eve-ruler-mode)
+  ("C-c C-t" eve-transcribe)
+  ("C-c C-p" eve-play-rendered)
+  ("C-c C-s" eve-play-source)
+  ("C-c C-b" eve-edit-broll-placeholders)
+  ("C-c C-n" eve-edit-notes)
+  ("?" nil "close")
+  ("q" nil "close"))
 
 (defun eve--snapshot ()
   "Create a deep copy of `eve--data'."
