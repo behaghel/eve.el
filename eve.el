@@ -141,6 +141,21 @@ meaningful timing inconsistencies."
   :type 'boolean
   :group 'eve)
 
+(defcustom eve-seek-short-seconds 5
+  "Seconds used by short seek commands."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-seek-long-backward-seconds 30
+  "Seconds used by long backward seek commands."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-seek-long-forward-seconds 10
+  "Seconds used by long forward seek commands."
+  :type 'integer
+  :group 'eve)
+
 (defcustom eve-filler-phrases '("um" "uh")
   "Filler words/phrases to tag in transcripts.
 Each entry is a plain string; single words (\"um\") and multi-word
@@ -2815,6 +2830,28 @@ using the rendered timeline from `eve--rendered-cumulative-times'."
                           (let ((paused (eve--ipc-get-property "pause")))
                             (message (if paused "Paused" "Resumed"))))))
     (message "No playback active")))
+
+(defun eve-seek (seconds)
+  "Seek mpv by SECONDS."
+  (if (process-live-p eve--mpv-process)
+      (eve--ipc-send (list "seek" (number-to-string seconds) "relative"))
+    (message "No playback active")))
+
+(defun eve-seek-short-backward ()
+  (interactive)
+  (eve-seek (- eve-seek-short-seconds)))
+
+(defun eve-seek-short-forward ()
+  (interactive)
+  (eve-seek eve-seek-short-seconds))
+
+(defun eve-seek-long-backward ()
+  (interactive)
+  (eve-seek (- eve-seek-long-backward-seconds)))
+
+(defun eve-seek-long-forward ()
+  (interactive)
+  (eve-seek eve-seek-long-forward-seconds))
 
 (defun eve--playback-seek-hook ()
   "Post-command hook: seek mpv to the segment at point during playback."

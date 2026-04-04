@@ -1278,6 +1278,43 @@
        (should (member '("cycle" "pause") sent-commands))
        (ignore-errors (delete-process eve--mpv-process))))))
 
+(ert-deftest eve-seek-short-forward-sends-ipc ()
+  (eve-test-with-buffer
+   (let ((sent-commands nil))
+     (cl-letf (((symbol-function 'eve--ipc-send)
+                (lambda (cmd) (push cmd sent-commands)))
+               ((symbol-function 'process-live-p)
+                (lambda (_p) t)))
+       (setq-local eve--mpv-process (make-process :name "fake" :command '("true")))
+       (eve-seek-short-forward)
+       (should (member '("seek" "5" "relative") sent-commands))
+       (ignore-errors (delete-process eve--mpv-process))))))
+
+(ert-deftest eve-seek-short-backward-sends-ipc ()
+  (eve-test-with-buffer
+   (let ((sent-commands nil))
+     (cl-letf (((symbol-function 'eve--ipc-send)
+                (lambda (cmd) (push cmd sent-commands)))
+               ((symbol-function 'process-live-p)
+                (lambda (_p) t)))
+       (setq-local eve--mpv-process (make-process :name "fake" :command '("true")))
+       (eve-seek-short-backward)
+       (should (member '("seek" "-5" "relative") sent-commands))
+       (ignore-errors (delete-process eve--mpv-process))))))
+
+(ert-deftest eve-seek-no-process-messages ()
+  (eve-test-with-buffer
+   (let ((messages nil))
+     (cl-letf (((symbol-function 'eve--ipc-send)
+                (lambda (_cmd) (error "should not send")))
+               ((symbol-function 'process-live-p)
+                (lambda (_p) nil))
+               ((symbol-function 'message)
+                (lambda (fmt &rest args)
+                  (push (apply #'format fmt args) messages))))
+       (eve-seek-short-forward)
+       (should (member "No playback active" messages))))))
+
 (ert-deftest eve-ipc-teardown-restores-spc ()
   "eve--ipc-teardown disables eve-playback-mode, restoring normal SPC."
   (eve-test-with-buffer
