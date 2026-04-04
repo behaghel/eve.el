@@ -2348,6 +2348,14 @@ that starts at the word under point."
       (eve--mark-dirty)
       (eve--render t))))
 
+(defun eve-dwim-edit ()
+  "Edit b-roll metadata or segment text depending on context at point."
+  (interactive)
+  (if (and (get-text-property (point) 'eve-broll)
+	   (eq (face-at-point) 'eve-meta-face))
+      (call-interactively #'eve-edit-broll)
+    (call-interactively #'eve-edit-text)))
+
 (defun eve-edit-speaker (segment)
   "Edit the speaker field of SEGMENT."
   (interactive (list (or (eve--segment-at-point)
@@ -2612,6 +2620,13 @@ that starts at the word under point."
         (eve--mark-dirty)))
     (eve--render t)
     (message "Added filler phrase: %s" phrase)))
+
+(defun eve-dwim-filler ()
+  "Add filler from region or word at point."
+  (interactive)
+  (if (use-region-p)
+      (call-interactively #'eve-add-filler-region)
+    (call-interactively #'eve-add-filler-at-point)))
 
 (defun eve-delete-fillers ()
   "Mark every word tagged as filler as deleted."
@@ -3044,6 +3059,13 @@ BUF is the eve-mode buffer to update."
       (setq eve--mpv-process nil))
     (when was-playing
       (message "Playback stopped"))))
+
+(defun eve-dwim-quit ()
+  "Stop playback if active, then quit the window."
+  (interactive)
+  (when (process-live-p eve--mpv-process)
+    (eve-stop-playback))
+  (quit-window))
 
 (defun eve--deferred-ipc-connect (buf &optional attempt)
   "Connect to mpv IPC socket in BUF, then start the playback poll timer.
