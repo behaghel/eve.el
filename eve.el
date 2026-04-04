@@ -491,11 +491,14 @@ the major-mode binding in `eve-mode-map' and evil state maps."
      (t (fundamental-mode)))))
 
 (defun eve--play-file (file)
-  "Play FILE using the configured media player."
-  (let ((abs (expand-file-name file)))
+  "Play FILE using the configured media player with IPC tracking."
+  (let ((abs (expand-file-name file))
+        (socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
     (unless (file-readable-p abs)
       (user-error "Output file not found: %s" abs))
-    (eve--play-with-mpv abs nil nil)
+    (eve--play-with-mpv abs nil nil socket-path)
+    (eve-playback-mode 1)
+    (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
     (message "Playing %s" (file-name-nondirectory abs))))
 
 (defun eve--transcribe-finished (process event output-path)
@@ -2692,8 +2695,14 @@ that starts at the word under point."
 	     (abs-file (expand-file-name file (file-name-directory buffer-file-name))))
 	(unless (file-exists-p abs-file)
 	  (user-error "Source file not found: %s" abs-file))
-	(eve--play-with-mpv abs-file start end)
-	(message "Playing %s [%s-%s]" file start end)))))
+	(let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
+	  (eve--play-with-mpv abs-file start end socket-path)
+	  ;; Set state AFTER eve--play-with-mpv (teardown clears these)
+	  (setq eve--playback-source-segments (list seg))
+	  (setq eve--playback-mode 'source)
+	  (eve-playback-mode 1)
+	  (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
+	  (message "Playing %s [%s-%s]" file start end))))))
 
 (defun eve-play-source ()
   "Play source media from the current segment to end-of-file, tracking progress.
