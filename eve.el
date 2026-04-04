@@ -76,6 +76,13 @@
   :type '(repeat string)
   :group 'eve)
 
+(defcustom eve-play-after-compile nil
+  "Whether to play the rendered video automatically after compilation.
+When non-nil, `eve-compile' (\\`C-c C-c') plays the output file on
+success.  When nil (the default), compilation only produces the file."
+  :type 'boolean
+  :group 'eve)
+
 (defcustom eve-validation-on-save t
   "Whether TJM buffers should be validated automatically on save."
   :type 'boolean
@@ -556,7 +563,8 @@ the major-mode binding in `eve-mode-map' and evil state maps."
 		      (setq eve--playback-time-map
 			    (eve--rendered-cumulative-times
 			     (eve--segments) eve-hide-deleted-mode)))
-		  (eve--play-file output))
+		  (when eve-play-after-compile
+		    (eve--play-file output)))
 	      (error (message "%s" (or (cadr err) err))))))
 	(setq eve--pending-output nil
 	      eve--pending-temp nil
