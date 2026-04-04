@@ -83,6 +83,22 @@ success.  When nil (the default), compilation only produces the file."
   :type 'boolean
   :group 'eve)
 
+(defcustom eve-video-layout nil
+  "When non-nil, arrange the screen for video editing on the first play command.
+The Emacs frame is resized to the bottom portion of the display and mpv is
+positioned directly above it — borderless, on top, aspect-ratio-preserving.
+The original frame geometry is restored when playback stops.
+Skipped when Emacs is in macOS native fullscreen."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-video-layout-ratio 0.3
+  "Fraction of screen height reserved for the video window (0.0–1.0).
+The remaining fraction is given to the Emacs frame.  Default 0.3 means
+30% video on top, 70% Emacs on the bottom."
+  :type 'float
+  :group 'eve)
+
 (defcustom eve-validation-on-save t
   "Whether TJM buffers should be validated automatically on save."
   :type 'boolean
@@ -287,6 +303,11 @@ the major-mode binding in `eve-mode-map' and evil state maps."
 
 (defvar-local eve--mpv-process nil
   "Handle to a running mpv playback process, if any.")
+
+(defvar-local eve--saved-frame-geometry nil
+  "Saved Emacs frame geometry before video layout was applied.
+Stored as a plist (:left L :top T :width W :height H :fullscreen FS).
+Nil when no layout is active.")
 
 (defvar-local eve--visual-separators nil
   "List of segment ids that should be followed by a blank line.")
@@ -3007,9 +3028,96 @@ socket file has not appeared yet."
          ((< attempt 5)
           (run-with-timer 0.4 nil #'eve--deferred-ipc-connect buf (1+ attempt)))
          ;; Gave up
-         (t
-          (message "eve: mpv IPC socket did not appear after %.1fs"
-                   (* attempt 0.4))))))))
+          (t
+           (message "eve: mpv IPC socket did not appear after %.1fs"
+                    (* attempt 0.4))))))))
+
+(defun eve--save-frame-geometry ()
+  "Save the current Emacs frame geometry to `eve--saved-frame-geometry'.
+Idempotent: does nothing if geometry is already saved."
+  (unless eve--saved-frame-geometry
+    (setq eve--saved-frame-geometry
+          (list :left       (frame-parameter nil 'left)
+                :top        (frame-parameter nil 'top)
+                :width      (frame-pixel-width)
+                :height     (frame-pixel-height)
+                :fullscreen (frame-parameter nil 'fullscreen)))))
+
+(defun eve--restore-frame-geometry ()
+  "Restore the Emacs frame geometry saved by `eve--save-frame-geometry'.
+No-op when nothing is saved."
+  (when eve--saved-frame-geometry
+    (let ((left  (plist-get eve--saved-frame-geometry :left))
+          (top   (plist-get eve--saved-frame-geometry :top))
+          (w     (plist-get eve--saved-frame-geometry :width))
+          (h     (plist-get eve--saved-frame-geometry :height))
+          (fs    (plist-get eve--saved-frame-geometry :fullscreen)))
+      (when fs
+        (set-frame-parameter nil 'fullscreen fs))
+      (set-frame-position (selected-frame) (or left 0) (or top 0))
+      (set-frame-size (selected-frame) (or w 800) (or h 600) t))
+    (setq eve--saved-frame-geometry nil)))
+
+(defun eve--compute-video-layout (workarea ratio)
+  "Compute screen layout from WORKAREA and video RATIO.
+WORKAREA is a list (X Y W H) as returned by `frame-monitor-workarea'.
+RATIO is the fraction of height reserved for the video (e.g. 0.3).
+Returns a plist:
+  :mpv-geometry  mpv --geometry string \"WxH+X+Y\"
+  :emacs-x       Emacs frame left pixel
+  :emacs-y       Emacs frame top pixel
+  :emacs-w       Emacs frame pixel width
+  :emacs-h       Emacs frame pixel height"
+  (let* ((sx (nth 0 workarea))
+         (sy (nth 1 workarea))
+         (sw (nth 2 workarea))
+         (sh (nth 3 workarea))
+         (video-h (floor (* sh ratio)))
+         (emacs-y (+ sy video-h))
+         (emacs-h (- sh video-h)))
+    (list :mpv-geometry (format "%dx%d+%d+%d" sw video-h sx sy)
+          :emacs-x sx
+          :emacs-y emacs-y
+          :emacs-w sw
+          :emacs-h emacs-h)))
+
+(defun eve--apply-video-layout ()
+  "Resize the Emacs frame to make room for the video window above it.
+Saves the original geometry, detects fullscreen (skips with a message),
+resizes Emacs to the bottom portion of the screen, and returns the mpv
+geometry string for the video area.  Returns nil when skipped."
+  (when eve-video-layout
+    ;; Skip in native fullscreen — macOS blocks frame resize
+    (let ((fs (frame-parameter nil 'fullscreen)))
+      (if (memq fs '(fullscreen fullboth))
+          (progn
+            (message "eve-video-layout: skipped (Emacs is in native fullscreen)")
+            nil)
+        ;; Idempotent: if geometry already saved, just recompute mpv string
+        (eve--save-frame-geometry)
+        (let* ((workarea (frame-monitor-workarea))
+               (layout   (eve--compute-video-layout workarea eve-video-layout-ratio))
+               (ex  (plist-get layout :emacs-x))
+               (ey  (plist-get layout :emacs-y))
+               (ew  (plist-get layout :emacs-w))
+               (eh  (plist-get layout :emacs-h)))
+          (set-frame-position (selected-frame) ex ey)
+          (set-frame-size (selected-frame) ew eh t)
+          (plist-get layout :mpv-geometry))))))
+
+(defun eve--mpv-geometry-args (geometry-string)
+  "Return a list of mpv args for the video layout, or nil if GEOMETRY-STRING is nil.
+Passes --geometry for absolute position+size, --autofit to preserve the
+video aspect ratio (letterboxing automatic), plus --no-border, --ontop,
+and --force-window-position=yes to keep the window locked in place."
+  (when geometry-string
+    ;; Extract width from "WxH+X+Y" for --autofit=Wx (width-constrained)
+    (let ((width (car (split-string geometry-string "[xX+]"))))
+      (list (format "--geometry=%s" geometry-string)
+            (format "--autofit=%sx" width)
+            "--no-border"
+            "--ontop"
+            "--force-window-position=yes"))))
 
 (defun eve--play-with-mpv (file start end &optional ipc-socket)
   (unless (executable-find eve-play-program)

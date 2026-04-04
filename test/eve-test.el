@@ -1240,15 +1240,16 @@
 (ert-deftest eve-play-rendered-sets-rendered-mode ()
   "eve-play-rendered sets eve--playback-mode to 'rendered."
   (eve-test-with-buffer
-   (let ((buffer-file-name "/tmp/test.tjm.json"))
+   (let ((buffer-file-name "/tmp/test.tjm.json")
+         (fixed-time '(26864 1200 0 0)))
      (cl-letf (((symbol-function 'eve--play-with-mpv)
                 (lambda (_f _s _e &optional _i) nil))
                ((symbol-function 'file-exists-p)
                 (lambda (_f) t))
                ((symbol-function 'file-attributes)
-                (lambda (_f) (list nil nil nil nil nil (current-time)))))
-       (eve-play-rendered)
-       (should (eq 'rendered eve--playback-mode))))))
+                (lambda (_f) (list nil nil nil nil nil fixed-time))))
+        (eve-play-rendered)
+        (should (eq 'rendered eve--playback-mode))))))
 
 (ert-deftest eve-play-rendered-compiles-when-stale ()
   "eve-play-rendered calls eve--run-compile when output file is stale."
@@ -1286,6 +1287,52 @@
    ;; Teardown should disable it
    (eve--ipc-teardown)
    (should-not eve-playback-mode)))
+
+(ert-deftest eve-video-layout-compute-basic ()
+  "eve--compute-video-layout returns correct layout for a known workarea."
+  (let ((layout (eve--compute-video-layout '(0 25 1440 875) 0.3)))
+    ;; video-h = floor(875 * 0.3) = 262
+    (should (equal "[0-25-1440-613]"
+                   (format "[%d-%d-%d-%d]"
+                           (plist-get layout :emacs-x)
+                           25 ; sy
+                           (plist-get layout :emacs-w)
+                           (- 875 262)))) ; emacs-h
+    (should (string= "1440x262+0+25" (plist-get layout :mpv-geometry)))
+    (should (= 0 (plist-get layout :emacs-x)))
+    (should (= 287 (plist-get layout :emacs-y))) ; 25 + 262
+    (should (= 1440 (plist-get layout :emacs-w)))
+    (should (= 613 (plist-get layout :emacs-h))))) ; 875 - 262
+
+(ert-deftest eve-video-layout-compute-ratio-0-4 ()
+  "eve--compute-video-layout respects ratio 0.4."
+  (let ((layout (eve--compute-video-layout '(0 0 1920 1080) 0.4)))
+    ;; video-h = floor(1080 * 0.4) = 432
+    (should (= 432 (- 1080 (plist-get layout :emacs-h))))
+    (should (string= "1920x432+0+0" (plist-get layout :mpv-geometry)))))
+
+(ert-deftest eve-video-layout-geometry-args-basic ()
+  "eve--mpv-geometry-args returns expected mpv argument list."
+  (let ((args (eve--mpv-geometry-args "1440x262+0+25")))
+    (should (= 5 (length args)))
+    (should (member "--geometry=1440x262+0+25" args))
+    (should (member "--autofit=1440x" args))
+    (should (member "--no-border" args))
+    (should (member "--ontop" args))
+    (should (member "--force-window-position=yes" args))))
+
+(ert-deftest eve-video-layout-geometry-args-nil ()
+  "eve--mpv-geometry-args returns nil when given nil."
+  (should-not (eve--mpv-geometry-args nil)))
+
+(ert-deftest eve-video-layout-save-geometry-idempotent ()
+  "eve--save-frame-geometry does not overwrite an existing saved geometry."
+  (eve-test-with-buffer
+   ;; Set a sentinel value
+   (setq-local eve--saved-frame-geometry '(:left 999 :top 999 :width 999 :height 999))
+   ;; Call save — should not overwrite
+   (eve--save-frame-geometry)
+   (should (= 999 (plist-get eve--saved-frame-geometry :left)))))
 
 (provide 'eve-test)
 
