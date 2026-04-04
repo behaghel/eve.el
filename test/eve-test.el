@@ -1278,14 +1278,14 @@
        (ignore-errors (delete-process eve--mpv-process))))))
 
 (ert-deftest eve-ipc-teardown-restores-spc ()
-  "eve--ipc-teardown restores SPC to eve-play-segment."
+  "eve--ipc-teardown disables eve-playback-mode, restoring normal SPC."
   (eve-test-with-buffer
-   ;; Override SPC as would happen during playback
-   (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
-   ;; Teardown should restore it
+   ;; Activate playback mode as would happen during playback
+   (eve-playback-mode 1)
+   (should eve-playback-mode)
+   ;; Teardown should disable it
    (eve--ipc-teardown)
-   (should (eq #'eve-play-segment
-               (lookup-key eve-mode-map (kbd "SPC"))))))
+   (should-not eve-playback-mode)))
 
 (provide 'eve-test)
 

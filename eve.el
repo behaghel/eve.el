@@ -207,6 +207,28 @@ scripts/run-cli.sh relative to the package source directory."
           (when (file-executable-p run-cli)
             run-cli)))))
 
+(defvar eve-playback-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "SPC") #'eve-playback-pause-resume)
+    map)
+  "Keymap active during mpv playback.
+Overrides SPC to pause/resume instead of playing a single segment.")
+
+(define-minor-mode eve-playback-mode
+  "Transient minor mode active while mpv playback is tracking.
+Provides a higher-priority SPC binding for pause/resume that overrides
+the major-mode binding in `eve-mode-map' and evil state maps."
+  :keymap eve-playback-mode-map
+  (if eve-playback-mode
+      ;; Push into emulation-mode-map-alists so we override evil state maps
+      (push (list (cons 'eve-playback-mode eve-playback-mode-map))
+            emulation-mode-map-alists)
+    (setq emulation-mode-map-alists
+          (cl-remove-if (lambda (entry)
+                          (and (listp entry)
+                               (assq 'eve-playback-mode entry)))
+                        emulation-mode-map-alists))))
+
 (defvar eve-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
@@ -528,7 +550,12 @@ scripts/run-cli.sh relative to the package source directory."
 		    (progn
 		      (setq-local eve--pending-play-socket nil)
 		      (eve--play-with-mpv (expand-file-name output)
-					 0.0 nil play-socket))
+					 0.0 nil play-socket)
+		      ;; Set state AFTER eve--play-with-mpv (teardown clears these)
+		      (setq eve--playback-mode 'rendered)
+		      (setq eve--playback-time-map
+			    (eve--rendered-cumulative-times
+			     (eve--segments) eve-hide-deleted-mode)))
 		  (eve--play-file output))
 	      (error (message "%s" (or (cadr err) err))))))
 	(setq eve--pending-output nil
@@ -2689,13 +2716,15 @@ Collects all non-deleted segments from the same source, stores them in
              (lambda (a b)
                (< (or (alist-get 'start a) 0.0)
                   (or (alist-get 'start b) 0.0))))))
-      (setq eve--playback-source-segments source-segs)
-      (setq eve--playback-mode 'source)
       (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock"))
             (start-time (or (alist-get 'start seg) 0.0)))
         (eve--play-with-mpv abs-file start-time nil socket-path)
-        ;; Override SPC to pause/resume during playback
-        (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
+        ;; Set state AFTER eve--play-with-mpv: that function calls
+        ;; eve-stop-playback → eve--ipc-teardown which clears these vars.
+        (setq eve--playback-source-segments source-segs)
+        (setq eve--playback-mode 'source)
+        ;; Enable playback minor mode: gives SPC a higher-priority binding
+        (eve-playback-mode 1)
         ;; Add seek hook
         (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)))))
 
@@ -2713,16 +2742,16 @@ using the rendered timeline from `eve--rendered-cumulative-times'."
                             (not (time-less-p
                                   (nth 5 (file-attributes output))
                                   (nth 5 (file-attributes tjm-file)))))))
-    ;; Snapshot the rendered time map now (before any compile)
-    (setq eve--playback-mode 'rendered)
-    (setq eve--playback-time-map
-          (eve--rendered-cumulative-times (eve--segments) eve-hide-deleted-mode))
     (if output-fresh
         ;; Up-to-date: play directly
         (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
           (eve--play-with-mpv output 0.0 nil socket-path)
-          ;; Override SPC to pause/resume during playback
-          (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
+          ;; Set state AFTER eve--play-with-mpv (teardown clears these)
+          (setq eve--playback-mode 'rendered)
+          (setq eve--playback-time-map
+                (eve--rendered-cumulative-times (eve--segments) eve-hide-deleted-mode))
+          ;; Enable playback minor mode: gives SPC a higher-priority binding
+          (eve-playback-mode 1)
           ;; Add seek hook
           (add-hook 'post-command-hook #'eve--playback-seek-hook nil t))
       ;; Stale or missing: save and compile first, play after
@@ -2733,7 +2762,7 @@ using the rendered timeline from `eve--rendered-cumulative-times'."
         (setq-local eve--pending-play-socket socket-path)
         (eve--run-compile (eve--compile-command) output)
         ;; Wire controls (playback will start after compile finishes)
-        (define-key eve-mode-map (kbd "SPC") #'eve-playback-pause-resume)
+        (eve-playback-mode 1)
         (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)))))
 
 (defun eve-playback-pause-resume ()
@@ -2752,7 +2781,8 @@ using the rendered timeline from `eve--rendered-cumulative-times'."
 (defun eve--playback-seek-hook ()
   "Post-command hook: seek mpv to the segment at point during playback."
   (when (and (process-live-p eve--mpv-process)
-             (timerp eve--playback-timer))
+             (timerp eve--playback-timer)
+             (not (eq this-command 'eve-playback-pause-resume)))
     (let* ((seg (eve--segment-at-point))
            (seg-id (and seg (alist-get 'id seg)))
            ;; ID of segment currently highlighted by playback overlay
@@ -2859,8 +2889,8 @@ This is the single cleanup entry point called from all exit paths."
   (setq eve--playback-mode nil
         eve--playback-time-map nil
         eve--playback-source-segments nil)
-  ;; Restore SPC to normal play-segment behavior
-  (define-key eve-mode-map (kbd "SPC") #'eve-play-segment)
+  ;; Disable playback minor mode, restoring normal SPC behavior
+  (eve-playback-mode -1)
   ;; Remove seek hook
   (remove-hook 'post-command-hook #'eve--playback-seek-hook t))
 
@@ -2938,19 +2968,31 @@ BUF is the eve-mode buffer to update."
     (when was-playing
       (message "Playback stopped"))))
 
-(defun eve--deferred-ipc-connect (buf)
-  "Connect to mpv IPC socket in BUF, then start the playback poll timer."
-  (when (buffer-live-p buf)
-    (with-current-buffer buf
-      (when (and eve--ipc-socket-path
-                 (file-exists-p eve--ipc-socket-path)
-                 (process-live-p eve--mpv-process))
-        (condition-case err
-            (progn
-              (eve--ipc-connect eve--ipc-socket-path)
-              (eve--playback-start-timer))
-          (error
-           (message "eve: failed to connect to mpv IPC: %s" (cadr err))))))))
+(defun eve--deferred-ipc-connect (buf &optional attempt)
+  "Connect to mpv IPC socket in BUF, then start the playback poll timer.
+Retries up to 5 times at 0.4-second intervals while mpv is alive and the
+socket file has not appeared yet."
+  (let ((attempt (or attempt 1)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (cond
+         ;; mpv died before we could connect — give up silently
+         ((not (process-live-p eve--mpv-process)) nil)
+         ;; Socket exists — connect and start timer
+         ((file-exists-p (or eve--ipc-socket-path ""))
+          (condition-case err
+              (progn
+                (eve--ipc-connect eve--ipc-socket-path)
+                (eve--playback-start-timer))
+            (error
+             (message "eve: IPC connect failed: %s" (cadr err)))))
+         ;; Socket not yet there — retry up to 5 times
+         ((< attempt 5)
+          (run-with-timer 0.4 nil #'eve--deferred-ipc-connect buf (1+ attempt)))
+         ;; Gave up
+         (t
+          (message "eve: mpv IPC socket did not appear after %.1fs"
+                   (* attempt 0.4))))))))
 
 (defun eve--play-with-mpv (file start end &optional ipc-socket)
   (unless (executable-find eve-play-program)
