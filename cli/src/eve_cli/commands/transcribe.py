@@ -122,6 +122,94 @@ def split_segment(
     return slices
 
 
+SENTENCE_ENDINGS = (".", "?", "!")
+CLAUSE_BOUNDARIES = (",", ";", ":")
+MIN_SENTENCE_WORDS = 2
+CLAUSE_SEARCH_WINDOW = 5
+
+
+def _find_clause_boundary(words: list[dict[str, Any]]) -> int | None:
+    search_start = max(len(words) - CLAUSE_SEARCH_WINDOW, MIN_SENTENCE_WORDS - 1)
+    for i in range(len(words) - 1, search_start - 1, -1):
+        token = words[i]["token"].rstrip()
+        if token.endswith(CLAUSE_BOUNDARIES):
+            return i + 1
+    return None
+
+
+def _split_at_natural_boundaries(
+    words: list[dict[str, Any]],
+    max_words: int,
+) -> list[list[dict[str, Any]]]:
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+
+    for word in words:
+        current.append(word)
+        token = word["token"].rstrip()
+
+        if token.endswith(SENTENCE_ENDINGS):
+            if len(current) >= MIN_SENTENCE_WORDS:
+                groups.append(current)
+                current = []
+        elif len(current) >= max_words:
+            split_idx = _find_clause_boundary(current)
+            if split_idx is not None and split_idx >= MIN_SENTENCE_WORDS:
+                groups.append(current[:split_idx])
+                current = current[split_idx:]
+            else:
+                groups.append(current)
+                current = []
+
+    if current:
+        if groups and len(current) < MIN_SENTENCE_WORDS:
+            groups[-1].extend(current)
+        else:
+            groups.append(current)
+
+    return groups
+
+
+def resegment_naturally(
+    segments: list[dict[str, Any]],
+    max_words: int,
+) -> list[dict[str, Any]]:
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for seg in segments:
+        by_source.setdefault(seg["source"], []).append(seg)
+
+    result: list[dict[str, Any]] = []
+    for source_id, source_segments in by_source.items():
+        all_words: list[dict[str, Any]] = []
+        for seg in source_segments:
+            all_words.extend(seg.get("words", []))
+
+        word_groups = _split_at_natural_boundaries(all_words, max_words)
+
+        for idx, words in enumerate(word_groups, start=1):
+            if not words:
+                continue
+            text = " ".join(w["token"] for w in words)
+            start = words[0].get("start") or 0.0
+            end = words[-1].get("end") or start
+            result.append(
+                {
+                    "id": f"{source_id}-s{idx:04d}",
+                    "source": source_id,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "speaker": None,
+                    "text": text,
+                    "words": words,
+                    "tags": [],
+                    "notes": "",
+                    "broll": None,
+                }
+            )
+
+    return result
+
+
 def segment_to_dict(
     source_id: str,
     index: int,
@@ -523,6 +611,15 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         ),
     )
     parser.add_argument(
+        "--max-segment-words",
+        type=int,
+        default=8,
+        help=(
+            "Target maximum words per segment; segments are split at sentence "
+            "and clause boundaries. Set to 0 to disable. (default: 8)"
+        ),
+    )
+    parser.add_argument(
         "--tag-fillers",
         action="store_true",
         help="Tag filler words in the output manifest before writing",
@@ -565,6 +662,10 @@ def run(args: Namespace) -> int:
     if not stub_mode:
         try:
             manifest_segments = backend_runners[args.backend](args, inputs)
+            if args.max_segment_words > 0:
+                manifest_segments = resegment_naturally(
+                    manifest_segments, args.max_segment_words
+                )
         except MissingBackendDependencyError as exc:
             print(f"eve transcribe: {exc}", file=sys.stderr)
             return 2

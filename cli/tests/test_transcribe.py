@@ -48,6 +48,7 @@ def make_run_args(media: Path, output: Path, **overrides: object) -> Namespace:
         "backend": "faster-whisper",
         "pretty": False,
         "max_segment_duration": 0.0,
+        "max_segment_words": 0,
         "tag_fillers": False,
         "verbatim": False,
         "vad": False,
@@ -72,6 +73,7 @@ def test_transcribe_parser_matches_legacy_defaults() -> None:
     assert args.device == "auto"
     assert args.backend == "faster-whisper"
     assert args.max_segment_duration == 0.0
+    assert args.max_segment_words == 8
     assert args.tag_fillers is False
     assert args.verbatim is True
     assert args.pretty is False
@@ -720,3 +722,105 @@ def test_transcribe_run_surfaces_backend_dependency_help(
     assert f"uv sync --project cli --extra {extra}" in message
     assert f"uv pip install .[{extra}]" in message
     assert not output.exists()
+
+
+def test_split_at_natural_boundaries_splits_at_sentence_end() -> None:
+    words = [
+        {"token": "Hello", "start": 0.0, "end": 0.3},
+        {"token": "world.", "start": 0.3, "end": 0.6},
+        {"token": "How", "start": 0.7, "end": 0.9},
+        {"token": "are", "start": 0.9, "end": 1.1},
+        {"token": "you?", "start": 1.1, "end": 1.4},
+    ]
+    groups = transcribe._split_at_natural_boundaries(words, max_words=12)
+    assert len(groups) == 2
+    assert [w["token"] for w in groups[0]] == ["Hello", "world."]
+    assert [w["token"] for w in groups[1]] == ["How", "are", "you?"]
+
+
+def test_split_at_natural_boundaries_merges_short_sentence_with_next() -> None:
+    words = [
+        {"token": "I", "start": 0.0, "end": 0.1},
+        {"token": "agree", "start": 0.1, "end": 0.3},
+        {"token": "completely.", "start": 0.3, "end": 0.6},
+        {"token": "OK.", "start": 0.7, "end": 0.9},
+        {"token": "Let", "start": 1.0, "end": 1.1},
+        {"token": "us", "start": 1.1, "end": 1.2},
+        {"token": "continue.", "start": 1.2, "end": 1.5},
+    ]
+    groups = transcribe._split_at_natural_boundaries(words, max_words=12)
+    assert len(groups) == 2
+    assert [w["token"] for w in groups[0]] == ["I", "agree", "completely."]
+    assert [w["token"] for w in groups[1]] == ["OK.", "Let", "us", "continue."]
+
+
+def test_split_at_natural_boundaries_splits_at_clause_when_long() -> None:
+    words = [
+        {"token": "The", "start": 0.0, "end": 0.1},
+        {"token": "quick", "start": 0.1, "end": 0.2},
+        {"token": "brown", "start": 0.2, "end": 0.3},
+        {"token": "fox,", "start": 0.3, "end": 0.4},
+        {"token": "the", "start": 0.5, "end": 0.6},
+        {"token": "lazy", "start": 0.6, "end": 0.7},
+        {"token": "dog,", "start": 0.7, "end": 0.8},
+        {"token": "and", "start": 0.8, "end": 0.9},
+        {"token": "then", "start": 0.9, "end": 1.0},
+    ]
+    groups = transcribe._split_at_natural_boundaries(words, max_words=8)
+    assert len(groups) == 2
+    assert [w["token"] for w in groups[0]] == [
+        "The",
+        "quick",
+        "brown",
+        "fox,",
+        "the",
+        "lazy",
+        "dog,",
+    ]
+    assert [w["token"] for w in groups[1]] == ["and", "then"]
+
+
+def test_split_at_natural_boundaries_trailing_short_merges_with_previous() -> None:
+    words = [
+        {"token": "One", "start": 0.0, "end": 0.1},
+        {"token": "two", "start": 0.1, "end": 0.2},
+        {"token": "three.", "start": 0.2, "end": 0.3},
+        {"token": "Go", "start": 0.4, "end": 0.5},
+    ]
+    groups = transcribe._split_at_natural_boundaries(words, max_words=12)
+    assert len(groups) == 1
+    assert [w["token"] for w in groups[0]] == ["One", "two", "three.", "Go"]
+
+
+def test_resegment_naturally_builds_new_segments() -> None:
+    segments = [
+        {
+            "id": "clip01-s0001",
+            "source": "clip01",
+            "start": 0.0,
+            "end": 2.0,
+            "speaker": None,
+            "text": "Hello world. How are you today?",
+            "words": [
+                {"token": "Hello", "start": 0.0, "end": 0.2},
+                {"token": "world.", "start": 0.2, "end": 0.5},
+                {"token": "How", "start": 0.6, "end": 0.8},
+                {"token": "are", "start": 0.8, "end": 1.0},
+                {"token": "you", "start": 1.0, "end": 1.2},
+                {"token": "today?", "start": 1.2, "end": 2.0},
+            ],
+            "tags": [],
+            "notes": "",
+            "broll": None,
+        }
+    ]
+    result = transcribe.resegment_naturally(segments, max_words=12)
+    assert len(result) == 2
+    assert result[0]["id"] == "clip01-s0001"
+    assert result[0]["text"] == "Hello world."
+    assert result[0]["start"] == 0.0
+    assert result[0]["end"] == 0.5
+    assert result[1]["id"] == "clip01-s0002"
+    assert result[1]["text"] == "How are you today?"
+    assert result[1]["start"] == 0.6
+    assert result[1]["end"] == 2.0
