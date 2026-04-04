@@ -158,6 +158,12 @@ def test_run_orchestrates_render_subtitles_and_manifest(
         base_dir: Path,
         working: Path,
         preserve_gap_threshold: float | None = None,
+        quality: str = "draft",
+        jobs: int = 0,
+        cache_dir: Path | None = None,
+        scale: float = 1.0,
+        codec: str = "h264",
+        resume: bool = True,
     ) -> list[Path]:
         calls["render"] = (payload, base_dir, working, preserve_gap_threshold)
         segment = working / "segment_0001.mp4"
@@ -190,6 +196,8 @@ def test_run_orchestrates_render_subtitles_and_manifest(
         subtitles="",
         no_subtitle_mux=False,
         json=False,
+        quality="draft",
+        jobs=0,
         command="text-edit",
     )
 
@@ -317,6 +325,9 @@ def test_render_segments_ignores_deleted_marker_broll_chain_state(
         _total_duration: float,
         _working: Path,
         _audio_policy: str,
+        _quality: str = "draft",
+        _scale: float = 1.0,
+        _codec: str = "h264",
     ) -> tuple[Path, str]:
         return prepared, "yuv420p"
 
@@ -330,6 +341,9 @@ def test_render_segments_ignores_deleted_marker_broll_chain_state(
         *,
         effective_offset: float | None = None,
         effective_duration: float | None = None,
+        quality: str = "draft",
+        scale: float = 1.0,
+        codec: str = "h264",
     ) -> list[str]:
         effective_offsets.append(effective_offset)
         assert effective_duration == 0.5
@@ -925,3 +939,565 @@ def test_text_edit_end_to_end_render(tmp_path: Path) -> None:
     assert "segment clip01-s0004" in render_log
     assert "before segment clip01-s0004" not in render_log
     assert "WEBVTT" in subtitles.read_text(encoding="utf-8")
+
+
+def test_jobs_arg_defaults_to_zero() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["text-edit", "edit.tjm.json", "--output", "out.mp4"])
+    assert args.jobs == 0
+
+
+def test_jobs_arg_accepts_value() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["text-edit", "edit.tjm.json", "--output", "out.mp4", "--jobs", "4"]
+    )
+    assert args.jobs == 4
+
+
+def test_render_segments_parallel_preserves_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.touch()
+    render_order: list[str] = []
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        out = Path(cmd[-1])
+        out.write_text("clip", encoding="utf-8")
+        render_order.append(out.name)
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    manifest = {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": str(source)}],
+        "segments": [
+            {
+                "id": f"clip01-s{i:04d}",
+                "source": "clip01",
+                "start": float(i) * 0.5,
+                "end": float(i) * 0.5 + 0.5,
+                "text": f"segment {i}",
+            }
+            for i in range(6)
+        ],
+    }
+
+    outputs = text_edit.render_segments(manifest, tmp_path, tmp_path, jobs=4)
+
+    assert len(outputs) == 6
+    for i, path in enumerate(outputs):
+        assert path == tmp_path / f"segment_{i + 1:04d}.mp4", (
+            f"Output {i} is {path.name}, expected segment_{i + 1:04d}.mp4"
+        )
+
+
+def test_quality_arg_defaults_to_draft() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["text-edit", "edit.tjm.json", "--output", "out.mp4"])
+    assert args.quality == "draft"
+
+
+def test_quality_arg_accepts_final() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["text-edit", "edit.tjm.json", "--output", "out.mp4", "--quality", "final"]
+    )
+    assert args.quality == "final"
+
+
+def test_encoding_params_draft() -> None:
+    params = text_edit.encoding_params("draft")
+    assert params["preset"] == "ultrafast"
+    assert params["crf"] == "28"
+
+
+def test_encoding_params_final() -> None:
+    params = text_edit.encoding_params("final")
+    assert params["preset"] == "medium"
+    assert params["crf"] == "18"
+
+
+def test_build_trim_command_draft_uses_ultrafast(tmp_path: Path) -> None:
+    source = tmp_path / "src.mp4"
+    source.touch()
+    dest = tmp_path / "out.mp4"
+
+    monkeypatched_info = {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30.0,
+        "fps_str": "30/1",
+        "pix_fmt": "yuv420p",
+    }
+    text_edit._VIDEO_PROBE_CACHE[source] = monkeypatched_info
+    try:
+        cmd = text_edit.build_trim_command(source, 0.0, 1.0, dest, quality="draft")
+    finally:
+        text_edit._VIDEO_PROBE_CACHE.pop(source, None)
+
+    assert "-preset" in cmd
+    preset_idx = cmd.index("-preset")
+    assert cmd[preset_idx + 1] == "ultrafast"
+    crf_idx = cmd.index("-crf")
+    assert cmd[crf_idx + 1] == "28"
+
+
+def test_build_trim_command_final_uses_medium(tmp_path: Path) -> None:
+    source = tmp_path / "src.mp4"
+    source.touch()
+    dest = tmp_path / "out.mp4"
+
+    text_edit._VIDEO_PROBE_CACHE[source] = {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30.0,
+        "fps_str": "30/1",
+        "pix_fmt": "yuv420p",
+    }
+    try:
+        cmd = text_edit.build_trim_command(source, 0.0, 1.0, dest, quality="final")
+    finally:
+        text_edit._VIDEO_PROBE_CACHE.pop(source, None)
+
+    assert "-preset" in cmd
+    assert cmd[cmd.index("-preset") + 1] == "medium"
+    assert cmd[cmd.index("-crf") + 1] == "18"
+
+
+def _make_simple_manifest(source_file: str) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": source_file}],
+        "segments": [
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 0.0,
+                "end": 0.5,
+                "text": "hello",
+            },
+            {
+                "id": "clip01-s0002",
+                "source": "clip01",
+                "start": 0.5,
+                "end": 1.0,
+                "text": "world",
+            },
+        ],
+    }
+
+
+def test_cache_populated_on_first_render(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake-video-data")
+    cache_dir = tmp_path / ".eve-cache"
+    encode_calls: list[str] = []
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        out = Path(cmd[-1])
+        out.write_text("clip", encoding="utf-8")
+        encode_calls.append(out.name)
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    manifest = _make_simple_manifest(str(source))
+    text_edit.render_segments(manifest, tmp_path, tmp_path, cache_dir=cache_dir)
+
+    segments_dir = cache_dir / "segments"
+    cached_files = list(segments_dir.glob("*.mp4"))
+    assert len(cached_files) == 2
+    assert len(encode_calls) == 2
+
+
+def test_cache_hit_skips_re_encode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake-video-data")
+    cache_dir = tmp_path / ".eve-cache"
+    encode_calls: list[str] = []
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        out = Path(cmd[-1])
+        out.write_text("clip", encoding="utf-8")
+        encode_calls.append(out.name)
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    manifest = _make_simple_manifest(str(source))
+
+    text_edit.render_segments(manifest, tmp_path, tmp_path, cache_dir=cache_dir)
+    assert len(encode_calls) == 2
+
+    encode_calls.clear()
+
+    text_edit.render_segments(manifest, tmp_path, tmp_path, cache_dir=cache_dir)
+    assert len(encode_calls) == 0, (
+        "Expected zero encodes on re-render with unchanged manifest"
+    )
+
+
+def test_cache_re_encodes_only_edited_segment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake-video-data")
+    cache_dir = tmp_path / ".eve-cache"
+    encode_calls: list[str] = []
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        out = Path(cmd[-1])
+        out.write_text("clip", encoding="utf-8")
+        encode_calls.append(out.name)
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    manifest = _make_simple_manifest(str(source))
+    text_edit.render_segments(manifest, tmp_path, tmp_path, cache_dir=cache_dir)
+    assert len(encode_calls) == 2
+
+    encode_calls.clear()
+
+    manifest["segments"][0] = {
+        "id": "clip01-s0001",
+        "source": "clip01",
+        "start": 0.0,
+        "end": 0.4,
+        "text": "hello",
+    }
+
+    text_edit.render_segments(manifest, tmp_path, tmp_path, cache_dir=cache_dir)
+
+    assert len(encode_calls) == 1, (
+        f"Expected 1 encode (only the trimmed segment), got {len(encode_calls)}"
+    )
+
+
+def test_validate_arg_in_parser() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["text-edit", "edit.tjm.json", "--output", "out.mp4", "--validate"]
+    )
+    assert args.validate is True
+
+
+def test_validate_reports_missing_source(tmp_path: Path) -> None:
+    manifest = {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": str(tmp_path / "missing.mp4")}],
+        "segments": [
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 0.0,
+                "end": 0.5,
+                "text": "hello",
+            }
+        ],
+    }
+    errors, warnings = text_edit.validate_manifest_for_render(manifest, tmp_path)
+    assert any("missing.mp4" in e for e in errors)
+
+
+def test_validate_reports_missing_broll(tmp_path: Path) -> None:
+    source = tmp_path / "sample.mp4"
+    source.touch()
+    manifest = {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": str(source)}],
+        "segments": [
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 0.0,
+                "end": 0.5,
+                "edit": {"broll": {"file": str(tmp_path / "missing_broll.mp4")}},
+            }
+        ],
+    }
+    errors, _warnings = text_edit.validate_manifest_for_render(manifest, tmp_path)
+    assert any("missing_broll.mp4" in e for e in errors)
+
+
+def test_validate_clean_manifest_produces_no_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake-video-data")
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 1920,
+            "height": 1080,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+
+    manifest = _make_simple_manifest(str(source))
+    errors, warnings = text_edit.validate_manifest_for_render(manifest, tmp_path)
+    assert errors == []
+
+
+def test_validate_detects_non_positive_duration(tmp_path: Path) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake")
+    manifest = {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": str(source)}],
+        "segments": [
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 1.0,
+                "end": 0.5,
+                "text": "backwards",
+            }
+        ],
+    }
+    errors, _warnings = text_edit.validate_manifest_for_render(manifest, tmp_path)
+    assert any("non-positive duration" in e for e in errors)
+
+
+def test_codec_arg_defaults_to_none() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["text-edit", "edit.tjm.json", "--output", "out.mp4"])
+    assert args.codec is None
+
+
+def test_codec_arg_accepts_mjpeg() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["text-edit", "edit.tjm.json", "--output", "out.mp4", "--codec", "mjpeg"]
+    )
+    assert args.codec == "mjpeg"
+
+
+def test_encoding_args_draft_h264() -> None:
+    args = text_edit.encoding_args("draft", "h264")
+    assert "-c:v" in args
+    assert "libx264" in args
+    assert "ultrafast" in args
+
+
+def test_encoding_args_draft_mjpeg() -> None:
+    args = text_edit.encoding_args("draft", "mjpeg")
+    assert "mjpeg" in args
+    assert "-q:v" in args
+
+
+def test_encoding_args_final_ignores_mjpeg() -> None:
+    args_mjpeg = text_edit.encoding_args("final", "mjpeg")
+    args_h264 = text_edit.encoding_args("final", "h264")
+    assert args_mjpeg == args_h264
+    assert "libx264" in args_h264
+
+
+def test_effective_pix_fmt_mjpeg_draft() -> None:
+    result = text_edit.effective_pix_fmt("yuv420p", "mjpeg", "draft")
+    assert result == "yuvj420p"
+
+
+def test_effective_pix_fmt_h264_unchanged() -> None:
+    result = text_edit.effective_pix_fmt("yuv420p", "h264", "draft")
+    assert result == "yuv420p"
+
+
+def test_read_meta_missing_cache_dir(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "no-cache"
+    cache_dir.mkdir()
+    meta = text_edit._read_meta(cache_dir)
+    assert meta == {}
+
+
+def test_update_timing_writes_meta(tmp_path: Path) -> None:
+    cache_dir = tmp_path / ".eve-cache"
+    cache_dir.mkdir()
+    text_edit._update_timing(cache_dir, "draft", elapsed=4.0, count=2)
+    meta = text_edit._read_meta(cache_dir)
+    avg = meta["avg_seconds_per_segment"]["draft"]
+    assert avg == pytest.approx(2.0, rel=0.01)
+    assert meta["sample_count"]["draft"] == 2
+
+
+def test_update_timing_accumulates(tmp_path: Path) -> None:
+    cache_dir = tmp_path / ".eve-cache"
+    cache_dir.mkdir()
+    text_edit._update_timing(cache_dir, "draft", elapsed=4.0, count=2)
+    text_edit._update_timing(cache_dir, "draft", elapsed=6.0, count=3)
+    meta = text_edit._read_meta(cache_dir)
+    avg = meta["avg_seconds_per_segment"]["draft"]
+    assert avg == pytest.approx(2.0, rel=0.1)
+
+
+def test_dry_run_arg_in_parser() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["text-edit", "edit.tjm.json", "--output", "out.mp4", "--dry-run"]
+    )
+    assert args.dry_run is True
+
+
+def test_analyze_render_all_cache_misses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake-video-data")
+    cache_dir = tmp_path / ".eve-cache"
+    cache_dir.mkdir()
+
+    manifest = _make_simple_manifest(str(source))
+    analysis = text_edit.analyze_render(
+        manifest, quality="draft", scale=1.0, cache_dir=cache_dir
+    )
+
+    assert analysis["total_segments"] == 2
+    assert analysis["cached_segments"] == 0
+    assert analysis["changed_segments"] == 2
+    assert len(analysis["changed_ids"]) == 2
+
+
+def test_analyze_render_after_warm_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake-video-data")
+    cache_dir = tmp_path / ".eve-cache"
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        Path(cmd[-1]).write_text("clip", encoding="utf-8")
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    manifest = _make_simple_manifest(str(source))
+    text_edit.render_segments(
+        manifest, tmp_path, tmp_path, cache_dir=cache_dir, quality="draft"
+    )
+
+    analysis = text_edit.analyze_render(
+        manifest, quality="draft", scale=1.0, cache_dir=cache_dir
+    )
+
+    assert analysis["total_segments"] == 2
+    assert analysis["cached_segments"] == 2
+    assert analysis["changed_segments"] == 0
+    assert analysis["cache_hit_rate"] == 1.0
+
+
+def test_checkpoint_written_during_render(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.write_bytes(b"fake-video-data")
+    cache_dir = tmp_path / ".eve-cache"
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        Path(cmd[-1]).write_text("clip", encoding="utf-8")
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    manifest = _make_simple_manifest(str(source))
+    text_edit.render_segments(
+        manifest, tmp_path, tmp_path, cache_dir=cache_dir, quality="draft", resume=True
+    )
+
+    checkpoint = text_edit._read_checkpoint(cache_dir)
+    assert len(checkpoint.get("completed", [])) == 2
+
+
+def test_no_resume_flag_in_parser() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["text-edit", "edit.tjm.json", "--output", "out.mp4", "--no-resume"]
+    )
+    assert args.no_resume is True
+
+
+def test_segments_arg_in_parser() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "text-edit",
+            "edit.tjm.json",
+            "--output",
+            "out.mp4",
+            "--segments",
+            "clip01-s0001",
+            "clip01-s0002",
+        ]
+    )
+    assert args.segments == ["clip01-s0001", "clip01-s0002"]
+
+
+def test_partial_every_arg_in_parser() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["text-edit", "edit.tjm.json", "--output", "out.mp4", "--partial-every", "10"]
+    )
+    assert args.partial_every == 10

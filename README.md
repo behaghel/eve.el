@@ -109,6 +109,68 @@ tagging to an existing TJM manifest without trimming media. `eve trim-fillers`
 still exists today, but it is deprecated in favor of this manifest-tagging
 workflow.
 
+## Compilation and Rendering
+
+`C-c C-c` (`eve-compile`) compiles the current manifest — or the section under
+point when on a marker — through `eve text-edit`.
+
+Out of the box, compilation is tuned for a fast edit-preview loop:
+
+- **Draft quality** by default — ultrafast encoding at lower fidelity so you
+  see the result in seconds, not minutes.
+- **Parallel encoding** — segments are rendered concurrently across all
+  available CPU cores.
+- **Segment cache** — unchanged segments are stored in `.eve-cache/` next to
+  the manifest and reused across renders.  After a one-word edit only the
+  affected segment is re-encoded; everything else is a cache hit.
+- **Speculative pre-rendering** — on every save, changed segments are
+  silently pre-rendered in the background so the cache is already warm when
+  you hit `C-c C-c`.
+
+For final delivery, press `C-u C-c C-c` to compile at full quality
+(H.264 medium/CRF 18).
+
+### Pre-flight checks
+
+Before starting a render that would take more than
+`eve-compile-confirm-threshold` seconds (default 30), `eve-compile` runs a
+dry-run analysis and asks for confirmation.  It also validates the manifest
+(missing source files, bad timecodes, absent b-roll) before committing to
+an expensive encode.
+
+### Compilation variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `eve-compile-quality` | `"draft"` | `"draft"` for fast preview, `"final"` for delivery |
+| `eve-compile-jobs` | `0` | Parallel workers; 0 = auto-detect CPU count |
+| `eve-compile-scale` | `1.0` | Resolution scale for draft (e.g. 0.5 = half res) |
+| `eve-compile-cache` | `t` | Use the `.eve-cache/` segment cache |
+| `eve-compile-confirm-threshold` | `30` | Seconds above which a confirmation is shown |
+| `eve-auto-render` | `t` | Speculatively pre-render on save |
+| `eve-auto-render-idle-seconds` | `2.0` | Idle delay before speculative render fires |
+
+### CLI flags
+
+`eve text-edit` exposes the full set of knobs for scripting or CI use.
+Under normal Emacs usage you never need these — `--quality` drives the
+defaults and everything else is resolved automatically.
+
+```
+--quality draft|final   Encoding profile (default: draft)
+--codec h264|mjpeg      Override intermediate codec (draft→mjpeg, final→h264)
+--scale FACTOR          Resolution scale (e.g. 0.5)
+--jobs N                Parallel workers (0 = auto)
+--cache-dir PATH        Segment cache location (default: .eve-cache/)
+--no-cache              Disable segment cache
+--cache-max-size GB     Cache eviction threshold (default: 10)
+--validate              Check manifest without rendering
+--dry-run               Report cache hits/misses and estimated time
+--segments ID [ID …]    Pre-render only the listed segments into the cache
+--no-resume             Ignore checkpoint from a prior interrupted render
+--partial-every N       Write a partial .mp4 every N segments
+```
+
 ## Filler Words
 
 `eve-mode` supports non-destructive filler tagging. Words and phrases tagged as

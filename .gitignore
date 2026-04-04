@@ -43,3 +43,6 @@ devenv.local.yaml
 
 # Screenshots and debug images
 *.png
+
+# Eve segment render cache
+.eve-cache/

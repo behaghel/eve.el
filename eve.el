@@ -176,6 +176,42 @@ present."
   :type 'float
   :group 'eve)
 
+(defcustom eve-compile-quality "draft"
+  "Default encoding quality passed to `eve text-edit --quality'.
+\\='draft\\=' (ultrafast/crf28) renders ~15x faster for quick preview.
+\\='final\\=' (medium/crf18) produces delivery-quality output.
+Use \\[universal-argument] \\[eve-compile] to compile at the opposite quality."
+  :type '(choice (const "draft") (const "final"))
+  :group 'eve)
+
+(defcustom eve-compile-jobs 0
+  "Number of segments to encode in parallel, passed to `eve text-edit --jobs'.
+0 (the default) lets the CLI auto-detect based on CPU count, capped at 8."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-compile-scale 1.0
+  "Resolution scale factor passed to `eve text-edit --scale'.
+Values less than 1.0 reduce resolution during draft renders (e.g. 0.5 = half).
+Only effective with `eve-compile-quality' set to \\='draft\\='.
+Ignored for final renders."
+  :type 'float
+  :group 'eve)
+
+(defcustom eve-compile-confirm-threshold 30
+  "Seconds above which `eve-compile' asks before starting.
+Set to 0 to always prompt, or a large number to never prompt."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-compile-cache t
+  "Whether to use the persistent segment cache during compilation.
+When non-nil (default), unchanged segments are reused from .eve-cache/ next to
+the manifest, making re-renders after small edits nearly instant.
+When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
+  :type 'boolean
+  :group 'eve)
+
 (defface eve-heading-face
   '((t :inherit font-lock-keyword-face :weight bold))
   "Face for segment headings."
@@ -419,19 +455,34 @@ Nil when no layout is active.")
 		  (file-name-directory buffer-file-name)))))
       (expand-file-name (concat name ".mp4") parent))))
 
-(defun eve--text-edit-command (input output)
-  "Build the `eve text-edit` command for INPUT and OUTPUT."
-  (let ((program (or (eve--resolve-cli)
-                     (user-error "Cannot find eve CLI executable: %s"
-                                 eve-cli-program))))
-    (format "%s text-edit %s --output %s --subtitles --preserve-short-gaps %s"
-            (shell-quote-argument program)
-            (shell-quote-argument input)
-            (shell-quote-argument output)
-            eve-preserve-gaps-max)))
+(defun eve--text-edit-command (input output &optional quality)
+  "Build the `eve text-edit` command for INPUT and OUTPUT.
+QUALITY overrides `eve-compile-quality' when non-nil.
+Only non-default settings are passed; the CLI resolves
+codec, cache, and parallelism from the quality profile."
+  (let* ((program (or (eve--resolve-cli)
+                      (user-error "Cannot find eve CLI executable: %s"
+                                  eve-cli-program)))
+         (effective-quality (or quality eve-compile-quality "draft"))
+         (parts (list
+                 (shell-quote-argument program)
+                 "text-edit"
+                 (shell-quote-argument input)
+                 "--output" (shell-quote-argument output)
+                 "--subtitles"
+                 "--preserve-short-gaps" (number-to-string eve-preserve-gaps-max)
+                 "--quality" (shell-quote-argument effective-quality))))
+    (when (/= eve-compile-jobs 0)
+      (setq parts (append parts (list "--jobs" (number-to-string eve-compile-jobs)))))
+    (when (and (< eve-compile-scale 1.0) (> eve-compile-scale 0.0))
+      (setq parts (append parts (list "--scale" (number-to-string eve-compile-scale)))))
+    (unless eve-compile-cache
+      (setq parts (append parts (list "--no-cache"))))
+    (string-join parts " ")))
 
-(defun eve--compile-command ()
-  "Build the `eve text-edit` command for the current buffer."
+(defun eve--compile-command (&optional quality)
+  "Build the `eve text-edit` command for the current buffer.
+QUALITY overrides `eve-compile-quality' when non-nil."
   (let* ((file buffer-file-name)
 	 (output (eve--default-output-file)))
     (unless file
@@ -439,7 +490,49 @@ Nil when no layout is active.")
     (unless output
       (user-error "Unable to determine output filename"))
 
-    (eve--text-edit-command file output)))
+    (eve--text-edit-command file output quality)))
+
+(defun eve--dry-run-analysis (manifest-file quality)
+  "Run dry-run analysis on MANIFEST-FILE at QUALITY.
+Return a plist with segment counts and estimated render time."
+  (let* ((program (eve--resolve-cli))
+         (raw (and program
+                   (with-temp-buffer
+                     (when (zerop
+                            (call-process program nil t nil
+                                          "text-edit" manifest-file
+                                          "--output" "/dev/null"
+                                          "--dry-run" "--json"
+                                          "--quality" quality))
+                       (buffer-string))))))
+    (when raw
+      (condition-case nil
+          (json-parse-string raw :object-type 'plist)
+        (error nil)))))
+
+(defun eve--validate-manifest-sync (manifest-file)
+  "Run `eve text-edit --validate --json' on MANIFEST-FILE synchronously.
+Returns a plist with :valid, :errors, and :warnings, or nil on failure."
+  (let* ((program (eve--resolve-cli))
+         (output (and program
+                      (with-temp-buffer
+                        (when (zerop
+                               (call-process program nil t nil
+                                             "text-edit" manifest-file
+                                             "--output" "/dev/null"
+                                             "--validate" "--json"))
+                          (buffer-string))))))
+    (when output
+      (condition-case nil
+          (json-parse-string output :object-type 'plist)
+        (error nil)))))
+
+(defun eve-check-spelling ()
+  "Spell-check the visible transcript text in the current eve buffer."
+  (interactive)
+  (let ((start (point-min))
+        (end (point-max)))
+    (ispell-region start end)))
 
 (defun eve--slugify (title)
   "Return a filesystem-safe slug for TITLE."
@@ -713,14 +806,54 @@ Nil when no layout is active.")
 	(eve--echo-segment-info)
 	(message "Copied b-roll from previous segment and set continue")))))
 
-(defun eve-compile ()
-  "Compile the current TJM (or section) using `eve text-edit`."
-  (interactive)
-  (let* ((segment (eve--segment-at-point))
+(defun eve--pre-flight-validate (quality)
+  "Run validation and dry-run ETA check before compile; return t to proceed, nil to abort.
+QUALITY is the encoding quality string passed to --quality."
+  (when (and buffer-file-name (file-exists-p buffer-file-name))
+    (let ((result (eve--validate-manifest-sync buffer-file-name)))
+      (when result
+        (let ((valid (plist-get result :valid))
+              (errors (plist-get result :errors))
+              (warnings (plist-get result :warnings)))
+          (dolist (w (if (arrayp warnings) (append warnings nil) warnings))
+            (message "[eve] WARNING: %s" (plist-get w :message)))
+          (unless valid
+            (dolist (e (if (arrayp errors) (append errors nil) errors))
+              (message "[eve] ERROR: %s" (plist-get e :message)))
+            (unless (y-or-n-p "Manifest has validation errors.  Compile anyway? ")
+              (cl-return-from eve--pre-flight-validate nil)))))
+      (let ((analysis (eve--dry-run-analysis buffer-file-name quality)))
+        (when analysis
+          (let* ((changed (or (plist-get analysis :changed_segments) 0))
+                 (total (or (plist-get analysis :total_segments) 0))
+                 (eta (plist-get analysis :estimated_seconds))
+                 (threshold eve-compile-confirm-threshold))
+            (when (and eta (> eta threshold))
+              (unless (y-or-n-p
+                       (format "Render %d/%d segments (~%ds).  Proceed? "
+                               changed total (round eta)))
+                (cl-return-from eve--pre-flight-validate nil)))
+            (when (and (zerop changed) (> total 0))
+              (message "[eve] All %d segments cached — render will be instant." total)))))))
+  t)
+
+(defun eve-compile (&optional toggle-quality)
+  "Compile the current TJM (or section) using `eve text-edit'.
+With a prefix argument (\\[universal-argument]), use the opposite quality to
+`eve-compile-quality': draft becomes final, final becomes draft."
+  (interactive "P")
+  (let* ((quality (if toggle-quality
+                      (if (equal eve-compile-quality "draft") "final" "draft")
+                    eve-compile-quality))
+         (segment (eve--segment-at-point))
 	 (marker? (and segment (eve--marker-p segment))))
+    (when toggle-quality
+      (message "Compiling at %s quality" quality))
+    (unless (eve--pre-flight-validate quality)
+      (user-error "Compilation aborted due to manifest errors"))
     (if (not marker?)
-	(eve--run-compile (eve--compile-command)
-				(eve--default-output-file))
+	(eve--run-compile (eve--compile-command quality)
+			(eve--default-output-file))
       (let* ((title (eve--stringify (alist-get 'title segment)))
 	     (slug (eve--slugify title))
 	     (subset (eve--section-segments segment)))
@@ -730,10 +863,85 @@ Nil when no layout is active.")
 	       (data (copy-tree eve--data t))
 	       (segments-copy (mapcar (lambda (seg) (copy-tree seg t)) subset))
 	       (output (eve--output-path slug))
-	       (cmd (eve--text-edit-command temp output)))
+	       (cmd (eve--text-edit-command temp output quality)))
 	  (setf (alist-get 'segments data) segments-copy)
 	  (eve--write-json-file data temp)
 	  (eve--run-compile cmd output temp))))))
+
+(defvar-local eve--auto-render-process nil
+  "Background speculative render process for the current buffer.")
+
+(defvar-local eve--auto-render-timer nil
+  "Idle timer for debouncing speculative renders in the current buffer.")
+
+(defcustom eve-auto-render t
+  "Whether to speculatively pre-render changed segments on save.
+When non-nil (the default), saving a TJM manifest triggers a background
+`eve text-edit --segments <changed-ids>' to warm the cache.  The next
+`eve-compile' (\\`C-c C-c') then only needs the final concat."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-auto-render-idle-seconds 2.0
+  "Idle time in seconds before a background speculative render fires after save."
+  :type 'float
+  :group 'eve)
+
+(defun eve--auto-render-changed-segment-ids ()
+  "Return a list of segment IDs that differ from the cache, or nil."
+  (when (and buffer-file-name (file-exists-p buffer-file-name))
+    (let ((analysis (eve--dry-run-analysis buffer-file-name eve-compile-quality)))
+      (when analysis
+        (let ((ids (plist-get analysis :changed_ids)))
+          (when (and (arrayp ids) (> (length ids) 0))
+            (append ids nil)))))))
+
+(defun eve--auto-render-fire ()
+  "Launch the speculative background render for the current buffer."
+  (when (and (derived-mode-p 'eve-mode)
+             eve-auto-render
+             buffer-file-name
+             (file-exists-p buffer-file-name))
+    (when (and eve--auto-render-process
+               (process-live-p eve--auto-render-process))
+      (delete-process eve--auto-render-process)
+      (setq eve--auto-render-process nil))
+    (let ((seg-ids (eve--auto-render-changed-segment-ids)))
+      (when seg-ids
+        (let* ((output (eve--default-output-file))
+               (base-cmd (split-string
+                          (eve--text-edit-command buffer-file-name output)
+                          " " t))
+               (seg-args (apply #'append
+                                (mapcar (lambda (id) (list "--segments" id))
+                                        seg-ids)))
+               (full-cmd (append base-cmd seg-args)))
+          (setq eve--auto-render-process
+                (make-process :name "eve-auto-render"
+                              :buffer nil
+                              :command full-cmd
+                              :noquery t
+                              :sentinel (lambda (proc _event)
+                                          (when (eq (process-status proc) 'exit)
+                                            (setq eve--auto-render-process nil))))))))))
+
+(defun eve--auto-render-after-save ()
+  "Schedule a speculative render after the buffer is saved."
+  (when eve--auto-render-timer
+    (cancel-timer eve--auto-render-timer))
+  (setq eve--auto-render-timer
+        (run-with-idle-timer eve-auto-render-idle-seconds nil
+                             #'eve--auto-render-fire)))
+
+(defun eve--auto-render-teardown ()
+  "Clean up speculative render state for the current buffer."
+  (when eve--auto-render-timer
+    (cancel-timer eve--auto-render-timer)
+    (setq eve--auto-render-timer nil))
+  (when (and eve--auto-render-process
+             (process-live-p eve--auto-render-process))
+    (delete-process eve--auto-render-process)
+    (setq eve--auto-render-process nil)))
 
 (defun eve--play-marker (segment)
   "Play the compiled video associated with marker SEGMENT, compiling if needed."
@@ -1319,6 +1527,8 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (add-hook 'window-configuration-change-hook #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--ipc-teardown nil t)
+  (add-hook 'kill-buffer-hook #'eve--auto-render-teardown nil t)
+  (add-hook 'after-save-hook #'eve--auto-render-after-save nil t)
   (eve-hide-deleted-mode 1)
   (eve-ruler-mode 1)
   (setq-local mode-line-format
