@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TypeAlias
 
-
-JsonObject: TypeAlias = dict[str, object]
-JsonArray: TypeAlias = list[object]
+type JsonObject = dict[str, object]
+type JsonArray = list[object]
 
 LEGACY_SEGMENT_EDIT_FIELDS = ("broll", "tags", "notes")
 SUPPORTED_FILLER_POLICIES = {"keep", "drop"}
@@ -13,6 +11,7 @@ SUPPORTED_SEGMENT_KINDS = {"marker"}
 SUPPORTED_WORD_KINDS = {"lexical", "filler"}
 SUPPORTED_BROLL_MODES = {"replace", "pip"}
 SUPPORTED_BROLL_AUDIO = {"source", "broll"}
+MISSING = object()
 
 
 class ValidationError(ValueError):
@@ -101,9 +100,15 @@ def _normalize_word(
     path = f"segments[{segment_index}].words[{word_index}]"
     word = _copy_object(_expect_object(raw_word, path))
 
+    legacy_kind = word.pop("kind", MISSING)
     edit_value = word.get("edit")
-    if edit_value is not None:
-        word["edit"] = _copy_object(_expect_object(edit_value, f"{path}.edit"))
+    if edit_value is not None or legacy_kind is not MISSING:
+        edit: JsonObject = {}
+        if edit_value is not None:
+            edit = _copy_object(_expect_object(edit_value, f"{path}.edit"))
+        if legacy_kind is not MISSING and "kind" not in edit:
+            edit["kind"] = legacy_kind
+        word["edit"] = edit
 
     return word
 
@@ -245,18 +250,22 @@ def _validate_word(
         )
     if start_tick < segment_start_tick or end_tick > segment_end_tick:
         raise ValidationError(
-            f"segments[{segment_index}].words[{word_index}] falls outside parent segment"
+            f"segments[{segment_index}].words[{word_index}] "
+            "falls outside parent segment"
         )
 
     _expect_non_empty_string(
         word.get("spoken"), f"segments[{segment_index}].words[{word_index}].spoken"
     )
 
-    kind_value = word.get("kind")
+    edit = word.get("edit")
+    kind_path = f"segments[{segment_index}].words[{word_index}].kind"
+    if isinstance(edit, dict) and "kind" in edit:
+        kind_path = f"segments[{segment_index}].words[{word_index}].edit.kind"
+
+    kind_value = _effective_word_kind(word)
     if kind_value is not None:
-        kind = _expect_non_empty_string(
-            kind_value, f"segments[{segment_index}].words[{word_index}].kind"
-        )
+        kind = _expect_non_empty_string(kind_value, kind_path)
         if kind not in SUPPORTED_WORD_KINDS:
             raise ValidationError(f"unsupported word kind: {kind}")
 
@@ -270,8 +279,17 @@ def _validate_word_edit(raw_edit: object, path: str) -> None:
         return
 
     edit = _expect_object(raw_edit, path)
+    if "kind" in edit:
+        _expect_non_empty_string(edit["kind"], f"{path}.kind")
     if "deleted" in edit:
         _expect_bool(edit["deleted"], f"{path}.deleted")
+
+
+def _effective_word_kind(word: JsonObject) -> object:
+    edit = word.get("edit")
+    if isinstance(edit, dict) and "kind" in edit:
+        return edit["kind"]
+    return word.get("kind")
 
 
 def _validate_broll(raw_broll: object, path: str) -> None:

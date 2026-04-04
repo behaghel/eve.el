@@ -139,8 +139,12 @@ def compute_gap(
     curr_source = current.get("source")
     if not isinstance(prev_source, str) or prev_source != curr_source:
         return None
-    prev_end = float(previous.get("end", 0.0))
-    curr_start = float(current.get("start", prev_end))
+    previous_bounds = segment_gap_bounds(previous)
+    current_bounds = segment_gap_bounds(current)
+    if previous_bounds is None or current_bounds is None:
+        return None
+    _, prev_end = previous_bounds
+    curr_start, _ = current_bounds
     gap = curr_start - prev_end
     if gap <= 0:
         return None
@@ -183,6 +187,122 @@ def segment_filename(index: int) -> str:
     return f"segment_{index:04d}.mp4"
 
 
+def normalized_edit_state(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    edit = item.get("edit")
+    return edit if isinstance(edit, dict) else {}
+
+
+def normalized_edit_value(item: Any, field: str) -> Any:
+    if not isinstance(item, dict):
+        return None
+    edit = normalized_edit_state(item)
+    if field in edit:
+        return edit[field]
+    return item.get(field)
+
+
+def normalized_segment_broll(segment: dict[str, Any]) -> dict[str, Any] | None:
+    broll = normalized_edit_value(segment, "broll")
+    return broll if isinstance(broll, dict) else None
+
+
+def edit_deleted(item: Any) -> bool:
+    return bool(normalized_edit_state(item).get("deleted"))
+
+
+def deleted_marker(segment: dict[str, Any]) -> bool:
+    return segment_kind(segment) == "marker" and edit_deleted(segment)
+
+
+def segment_words(segment: dict[str, Any]) -> list[dict[str, Any]]:
+    words = segment.get("words")
+    if not isinstance(words, list):
+        return []
+    return [word for word in words if isinstance(word, dict)]
+
+
+def surviving_words(segment: dict[str, Any]) -> list[dict[str, Any]]:
+    return [word for word in segment_words(segment) if not edit_deleted(word)]
+
+
+def has_deleted_words(segment: dict[str, Any]) -> bool:
+    return any(edit_deleted(word) for word in segment_words(segment))
+
+
+def raw_segment_bounds(segment: dict[str, Any]) -> tuple[float, float] | None:
+    start = segment.get("start")
+    end = segment.get("end")
+    if start is None or end is None:
+        return None
+    try:
+        start_value = float(start)
+        end_value = float(end)
+    except Exception:
+        return None
+    if end_value <= start_value:
+        return None
+    return start_value, end_value
+
+
+def merge_ranges(ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def surviving_word_ranges(segment: dict[str, Any]) -> list[tuple[float, float]]:
+    if not has_deleted_words(segment):
+        return []
+    bounds = raw_segment_bounds(segment)
+    if bounds is None:
+        return []
+    segment_start, segment_end = bounds
+    ranges: list[tuple[float, float]] = []
+    for word in surviving_words(segment):
+        word_start_value = word.get("start")
+        word_end_value = word.get("end")
+        if word_start_value is None or word_end_value is None:
+            continue
+        try:
+            word_start = max(segment_start, float(word_start_value))
+            word_end = min(segment_end, float(word_end_value))
+        except Exception:
+            continue
+        if word_end > word_start:
+            ranges.append((word_start, word_end))
+    return merge_ranges(ranges)
+
+
+def segment_media_ranges(segment: dict[str, Any]) -> list[tuple[float, float]]:
+    if has_deleted_words(segment):
+        return surviving_word_ranges(segment)
+    bounds = raw_segment_bounds(segment)
+    if bounds is None:
+        return []
+    return [bounds]
+
+
+def segment_gap_bounds(segment: dict[str, Any]) -> tuple[float, float] | None:
+    if edit_deleted(segment):
+        return raw_segment_bounds(segment)
+    ranges = surviving_word_ranges(segment)
+    if ranges:
+        return ranges[0][0], ranges[-1][1]
+    return raw_segment_bounds(segment)
+
+
+def render_word_text(segment: dict[str, Any]) -> str:
+    return " ".join(
+        str(word.get("token", "")) for word in surviving_words(segment)
+    ).strip()
+
+
 def format_timestamp(seconds: float) -> str:
     total_ms = max(0, int(round(seconds * 1000)))
     hours, remainder = divmod(total_ms, 3_600_000)
@@ -198,21 +318,24 @@ def format_minsec(seconds: float) -> str:
 
 
 def cue_text(segment: dict[str, Any]) -> str:
-    text = str(segment.get("text") or "").strip()
-    if not text:
-        words = segment.get("words") or []
-        if not isinstance(words, list):
-            words = []
-        text = " ".join(str(word.get("token", "")) for word in words).strip()
+    uses_word_text = has_deleted_words(segment)
+    if uses_word_text:
+        text = render_word_text(segment)
+    else:
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            text = render_word_text(segment)
     speaker = str(segment.get("speaker") or "").strip()
     if speaker and text:
         return f"{speaker}: {text}"
+    if uses_word_text:
+        return text
     return text or str(segment.get("id") or "")
 
 
 def canonical_broll_key(segment: dict[str, Any]) -> tuple[Any, ...] | None:
-    broll = segment.get("broll")
-    if not isinstance(broll, dict) or not broll.get("file"):
+    broll = normalized_segment_broll(segment)
+    if broll is None or not broll.get("file"):
         return None
     file_path = str(pathlib.Path(str(broll["file"])).expanduser())
     mode = str(broll.get("mode") or "replace").lower()
@@ -434,21 +557,22 @@ def build_subtitle_cues(
 ) -> list[tuple[float, float, str]]:
     cues: list[tuple[float, float, str]] = []
     timeline = 0.0
-    previous_segment: dict[str, Any] | None = None
+    previous_source_segment: dict[str, Any] | None = None
     for segment in manifest.get("segments", []):
         if segment_kind(segment) == "marker":
             continue
-        if preserve_gap_threshold is not None and previous_segment is not None:
-            gap = compute_gap(previous_segment, segment)
+        if preserve_gap_threshold is not None and previous_source_segment is not None:
+            gap = compute_gap(previous_source_segment, segment)
             if gap is not None:
                 _, gap_start, gap_end = gap
                 gap_duration = gap_end - gap_start
                 if gap_duration > 0 and gap_duration <= preserve_gap_threshold:
                     timeline += gap_duration
-        start = float(segment.get("start", 0.0))
-        end = float(segment.get("end", start))
-        duration = max(0.0, end - start)
+        duration = segment_duration(segment)
         if duration <= 0:
+            continue
+        previous_source_segment = segment
+        if edit_deleted(segment):
             continue
         text = cue_text(segment)
         if not text:
@@ -458,7 +582,6 @@ def build_subtitle_cues(
         cue_end = cue_start + duration
         cues.append((cue_start, cue_end, text))
         timeline = cue_end
-        previous_segment = segment
     return cues
 
 
@@ -542,6 +665,31 @@ def build_trim_command(
         "aac",
         str(dest),
     ]
+
+
+def render_source_ranges(
+    source: pathlib.Path,
+    ranges: list[tuple[float, float]],
+    dest: pathlib.Path,
+    working: pathlib.Path,
+    *,
+    context: str,
+) -> None:
+    if not ranges:
+        raise RuntimeError(f"No surviving media ranges available while {context}")
+    if len(ranges) == 1:
+        start, end = ranges[0]
+        cmd = build_trim_command(source, start, end, dest)
+        run_ffmpeg(cmd, context=context)
+        return
+
+    parts: list[pathlib.Path] = []
+    for index, (start, end) in enumerate(ranges, start=1):
+        part_path = working / f"word_range_{uuid.uuid4().hex}_{index:02d}.mp4"
+        cmd = build_trim_command(source, start, end, part_path)
+        run_ffmpeg(cmd, context=f"{context} (part {index}/{len(ranges)})")
+        parts.append(part_path)
+    concat_segments(parts, dest)
 
 
 def build_broll_command(
@@ -740,26 +888,24 @@ def build_broll_command(
 
 
 def segment_duration(segment: dict[str, Any]) -> float:
-    start = segment.get("start")
-    end = segment.get("end")
+    if has_deleted_words(segment):
+        return sum(end - start for start, end in segment_media_ranges(segment))
+
+    bounds = raw_segment_bounds(segment)
     duration = 0.0
-    if start is not None and end is not None:
-        try:
-            duration = float(end) - float(start)
-        except Exception:
-            duration = 0.0
+    if bounds is not None:
+        duration = bounds[1] - bounds[0]
     if duration <= 0:
         duration = parse_timecode(segment.get("duration"), default=0.0)
     if duration <= 0:
-        duration = parse_timecode(
-            (segment.get("broll") or {}).get("duration"),
-            default=0.0,
-        )
+        broll = normalized_segment_broll(segment)
+        duration = parse_timecode((broll or {}).get("duration"), default=0.0)
     return max(0.0, duration)
 
 
 def segment_overlay_duration(segment: dict[str, Any]) -> float:
-    override = parse_timecode((segment.get("broll") or {}).get("duration"), default=0.0)
+    broll = normalized_segment_broll(segment)
+    override = parse_timecode((broll or {}).get("duration"), default=0.0)
     if override > 0:
         return override
     return segment_duration(segment)
@@ -774,8 +920,12 @@ def compute_broll_chains(
     active_chain: dict[str, Any] | None = None
 
     for segment in segments:
+        if deleted_marker(segment):
+            continue
+        if segment_kind(segment) != "marker" and edit_deleted(segment):
+            continue
         key = canonical_broll_key(segment)
-        seg_broll = segment.get("broll") or {}
+        seg_broll = normalized_segment_broll(segment) or {}
         overlay_duration = segment_overlay_duration(segment)
         duration = segment_duration(segment)
         continue_flag = bool(seg_broll.get("continue"))
@@ -845,6 +995,8 @@ def render_segments(
         sum(
             1
             for segment in manifest_segments
+            if not deleted_marker(segment)
+            if not (segment_kind(segment) != "marker" and edit_deleted(segment))
             if (segment_kind(segment) != "marker" or canonical_broll_key(segment))
             and (segment_duration(segment) > 0 or canonical_broll_key(segment))
         )
@@ -853,13 +1005,16 @@ def render_segments(
 
     clip_index = 1
     rendered_count = 0
-    previous_segment: dict[str, Any] | None = None
+    previous_source_segment: dict[str, Any] | None = None
 
     for segment in manifest_segments:
         kind = segment_kind(segment)
         key = canonical_broll_key(segment)
         has_broll = bool(key)
         is_marker = kind == "marker"
+
+        if deleted_marker(segment):
+            continue
 
         if is_marker and not has_broll:
             continue
@@ -869,7 +1024,12 @@ def render_segments(
 
         duration = segment_duration(segment)
         if duration <= 0 and not has_broll:
-            previous_segment = segment
+            if not is_marker:
+                previous_source_segment = segment
+            continue
+
+        if not is_marker and edit_deleted(segment):
+            previous_source_segment = segment
             continue
 
         start_val = to_float(segment.get("start"), 0.0)
@@ -894,13 +1054,13 @@ def render_segments(
         prev_source_path: pathlib.Path | None = None
         if (
             preserve_gap_threshold is not None
-            and previous_segment is not None
+            and previous_source_segment is not None
             and source_path is not None
         ):
-            prev_source_id = previous_segment.get("source")
+            prev_source_id = previous_source_segment.get("source")
             if prev_source_id and prev_source_id in id_to_source:
                 prev_source_path = id_to_source[prev_source_id]
-                gap_info = compute_gap(previous_segment, segment)
+                gap_info = compute_gap(previous_source_segment, segment)
                 if gap_info is not None:
                     gap_bounds = gap_info
                     _, gap_start, gap_end = gap_info
@@ -909,12 +1069,12 @@ def render_segments(
         skip_gap = False
         if (
             preserve_gap_threshold is not None
-            and previous_segment is not None
+            and previous_source_segment is not None
             and key
-            and (segment.get("broll") or {}).get("continue")
+            and (normalized_segment_broll(segment) or {}).get("continue")
         ):
-            prev_key = canonical_broll_key(previous_segment)
-            prev_chain = chain_map.get(id(previous_segment))
+            prev_key = canonical_broll_key(previous_source_segment)
+            prev_chain = chain_map.get(id(previous_source_segment))
             if (
                 prev_key == key
                 and prev_chain
@@ -966,7 +1126,7 @@ def render_segments(
             flush=True,
         )
 
-        broll = segment.get("broll") or {}
+        broll = normalized_segment_broll(segment) or {}
         audio_policy = str(broll.get("audio") or "source").lower()
         if source_path is None and audio_policy == "source":
             audio_policy = "broll"
@@ -1051,12 +1211,17 @@ def render_segments(
                 raise ValueError(
                     f"Segment {segment.get('id')} missing source and b-roll"
                 )
-            cmd = build_trim_command(source_path, start_val, end_val, out_path)
-            run_ffmpeg(cmd, context=f"rendering {description}")
+            render_source_ranges(
+                source_path,
+                segment_media_ranges(segment),
+                out_path,
+                working,
+                context=f"rendering {description}",
+            )
 
         outputs.append(out_path)
         rendered_count += 1
-        previous_segment = segment
+        previous_source_segment = segment
 
     if not outputs:
         raise RuntimeError("No segments rendered; manifest may be empty")
@@ -1102,11 +1267,11 @@ def collect_markers(
 ) -> list[tuple[str, float]]:
     timeline = 0.0
     markers: list[tuple[str, float]] = []
-    previous_segment: dict[str, Any] | None = None
+    previous_source_segment: dict[str, Any] | None = None
 
     for segment in manifest.get("segments", []):
-        if preserve_gap_threshold is not None and previous_segment is not None:
-            gap = compute_gap(previous_segment, segment)
+        if preserve_gap_threshold is not None and previous_source_segment is not None:
+            gap = compute_gap(previous_source_segment, segment)
             if gap is not None:
                 _, gap_start, gap_end = gap
                 gap_duration = gap_end - gap_start
@@ -1115,6 +1280,8 @@ def collect_markers(
 
         kind = segment_kind(segment)
         if kind == "marker":
+            if edit_deleted(segment):
+                continue
             title = (
                 str(segment.get("title") or "").strip()
                 or str(segment.get("text") or "").strip()
@@ -1123,14 +1290,15 @@ def collect_markers(
             markers.append((title, timeline))
             continue
 
-        start = float(segment.get("start", 0.0))
-        end = float(segment.get("end", start))
-        duration = max(0.0, end - start)
+        duration = segment_duration(segment)
         if duration <= 0:
             continue
 
+        previous_source_segment = segment
+        if edit_deleted(segment):
+            continue
+
         timeline += duration
-        previous_segment = segment
 
     return markers
 

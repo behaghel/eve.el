@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import importlib
 import json
 import os
@@ -10,11 +9,13 @@ import subprocess
 import sys
 import tempfile
 from argparse import ArgumentParser, Namespace, _SubParsersAction
-from typing import Any, Callable, Never
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Never
 
+from ..utils.fillers import build_filler_set
 from .common import add_json_flag
 from .tag_fillers import tag_manifest_fillers
-from ..utils.fillers import build_filler_set
 
 FFMPEG = "ffmpeg"
 TRANSCRIBE_BACKENDS = ("faster-whisper", "transformers", "nemo")

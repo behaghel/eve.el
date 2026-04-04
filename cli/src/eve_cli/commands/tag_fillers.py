@@ -5,8 +5,8 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 from pathlib import Path
 from typing import Any
 
-from .common import add_json_flag
 from ..utils.fillers import DEFAULT_FILLERS, build_filler_set, is_filler
+from .common import add_json_flag
 
 
 def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:

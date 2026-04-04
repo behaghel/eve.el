@@ -89,6 +89,33 @@ def test_parse_manifest_accepts_nested_edit_fields_without_flat_aliases() -> Non
     assert normalized_word["edit"] == {"deleted": True}
 
 
+def test_parse_manifest_migrates_legacy_word_kind_into_nested_edit_kind() -> None:
+    payload = _base_manifest()
+    word = _first_word(payload)
+    word["kind"] = "filler"
+
+    normalized = tjm_v11.parse_manifest(payload)
+    normalized_word = _first_word(normalized)
+
+    assert normalized_word["edit"] == {"kind": "filler"}
+    assert "kind" not in normalized_word
+
+
+def test_parse_manifest_prefers_nested_word_edit_kind_over_legacy_top_level_kind() -> (
+    None
+):
+    payload = _base_manifest()
+    word = _first_word(payload)
+    word["kind"] = "lexical"
+    word["edit"] = {"kind": "filler", "deleted": True}
+
+    normalized = tjm_v11.parse_manifest(payload)
+    normalized_word = _first_word(normalized)
+
+    assert normalized_word["edit"] == {"kind": "filler", "deleted": True}
+    assert "kind" not in normalized_word
+
+
 def test_parse_manifest_prefers_nested_edit_values_over_legacy_flat_fields() -> None:
     payload = _base_manifest()
     segment = _first_segment(payload)

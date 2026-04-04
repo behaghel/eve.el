@@ -274,8 +274,8 @@ values of `words`, joined with single spaces in array order.
 
 If `display_text` is absent and `words` is present, consumers SHOULD derive it
 by joining each word's display token in array order, omitting words whose
-`kind` is `"filler"` when `render.filler_policy` is `"drop"`, and omitting
-words whose `word.edit.deleted` flag is `true`.
+effective kind is `"filler"` when `render.filler_policy` is `"drop"`, and
+omitting words whose `word.edit.deleted` flag is `true`.
 
 The display token for a word is:
 
@@ -298,7 +298,7 @@ Conforming word objects use:
 - `start_tick`: REQUIRED integer;
 - `end_tick`: REQUIRED integer;
 - `spoken`: REQUIRED string;
-- `kind`: OPTIONAL string;
+- `kind`: OPTIONAL legacy compatibility string accepted on input only;
 - `display`: OPTIONAL string;
 - `edit`: OPTIONAL word edit metadata object;
 - `start`: OPTIONAL numeric seconds convenience value;
@@ -306,22 +306,30 @@ Conforming word objects use:
 
 `end_tick` MUST be strictly greater than `start_tick`.
 
-If `kind` is absent, consumers MUST treat the word as if `kind` were
-`"lexical"`.
+The canonical home for filler classification is `word.edit.kind`.
 
-The interoperable `kind` values in TJM v1.1 are:
+If a producer or editor encounters a legacy top-level `word.kind`, it SHOULD
+normalize that value into `word.edit.kind`. When both are present and differ,
+`word.edit.kind` wins and the top-level `kind` remains compatibility input only.
+
+If neither `word.edit.kind` nor legacy top-level `kind` is present, consumers
+MUST treat the word as if its effective kind were `"lexical"`.
+
+The interoperable effective word-kind values in TJM v1.1 are:
 
 - `lexical`: an ordinary spoken word;
 - `filler`: a spoken filler or disfluency such as `um` or `uh`.
 
-Editors SHOULD preserve recognized and unrecognized `kind` values when
-round-tripping. Renderers MUST reject unknown `kind` values.
+Editors SHOULD preserve recognized and unrecognized kind values when
+round-tripping. Renderers MUST reject unknown effective kind values.
 
-`kind` is descriptive metadata. It does not itself delete or rewrite the word.
+Word kind is descriptive metadata. It does not itself delete or rewrite the
+word.
 
 When present, `word.edit` MUST be an object. The following interoperable
-`word.edit` member is defined in TJM v1.1:
+`word.edit` members are defined in TJM v1.1:
 
+- `kind`: OPTIONAL string;
 - `deleted`: OPTIONAL boolean.
 
 When `word.edit.deleted` is `true`, that word's content is marked for removal
@@ -530,7 +538,7 @@ When `render.filler_policy` is `"keep"`, filler words do not alter source-media
 selection by themselves.
 
 When `render.filler_policy` is `"drop"` and a segment has `words`, the renderer
-MUST remove the source-media intervals covered by words whose `kind` is
+MUST remove the source-media intervals covered by words whose effective kind is
 `"filler"`. The remaining non-filler, non-deleted intervals from that segment
 MUST be concatenated in word order.
 
@@ -544,7 +552,7 @@ A renderer MUST treat the following as errors:
 - `end_tick <= start_tick`;
 - any retained media interval with zero or negative duration;
 - unknown segment `kind`;
-- unknown word `kind`;
+- unknown effective word kind;
 - unsupported `segment.edit.broll.mode` or `segment.edit.broll.audio` values.
 
 Unlike TJM v1, source-less b-roll fallback is not part of the v1.1 deterministic
@@ -602,6 +610,8 @@ A conforming TJM v1.1 producer:
 - MUST emit supported `segment.edit.broll.mode` and
   `segment.edit.broll.audio` values only;
 - MUST emit supported `render.filler_policy` values only;
+- SHOULD emit filler classification in `word.edit.kind` rather than legacy
+  top-level `word.kind`;
 - SHOULD emit stable, unique `id` values for sources and segments;
 - SHOULD emit `display_text` explicitly on spoken media segments;
 - SHOULD preserve unknown members when editing an existing manifest unless the
@@ -609,7 +619,7 @@ A conforming TJM v1.1 producer:
 - SHOULD write manifest-relative paths for portable manifests;
 - SHOULD write UTF-8 JSON.
 
-Plain transcription producers MAY omit `kind` on all words. In that case,
+Plain transcription producers MAY omit word kind on all words. In that case,
 consumers treat the words as lexical by default.
 
 ## 16. Consumer Requirements
@@ -770,7 +780,9 @@ At minimum, a v1.1 implementation SHOULD be tested against these cases:
           "start_tick": 0,
           "end_tick": 9600,
           "spoken": "um",
-          "kind": "filler"
+          "edit": {
+            "kind": "filler"
+          }
         },
         {
           "start_tick": 9600,

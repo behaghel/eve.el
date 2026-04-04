@@ -14,6 +14,47 @@ from eve_cli.commands import text_edit
 from eve_cli.main import build_parser, main
 
 
+def _manifest_with_deleted_edits(source_file: str) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": source_file}],
+        "segments": [
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 0.0,
+                "end": 0.5,
+                "text": "keep one",
+            },
+            {
+                "id": "clip01-s0002",
+                "source": "clip01",
+                "start": 0.5,
+                "end": 1.0,
+                "text": "delete me",
+                "edit": {"deleted": True},
+            },
+            {"id": "marker-001", "kind": "marker", "title": "After delete"},
+            {
+                "id": "clip01-s0003",
+                "source": "clip01",
+                "start": 1.0,
+                "end": 1.5,
+                "words": [
+                    {"start": 1.0, "end": 1.15, "token": "visible"},
+                    {
+                        "start": 1.15,
+                        "end": 1.3,
+                        "token": "ghost",
+                        "edit": {"deleted": True},
+                    },
+                    {"start": 1.3, "end": 1.5, "token": "words"},
+                ],
+            },
+        ],
+    }
+
+
 def test_text_edit_parser_matches_legacy_surface() -> None:
     parser = build_parser()
     args = parser.parse_args(["text-edit", "edit.tjm.json", "--output", "final.mp4"])
@@ -86,6 +127,21 @@ def test_run_orchestrates_render_subtitles_and_manifest(
                 "start": 0.0,
                 "end": 0.5,
                 "text": "hello",
+                "edit": {"deleted": False, "tags": [], "notes": "", "broll": None},
+                "words": [
+                    {
+                        "start": 0.0,
+                        "end": 0.25,
+                        "token": "hello",
+                        "edit": {"deleted": False},
+                    },
+                    {
+                        "start": 0.25,
+                        "end": 0.5,
+                        "token": "there",
+                        "edit": {"deleted": True},
+                    },
+                ],
             }
         ],
     }
@@ -142,12 +198,206 @@ def test_run_orchestrates_render_subtitles_and_manifest(
     assert exit_code == 0
     assert output.read_text(encoding="utf-8") == "video"
     assert json.loads(pretty_manifest.read_text(encoding="utf-8")) == manifest
+    assert (
+        json.loads(pretty_manifest.read_text(encoding="utf-8"))["segments"][0]["edit"]
+        == manifest["segments"][0]["edit"]
+    )
+    assert (
+        json.loads(pretty_manifest.read_text(encoding="utf-8"))["segments"][0]["words"][
+            1
+        ]["edit"]
+        == manifest["segments"][0]["words"][1]["edit"]
+    )
     assert calls["manifest_path"] == Path(args.manifest)
     assert calls["concat"][1] == output
     subtitle_cues, subtitle_path = calls["subtitles"]
-    assert subtitle_cues == [(0.0, 0.5, "hello")]
+    assert subtitle_cues == [(0.0, 0.25, "hello")]
     assert subtitle_path == output.with_suffix(".vtt")
     assert calls["mux"] == (output, output.with_suffix(".vtt"))
+
+
+def test_render_segments_skips_deleted_segments(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.touch()
+    commands: list[tuple[list[str], str | None]] = []
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        commands.append((cmd, context))
+        Path(cmd[-1]).write_text("clip", encoding="utf-8")
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    rendered = text_edit.render_segments(
+        _manifest_with_deleted_edits(str(source)),
+        tmp_path,
+        tmp_path,
+    )
+
+    assert [path.name for path in rendered] == ["segment_0001.mp4", "segment_0002.mp4"]
+    assert not any("clip01-s0002" in (context or "") for _, context in commands)
+    partial_commands = [
+        cmd
+        for cmd, context in commands
+        if context and "clip01-s0003" in context and "(part" in context
+    ]
+    assert [cmd[2:6] for cmd in partial_commands] == [
+        ["-ss", "1.000", "-to", "1.150"],
+        ["-ss", "1.300", "-to", "1.500"],
+    ]
+    assert any(context == "concatenating rendered segments" for _, context in commands)
+
+
+def test_build_subtitle_cues_skip_deleted_segments_and_words() -> None:
+    cues = text_edit.build_subtitle_cues(
+        _manifest_with_deleted_edits("sample.mp4"),
+    )
+
+    assert cues[0] == (0.0, 0.5, "keep one")
+    assert cues[1][0] == 0.5
+    assert cues[1][1] == pytest.approx(0.85)
+    assert cues[1][2] == "visible words"
+
+
+def test_collect_markers_skips_deleted_segments() -> None:
+    markers = text_edit.collect_markers(
+        _manifest_with_deleted_edits("sample.mp4"),
+    )
+
+    assert markers == [("After delete", 0.5)]
+
+
+def test_collect_markers_skips_deleted_markers() -> None:
+    manifest = _manifest_with_deleted_edits("sample.mp4")
+    manifest["segments"][2]["edit"] = {
+        "deleted": True,
+        "broll": {"file": "deleted-marker.mp4", "mode": "replace", "duration": 1.0},
+    }
+
+    markers = text_edit.collect_markers(manifest)
+
+    assert markers == []
+
+
+def test_render_segments_ignores_deleted_marker_broll_chain_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "sample.mp4"
+    source.touch()
+    broll = tmp_path / "pip.mp4"
+    broll.touch()
+    prepared = tmp_path / "prepared.mp4"
+    prepared.touch()
+    commands: list[tuple[list[str], str | None]] = []
+    effective_offsets: list[float | None] = []
+
+    def fake_probe(_path: Path) -> dict[str, Any]:
+        return {
+            "width": 320,
+            "height": 240,
+            "fps": 30.0,
+            "fps_str": "30/1",
+            "pix_fmt": "yuv420p",
+        }
+
+    def fake_prepare_broll_media(
+        _broll: dict[str, Any],
+        _source_info: dict[str, Any] | None,
+        _total_duration: float,
+        _working: Path,
+        _audio_policy: str,
+    ) -> tuple[Path, str]:
+        return prepared, "yuv420p"
+
+    def fake_build_broll_command(
+        _source: Path,
+        _start: float,
+        _end: float,
+        _broll: dict[str, Any],
+        dest: Path,
+        _working: Path,
+        *,
+        effective_offset: float | None = None,
+        effective_duration: float | None = None,
+    ) -> list[str]:
+        effective_offsets.append(effective_offset)
+        assert effective_duration == 0.5
+        return [text_edit.FFMPEG, "-y", str(dest)]
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        commands.append((cmd, context))
+        Path(cmd[-1]).write_text("clip", encoding="utf-8")
+
+    monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
+    monkeypatch.setattr(text_edit, "prepare_broll_media", fake_prepare_broll_media)
+    monkeypatch.setattr(text_edit, "build_broll_command", fake_build_broll_command)
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    manifest = {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": str(source)}],
+        "segments": [
+            {
+                "id": "marker-001",
+                "kind": "marker",
+                "title": "Deleted intro",
+                "edit": {
+                    "deleted": True,
+                    "broll": {
+                        "file": str(broll),
+                        "mode": "replace",
+                        "continue": True,
+                        "duration": 0.8,
+                    },
+                },
+            },
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 0.0,
+                "end": 0.5,
+                "text": "segment one",
+                "edit": {
+                    "broll": {
+                        "file": str(broll),
+                        "mode": "replace",
+                        "continue": True,
+                        "duration": 0.5,
+                    }
+                },
+            },
+        ],
+    }
+
+    rendered = text_edit.render_segments(manifest, tmp_path, tmp_path)
+
+    assert [path.name for path in rendered] == ["segment_0001.mp4"]
+    assert effective_offsets == [0.0]
+    assert not any("marker-001" in (context or "") for _, context in commands)
+
+
+def test_collect_markers_use_surviving_word_duration() -> None:
+    manifest = _manifest_with_deleted_edits("sample.mp4")
+    manifest["segments"].append(
+        {"id": "marker-002", "kind": "marker", "title": "After partial delete"}
+    )
+
+    markers = text_edit.collect_markers(manifest)
+
+    assert markers[0] == ("After delete", 0.5)
+    assert markers[1][0] == "After partial delete"
+    assert markers[1][1] == pytest.approx(0.85)
 
 
 def test_parse_timecode_and_display_helpers() -> None:
@@ -455,6 +705,44 @@ def test_text_edit_helper_error_paths(tmp_path: Path) -> None:
             tmp_path / "bad-audio.mp4",
             tmp_path,
         )
+
+
+def test_text_edit_prefers_nested_segment_edit_broll_with_legacy_fallback(
+    tmp_path: Path,
+) -> None:
+    legacy = tmp_path / "legacy.mp4"
+    legacy.touch()
+    nested = tmp_path / "nested.mp4"
+    nested.touch()
+
+    segment = {
+        "id": "seg-1",
+        "broll": {"file": str(legacy), "duration": 9.0},
+        "edit": {"broll": {"file": str(nested), "duration": 1.2}},
+    }
+
+    assert text_edit.normalized_segment_broll(segment) == {
+        "file": str(nested),
+        "duration": 1.2,
+    }
+    assert text_edit.canonical_broll_key(segment) == (
+        str(nested),
+        "replace",
+        "source",
+        False,
+        (),
+        False,
+    )
+    assert text_edit.segment_overlay_duration(segment) == 1.2
+    assert text_edit.normalized_segment_broll({"broll": {"file": str(legacy)}}) == {
+        "file": str(legacy)
+    }
+    assert (
+        text_edit.normalized_segment_broll(
+            {"broll": {"file": str(legacy)}, "edit": {"broll": None}}
+        )
+        is None
+    )
 
 
 def test_text_edit_end_to_end_render(tmp_path: Path) -> None:

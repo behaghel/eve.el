@@ -10,8 +10,8 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 from pathlib import Path
 from typing import Any
 
-from .common import add_json_flag
 from ..utils.fillers import DEFAULT_FILLERS, build_filler_set, is_filler
+from .common import add_json_flag
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
@@ -116,7 +116,8 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
 
 def run(args: Namespace) -> int:
     print(
-        "eve trim-fillers is deprecated and will be removed in a future release; use eve tag-fillers instead",
+        "eve trim-fillers is deprecated and will be removed in a future release; "
+        "use eve tag-fillers instead",
         file=sys.stderr,
     )
 
