@@ -173,9 +173,24 @@ The TJM major mode should cover:
   - Colour-code tags (e.g., `broll`, `todo`) and highlight missing metadata or gaps between segments.
 
 - **Navigation & Playback**
-  - Commands for next/previous segment (`n`/`p`), next/previous word (`M-n`/`M-p`), and jump to timestamp (`g` with prompt).
-  - Pluggable playback backend (mpv/ffplay) with configurable latency compensation; show currently playing word.
-  - Optional auto-scroll while playing segments.
+  - Commands for next/previous segment (`C-t`/`C-s`), and jump to segment.
+  - Playback via mpv with JSON IPC socket: `RET`/`SPC` plays the segment at
+    point with real-time segment tracking; the currently-playing segment is
+    highlighted with a vivid overlay.
+  - `M-x eve-play-source` plays the source file from the current segment to
+    end-of-file, tracking across all segments from the same source clip.
+  - `M-x eve-play-rendered` plays the compiled output, auto-compiling via
+    `eve text-edit` when the output is stale or missing. Progress is tracked
+    using the post-edit rendered timeline (deleted content excluded).
+  - During playback, `SPC` pauses/resumes and moving point to a different
+    segment seeks the player to that position.
+  - All play commands share a single managed mpv instance — only one video
+    window exists at any time.
+  - Optional orchestrated layout (`eve-video-layout`): when enabled, the Emacs
+    frame resizes to the bottom portion of the screen and mpv is positioned in
+    the freed space above it, creating an integrated editing + preview
+    experience. The split ratio is configurable. The frame is restored when
+    playback stops.
 
 - **Editing Primitives**
   - Deleting a segment removes its node and closes timing gaps by simply omitting it in the array.
@@ -194,6 +209,9 @@ The TJM major mode should cover:
 - **Extensibility Hooks**
   - Allow user-defined elisp hooks before/after saving or playback (e.g., to update outlines, push changes to git).
   - Provide APIs for scripts to read the in-memory AST (enabling other Emacs packages to reuse the data).
+  - `eve-video-layout` and `eve-video-layout-ratio`: opt-in screen layout that
+    positions the video preview above the transcript buffer with a configurable
+    split ratio.
 
 ## 4. `eve text-edit` Input Contract
 
