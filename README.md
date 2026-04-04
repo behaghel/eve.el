@@ -34,6 +34,7 @@ The mode is designed to work alongside the `eve` CLI, especially
 - phrase-level filler tagging, interactive add-at-point and add-region, and bulk delete
 - right-margin timestamp ruler showing rendered timeline milestones
 - live video playback tracking with mpv: segment highlighting, pause/resume, and seek-by-point
+- optional orchestrated screen layout: video preview above, transcript below
 
 ## Installation
 
@@ -192,6 +193,23 @@ During playback, `SPC` is remapped to `eve-playback-pause-resume`.
 | `C-c k` / `M-x eve-stop-playback` | Stop and clean up |
 
 Stopping playback restores all keybindings to their normal state.
+
+## Video Layout
+
+Set `eve-video-layout` to arrange the screen for editing: Emacs takes the
+bottom portion of the display, and the mpv video window is positioned
+directly above it — borderless, always-on-top, with automatic letterboxing.
+
+```elisp
+(setq eve-video-layout t)
+
+;; Adjust the video/transcript split (default 0.3 = 30% video, 70% Emacs)
+(setq eve-video-layout-ratio 0.4)
+```
+
+The layout activates on the first play command (`SPC`, `M-x eve-play-source`,
+`M-x eve-play-rendered`) and the original frame geometry is restored when
+playback stops. The layout is skipped when Emacs is in macOS native fullscreen.
 
 ## Project Layout
 
