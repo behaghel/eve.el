@@ -50,6 +50,7 @@ def make_run_args(media: Path, output: Path, **overrides: object) -> Namespace:
         "max_segment_duration": 0.0,
         "tag_fillers": False,
         "verbatim": False,
+        "vad": False,
         "stub": False,
         "json": False,
         "command": "transcribe",
@@ -65,14 +66,14 @@ def test_transcribe_parser_matches_legacy_defaults() -> None:
     assert args.command == "transcribe"
     assert args.inputs == ["input.mp4"]
     assert args.output == "manifest.json"
-    assert args.model == "base.en"
+    assert args.model == "medium.en"
     assert args.language == "en"
     assert args.beam_size == 5
     assert args.device == "auto"
     assert args.backend == "faster-whisper"
     assert args.max_segment_duration == 0.0
     assert args.tag_fillers is False
-    assert args.verbatim is False
+    assert args.verbatim is True
     assert args.pretty is False
     assert args.stub is False
 
@@ -379,7 +380,7 @@ def test_transcribe_run_verbatim_passes_prompt_controls(
         {
             "beam_size": 5,
             "language": "en",
-            "vad_filter": False,
+            "vad_filter": True,
             "word_timestamps": True,
             "initial_prompt": transcribe.VERBATIM_INITIAL_PROMPT,
             "condition_on_previous_text": False,

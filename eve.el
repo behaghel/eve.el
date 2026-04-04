@@ -126,7 +126,7 @@ meaningful timing inconsistencies."
   :type 'string
   :group 'eve)
 
-(defcustom eve-transcribe-model "base.en"
+(defcustom eve-transcribe-model "medium.en"
   "Model passed to `eve transcribe'."
   :type 'string
   :group 'eve)

@@ -358,7 +358,7 @@ def transcribe_faster_whisper(
             transcribe_kwargs: dict[str, Any] = {
                 "beam_size": args.beam_size,
                 "language": args.language,
-                "vad_filter": False,
+                "vad_filter": getattr(args, "vad", False) or args.verbatim,
                 "word_timestamps": True,
             }
             if args.verbatim:
@@ -488,8 +488,8 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
     parser.add_argument("--output", required=True, help="Manifest JSON path to write")
     parser.add_argument(
         "--model",
-        default="base.en",
-        help="faster-whisper model name/path (default: base.en)",
+        default="medium.en",
+        help="Whisper model name/path (default: medium.en)",
     )
     parser.add_argument(
         "--language",
@@ -529,8 +529,14 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
     )
     parser.add_argument(
         "--verbatim",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Bias decoding toward verbatim disfluencies on supported backends",
+    )
+    parser.add_argument(
+        "--vad",
+        action="store_true",
+        help="Enable voice-activity-detection filtering (faster-whisper only)",
     )
     parser.add_argument("--stub", action="store_true", help=argparse.SUPPRESS)
     add_json_flag(parser)
