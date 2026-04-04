@@ -3109,17 +3109,15 @@ geometry string for the video area.  Returns nil when skipped."
 
 (defun eve--mpv-geometry-args (geometry-string)
   "Return a list of mpv args for the video layout, or nil if GEOMETRY-STRING is nil.
-Passes --geometry for absolute position+size, --autofit to preserve the
-video aspect ratio (letterboxing automatic), plus --no-border, --ontop,
-and --force-window-position=yes to keep the window locked in place."
+Uses --geometry for absolute position and size.  mpv letterboxes the video
+automatically to preserve the aspect ratio within that window.
+--no-border and --ontop keep the window clean and above the Emacs frame.
+--force-window-position locks the position so mpv respects the geometry."
   (when geometry-string
-    ;; Extract width from "WxH+X+Y" for --autofit=Wx (width-constrained)
-    (let ((width (car (split-string geometry-string "[xX+]"))))
-      (list (format "--geometry=%s" geometry-string)
-            (format "--autofit=%sx" width)
-            "--no-border"
-            "--ontop"
-            "--force-window-position=yes"))))
+    (list (format "--geometry=%s" geometry-string)
+          "--no-border"
+          "--ontop"
+          "--force-window-position")))
 
 (defun eve--play-with-mpv (file start end &optional ipc-socket)
   (unless (executable-find eve-play-program)

@@ -1314,12 +1314,11 @@
 (ert-deftest eve-video-layout-geometry-args-basic ()
   "eve--mpv-geometry-args returns expected mpv argument list."
   (let ((args (eve--mpv-geometry-args "1440x262+0+25")))
-    (should (= 5 (length args)))
+    (should (= 4 (length args)))
     (should (member "--geometry=1440x262+0+25" args))
-    (should (member "--autofit=1440x" args))
     (should (member "--no-border" args))
     (should (member "--ontop" args))
-    (should (member "--force-window-position=yes" args))))
+    (should (member "--force-window-position" args))))
 
 (ert-deftest eve-video-layout-geometry-args-nil ()
   "eve--mpv-geometry-args returns nil when given nil."
