@@ -3102,10 +3102,12 @@ geometry string for the video area.  Returns nil when skipped."
                (ex  (plist-get layout :emacs-x))
                (ey  (plist-get layout :emacs-y))
                (ew  (plist-get layout :emacs-w))
-               (eh  (plist-get layout :emacs-h)))
+               (eh  (plist-get layout :emacs-h))
+               (mpv-geo (plist-get layout :mpv-geometry)))
+          (message "eve-layout: emacs→%dx%d+%d+%d  mpv→%s" ew eh ex ey mpv-geo)
           (set-frame-position (selected-frame) ex ey)
           (set-frame-size (selected-frame) ew eh t)
-          (plist-get layout :mpv-geometry))))))
+          mpv-geo)))))
 
 (defun eve--mpv-geometry-args (geometry-string)
   "Return a list of mpv args for the video layout, or nil if GEOMETRY-STRING is nil.
@@ -3148,10 +3150,19 @@ automatically to preserve the aspect ratio within that window.
                                 (setq eve--mpv-process nil)))))
     (when ipc-socket
       (run-with-timer 0.5 nil #'eve--deferred-ipc-connect sentinel-buf))
-    ;; Keep input focus on the Emacs frame — mpv steals it on macOS
+    ;; Reclaim OS-level focus for Emacs after mpv opens its window.
+    ;; select-frame-set-input-focus alone is insufficient on macOS — mpv
+    ;; grabs system focus when its NSWindow appears (~0.8–1 s after launch).
+    ;; We fire at 1.5 s so mpv is fully open, then use osascript to activate
+    ;; Emacs at the OS level, followed by select-frame-set-input-focus for the
+    ;; correct buffer.
     (when eve-video-layout
-      (run-with-timer 0.4 nil
+      (run-with-timer 1.5 nil
                       (lambda ()
+                        (condition-case nil
+                            (start-process "eve-focus" nil "osascript"
+                                           "-e" "tell application \"Emacs\" to activate")
+                          (error nil))
                         (when (buffer-live-p sentinel-buf)
                           (with-current-buffer sentinel-buf
                             (select-frame-set-input-focus (selected-frame))))))))
