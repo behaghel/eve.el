@@ -363,6 +363,7 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     (define-key map (kbd "C-c C-t") #'eve-transcribe)
     (define-key map (kbd "C-c C-p") #'eve-play-rendered)
     (define-key map (kbd "C-c C-s") #'eve-play-source)
+    (define-key map (kbd "C-c SPC") #'eve-play)
     (define-key map (kbd "C-c C-b") #'eve-edit-broll-placeholders)
     (define-key map (kbd "C-c C-n") #'eve-edit-notes)
     (define-key map (kbd "C-c C-d") #'eve-delete-fillers)
@@ -3024,6 +3025,14 @@ that starts at the word under point."
 	  (eve-playback-mode 1)
 	  (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
 	  (message "Playing %s [%s-%s]" file start end))))))
+
+(defun eve-play (&optional rendered)
+  "Play source media, or with prefix arg play the rendered output.
+\\[eve-play] plays the source; \\[universal-argument] \\[eve-play] plays rendered."
+  (interactive "P")
+  (if rendered
+      (eve-play-rendered)
+    (eve-play-source)))
 
 (defun eve-play-source ()
   "Play source media from the current segment to end-of-file, tracking progress.
