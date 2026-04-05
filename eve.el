@@ -34,6 +34,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(require 'ansi-color)
 (require 'hydra nil t)
 (require 'image)
 (require 'outline)
@@ -417,6 +418,20 @@ Nil when no layout is active.")
 (defvar-local eve--undo-stack nil
   "Stack of TJM snapshots for undo operations.")
 
+(defvar-local eve--render-status nil
+  "Current render state for mode-line display.
+One of: nil (idle), `speculative' (auto-render in flight),
+`compiling' (eve-compile running), `cached' (all segments warm).")
+
+(defvar-local eve--render-progress nil
+  "Cons (COMPLETED . TOTAL) for the current compilation, or nil.")
+
+(defvar-local eve--render-eta nil
+  "Estimated seconds remaining for the current compilation, or nil.")
+
+(defvar-local eve--compile-start-time nil
+  "Time (`float-time') when the current compilation started, or nil.")
+
 (defvar-local eve--redo-stack nil
   "Stack of TJM snapshots for redo operations.")
 
@@ -704,6 +719,13 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	    (temp eve--pending-temp)
 	    (origin eve--pending-origin)
 	    (play-socket eve--pending-play-socket))
+	(when (buffer-live-p origin)
+	  (with-current-buffer origin
+	    (setq eve--render-status nil
+		  eve--render-progress nil
+		  eve--render-eta nil
+		  eve--compile-start-time nil)
+	    (force-mode-line-update)))
 	(when (and temp (file-exists-p temp))
 	  (ignore-errors (delete-file temp)))
 	(when (and output
@@ -729,9 +751,37 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	      eve--pending-origin nil
 	      eve--pending-play-socket nil)))))
 
+(defvar compilation-filter-start)
+
+(defun eve--compilation-filter ()
+  "Parse rendering progress from compilation output, update mode-line."
+  (let ((origin (and (boundp 'eve--pending-origin) eve--pending-origin)))
+    (when (and origin (buffer-live-p origin))
+      (save-excursion
+        (goto-char compilation-filter-start)
+        (while (re-search-forward
+                "\\[eve text-edit\\] Rendering \\([0-9]+\\)/\\([0-9]+\\)" nil t)
+          (let ((n (string-to-number (match-string 1)))
+                (m (string-to-number (match-string 2))))
+            (with-current-buffer origin
+              (setq eve--render-progress (cons n m))
+              (when eve--compile-start-time
+                (let* ((elapsed (- (float-time) eve--compile-start-time))
+                       (per-seg (if (> n 0) (/ elapsed n) 0))
+                       (remaining (* per-seg (- m n))))
+                  (setq eve--render-eta remaining)))
+              (force-mode-line-update)))))
+      (with-silent-modifications
+        (ansi-color-apply-on-region compilation-filter-start (point))))))
+
 (defun eve--run-compile (command output &optional temp)
   "Run COMMAND via `compilation-start`, capturing OUTPUT (and TEMP manifest)."
   (setq-local compile-command command)
+  (setq-local eve--render-status 'compiling)
+  (setq-local eve--render-progress nil)
+  (setq-local eve--render-eta nil)
+  (setq-local eve--compile-start-time (float-time))
+  (force-mode-line-update)
   (let* ((origin-buffer (current-buffer))
 	 (origin-window (selected-window))
 	 (display-buffer-overriding-action
@@ -749,6 +799,7 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	  (setq-local eve--pending-output (and output (expand-file-name output)))
 	  (setq-local eve--pending-temp temp)
 	  (setq-local eve--pending-origin origin-buffer)
+	  (add-hook 'compilation-filter-hook #'eve--compilation-filter nil t)
 	  (add-hook 'compilation-finish-functions #'eve--compilation-finished nil t))))
     (when (window-live-p origin-window)
       (when (and (buffer-live-p origin-buffer)
@@ -909,8 +960,14 @@ When non-nil (the default), saving a TJM manifest triggers a background
                (process-live-p eve--auto-render-process))
       (delete-process eve--auto-render-process)
       (setq eve--auto-render-process nil))
-    (let ((seg-ids (eve--auto-render-changed-segment-ids)))
-      (when seg-ids
+    (let ((seg-ids (eve--auto-render-changed-segment-ids))
+          (buf (current-buffer)))
+      (if (null seg-ids)
+          (progn
+            (setq eve--render-status 'cached)
+            (force-mode-line-update))
+        (setq eve--render-status 'speculative)
+        (force-mode-line-update)
         (let* ((output (eve--default-output-file))
                (base-cmd (split-string
                           (eve--text-edit-command buffer-file-name output)
@@ -924,9 +981,14 @@ When non-nil (the default), saving a TJM manifest triggers a background
                               :buffer nil
                               :command full-cmd
                               :noquery t
-                              :sentinel (lambda (proc _event)
-                                          (when (eq (process-status proc) 'exit)
-                                            (setq eve--auto-render-process nil))))))))))
+                              :sentinel
+                              (lambda (proc _event)
+                                (when (eq (process-status proc) 'exit)
+                                  (when (buffer-live-p buf)
+                                    (with-current-buffer buf
+                                      (setq eve--auto-render-process nil
+                                            eve--render-status 'cached)
+                                      (force-mode-line-update))))))))))))
 
 (defun eve--auto-render-after-save ()
   "Schedule a speculative render after the buffer is saved."
@@ -1548,8 +1610,13 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (eve-hide-deleted-mode 1)
   (eve-ruler-mode 1)
   (setq-local mode-line-format
-              (append (default-value 'mode-line-format)
-                      '((:eval (eve--ruler-mode-line-string)))))
+              (let ((fmt (copy-sequence (default-value 'mode-line-format)))
+                    (status '(:eval (eve--mode-line-status))))
+                (let ((tail (memq 'mode-line-buffer-identification fmt)))
+                  (if tail
+                      (setcdr tail (cons status (cdr tail)))
+                    (setq fmt (append fmt (list status)))))
+                fmt))
   (eve-reload)
   (eve--apply-visual-wrap))
 
@@ -3675,6 +3742,34 @@ joined into a single annotation."
       (concat " " (eve--format-ruler-time eve--ruler-total-duration))
     ""))
 
+(defun eve--mode-line-status ()
+  "Return the combined eve status string for the mode-line.
+Shows duration and render state right after the buffer name."
+  (let ((dur (eve--ruler-mode-line-string))
+        (render
+         (pcase eve--render-status
+           ('speculative
+            (propertize " \u27f3" 'face 'warning
+                        'help-echo "Speculative pre-render in progress"))
+           ('compiling
+            (let* ((prog eve--render-progress)
+                   (n (car-safe prog))
+                   (m (cdr-safe prog))
+                   (eta eve--render-eta)
+                   (parts (list (propertize " \u25b6" 'face 'success)))
+                   (nums (when (and n m)
+                           (format "%d/%d" n m)))
+                   (time (when (and eta (> eta 0))
+                           (format "~%ds" (round eta)))))
+              (when nums (push nums parts))
+              (when time (push time parts))
+              (mapconcat #'identity (nreverse parts) "")))
+           ('cached
+            (propertize " \u2713" 'face 'success
+                        'help-echo "All segments cached"))
+           (_ nil))))
+    (concat dur (or render ""))))
+
 (defun eve--segment-summary (segment)
   (when segment
     (if (eve--marker-p segment)
@@ -3706,7 +3801,8 @@ joined into a single annotation."
 	 (id (and segment (alist-get 'id segment))))
     (when (and id (not (equal id eve--last-echo-id)))
       (setq eve--last-echo-id id)
-      (message "%s" (eve--segment-summary segment)))))
+      (let (message-log-max)
+        (message "%s" (eve--segment-summary segment))))))
 
 (defun eve--post-command ()
   (eve--update-focus-overlay)
