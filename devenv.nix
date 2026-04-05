@@ -10,34 +10,6 @@
   env = {
     EDITOR = "emacs";
     PYTHONUTF8 = "1";
-    FLOW = ''
-eve.el development shell
-
-Emacs
-  devenv shell -- format-elisp
-  devenv shell -- parse
-  devenv shell -- checkdoc
-  devenv shell -- load-check
-  devenv shell -- compile
-  devenv shell -- test-elisp
-
-Python
-  devenv shell -- sync-py
-  devenv shell -- format-py
-  devenv shell -- lint-py
-  devenv shell -- test-py
-  devenv shell -- build-py
-  devenv shell -- run-cli -- --help
-
-Docs
-  devenv shell -- docs
-
-Project
-  devenv shell -- format
-  devenv shell -- lint
-  devenv shell -- test
-  devenv shell -- ci
-'';
   };
 
   scripts = {
@@ -148,12 +120,75 @@ Project
       lint
       test
     '';
+
+    dev-help-all.exec = ''
+      if [ -t 1 ]; then
+        B="\033[1m"; R="\033[0m"
+      else
+        B=""; R=""
+      fi
+      printf "\n''${B}eve.el — full command reference''${R}\n\n"
+
+      printf "📝 Emacs\n"
+      printf "  format-elisp           Format .el files\n"
+      printf "  parse                  Check Emacs Lisp syntax\n"
+      printf "  checkdoc               Lint docstrings\n"
+      printf "  load-check             Verify the package loads\n"
+      printf "  compile                Byte-compile\n"
+      printf "  test-elisp             Run ERT tests\n\n"
+
+      printf "🐍 Python CLI\n"
+      printf "  sync-py                Install Python deps\n"
+      printf "  format-py              Format Python code\n"
+      printf "  lint-py                Run ruff + mypy\n"
+      printf "  test-py                Run pytest\n"
+      printf "  build-py               Build the wheel\n"
+      printf "  run-cli -- --help      Run the eve CLI\n\n"
+
+      printf "📖 Documentation\n"
+      printf "  docs                   Generate eve.texi and eve.info\n"
+      printf "  check-doc-drift        Verify all symbols are documented\n\n"
+
+      printf "🚀 Project\n"
+      printf "  format                 Format all\n"
+      printf "  lint                   Lint all\n"
+      printf "  test                   Test all\n"
+      printf "  ci                     Full CI pipeline\n\n"
+
+      printf "🔧 Tooling\n"
+      printf "  emacs %s\n" "$(emacs --version 2>/dev/null | head -1 | sed 's/GNU Emacs //')"
+      printf "  python %s\n" "$(python3 --version 2>/dev/null | sed 's/Python //')"
+      printf "  uv %s\n" "$(uv --version 2>/dev/null | sed 's/uv //')"
+      printf "  makeinfo %s\n" "$(makeinfo --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9.]+')"
+    '';
   };
 
   enterShell = ''
-    printf '%s\n' "$FLOW"
+    state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/eve-el"
+    stamp="$state_dir/last-greeting"
+    mkdir -p "$state_dir"
 
-    # Install a pre-push hook that runs the CI pipeline locally.
+    show=false
+    if [ ! -f "$stamp" ]; then
+      show=true
+    else
+      last=$(cat "$stamp" 2>/dev/null || echo 0)
+      now=$(date +%s)
+      if [ $((now - last)) -ge 86400 ]; then
+        show=true
+      fi
+    fi
+
+    if [ "$show" = true ] && [ -t 1 ]; then
+      B="\033[1m"; R="\033[0m"
+      printf "\n''${B}🎬 eve.el''${R} — text-driven video editing in Emacs\n\n"
+      printf "📝  ''${B}format''${R}    Format all          🔍  ''${B}lint''${R}   Lint all\n"
+      printf "🧪  ''${B}test''${R}      Test all            🚀  ''${B}ci''${R}     Full CI pipeline\n"
+      printf "📖  ''${B}docs''${R}      Generate manual     ▶️   ''${B}run-cli''${R} Run eve CLI\n"
+      printf "\n💡 Run ''${B}dev-help-all''${R} for the full command reference.\n\n"
+      date +%s > "$stamp"
+    fi
+
     hook="$DEVENV_ROOT/.git/hooks/pre-push"
     if [ ! -f "$hook" ] || ! grep -q "eve-ci-pre-push" "$hook" 2>/dev/null; then
       mkdir -p "$(dirname "$hook")"
@@ -163,10 +198,9 @@ Project
 set -euo pipefail
 echo "[pre-push] Running CI checks..."
 cd "$(git rev-parse --show-toplevel)"
-devenv shell -- ci
+devenv shell -- ci </dev/null
 HOOK
       chmod +x "$hook"
-      echo "Installed pre-push hook at $hook"
     fi
   '';
 
