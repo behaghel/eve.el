@@ -413,46 +413,223 @@ add a new phrase to =eve-filler-phrases=, reopen the file or run
 ** Concept
 
 B-roll is supplementary footage that plays over (or instead of) the main
-recording.  Eve supports two b-roll modes:
+recording.  Eve supports three compositing modes:
 
-- *Replace* — the b-roll clip completely replaces the source video for the
-  duration of the segment.  The source audio is preserved (or you can use the
-  b-roll's audio).
+- *Replace* (default) — the b-roll clip completely replaces the source video
+  for the duration of the segment.  The source audio is kept unless you change
+  the audio policy.
 
-- *Pip* (picture-in-picture) — the b-roll is composited as an overlay on top
-  of the source video.  Position and size are configurable.
+- *Pip* (picture-in-picture) — the b-roll is scaled down and composited on
+  top of the source video.  You control position and size.
+
+- *Overlay* — alias for replace.  Treated identically by the renderer.
 
 ** Editing b-roll metadata
 
+Press =b= (=eve-edit-broll=) on a segment to set or modify its b-roll.  The
+command prompts for each field in turn:
+
+| Field | Prompt | Description |
+|-------+--------+-------------|
+| =file= | "B-roll file" | Path to a video, image, or =.json= template.  Blank clears the b-roll. |
+| =mode= | "Mode (overlay/replace/pip)" | Compositing mode (see above). |
+| =audio= | "Audio (source/mute/broll)" | Which audio track the rendered segment uses. |
+| =start_offset= | "Start offset (MM:SS or seconds)" | Where to begin playback in the b-roll clip. |
+| =duration= | "Duration (MM:SS or seconds)" | How long the b-roll plays; blank uses the segment duration. |
+| =still= | "Treat as still image?" | Auto-detected for =.png=, =.jpg=, etc.  Loops the image for the segment. |
+| =continue= | "Continue from previous?" | Part of a continuation chain (see below). |
+
+Additional keys:
+
 | Key | Command | Description |
 |-----+---------+-------------|
-| =b= | =eve-edit-broll= | Edit the b-roll entry for the current segment. |
-| =B= | =eve-toggle-broll-continue= | Mark the segment as continuing the previous b-roll chain. |
-| =C-c C-b= | =eve-edit-broll-placeholders= | Edit the placeholder substitutions for the segment. |
+| =B= | =eve-toggle-broll-continue= | Copy b-roll from the previous segment and mark as continuation. |
+| =C-c C-b= | =eve-edit-broll-placeholders= | Edit placeholder values for the current segment. |
 
-B-roll metadata is stored inside the segment's =edit.broll= field in the JSON.
+B-roll metadata is stored in the segment's =edit.broll= field in the JSON
+manifest.
 
-** Placeholders and templates
+** Compositing modes in detail
 
-B-roll entries can contain placeholder tokens (e.g., =[PRODUCT]=) that are
-resolved at render time.  Use =C-c C-b= to define the concrete values for
-each placeholder in the current segment.
+*** Replace mode
 
-** Continuation chains
+The b-roll video replaces the source video entirely.  The renderer trims the
+b-roll to the segment's duration, starting at =start_offset=.  If the b-roll
+is shorter than the segment, it is extended to fit.
 
-When a b-roll clip spans multiple consecutive segments, mark the second and
-subsequent segments with =B= (=eve-toggle-broll-continue=).  The renderer
-treats the chain as a single b-roll clip that plays through all of them,
-advancing its offset continuously rather than restarting.
+When =still= is true, the image is looped for the full segment duration using
+=ffmpeg -loop 1=.
+
+*** Pip mode
+
+The b-roll is scaled and positioned as an inset window over the source.
+Position and size are controlled by a =position= object in the JSON:
+
+#+begin_src json
+{
+  "file": "demo-recording.mp4",
+  "mode": "pip",
+  "position": {
+    "x": 0.05,
+    "y": 0.05,
+    "width": 0.3
+  }
+}
+#+end_src
+
+| Field | Default | Description |
+|-------+---------+-------------|
+| =x= | =0.05= | Horizontal offset as a fraction of the main video width (0.0--1.0). |
+| =y= | =0.05= | Vertical offset as a fraction of the main video height (0.0--1.0). |
+| =width= | =0.3= | Width of the pip window as a fraction of the main video width. |
+
+The height is calculated automatically to preserve the b-roll's aspect ratio.
 
 ** Audio policy
 
-Each b-roll entry has an =audio= field:
+Each b-roll entry has an =audio= field that controls which audio track
+appears in the rendered segment:
 
-- =source= (default) — use the audio from the main recording.
-- =broll= — use the audio track from the b-roll clip.
+- =source= (default) — keep the original recording's audio.
+- =broll= — use the audio track from the b-roll clip.  Not available for
+  still images.
+- =mute= — no audio for this segment.
 
-Edit this via =M-x eve-edit-broll= on the relevant segment.
+** JSON templates
+
+When the =file= field points to a =.json= file instead of a media file, eve
+treats it as a *template*.  The template JSON has this structure:
+
+#+begin_src json
+{
+  "template": "lower-third.png",
+  "overlays": [
+    {
+      "placeholder": "SPEAKER_NAME",
+      "fontsize": 36,
+      "color": "white",
+      "x": 80,
+      "y": 620,
+      "boxColor": "black@0.6"
+    },
+    {
+      "placeholder": "SPEAKER_TITLE",
+      "fontsize": 24,
+      "color": "#cccccc",
+      "x": 80,
+      "y": 665
+    }
+  ],
+  "placeholders": {
+    "SPEAKER_NAME": "Full Name",
+    "SPEAKER_TITLE": "Job Title"
+  }
+}
+#+end_src
+
+- =template= — path to the actual media file (image or video).
+- =overlays= — a list of text overlays rendered with ffmpeg =drawtext=.
+  Each overlay references a =placeholder= key by name.
+- =placeholders= — default values for each placeholder.  Segment-level
+  overrides (set via =C-c C-b=) take precedence.
+
+*** Overlay fields
+
+Each overlay in the =overlays= array supports:
+
+| Field | Description |
+|-------+-------------|
+| =placeholder= | Name of the placeholder key this overlay renders. |
+| =fontsize= (or =size=) | Font size in pixels. |
+| =color= (or =fontColor=) | Font colour (ffmpeg colour syntax: name, =#rrggbb=, =white@0.8=). |
+| =x= (or =position_x=) | Horizontal position (pixels or ffmpeg expression like =(w-text_w)/2=). |
+| =y= (or =position_y=) | Vertical position (pixels or ffmpeg expression). |
+| =align= | Set to ="center"= to auto-centre horizontally and vertically. |
+| =font= (or =fontfile=) | Path to a =.ttf= or =.otf= font file. |
+| =boxColor= (or =box_color=) | Background box colour (e.g. =black@0.6= for 60% opacity). |
+| =shadowColor= / =shadow_x= / =shadow_y= | Drop shadow parameters. |
+| =start= / =end= / =duration= | Time window (seconds) during which the overlay is visible. |
+
+*** Concrete example: lower-third title card
+
+Suppose you have a background image =lower-third.png= and you want to show
+the speaker's name and title during a segment.
+
+1. Create the template file =assets/lower-third.json=:
+
+   #+begin_src json
+   {
+     "template": "assets/lower-third.png",
+     "overlays": [
+       {
+         "placeholder": "NAME",
+         "fontsize": 42,
+         "color": "white",
+         "x": 80,
+         "y": 620,
+         "font": "assets/Inter-Bold.ttf",
+         "boxColor": "black@0.5"
+       },
+       {
+         "placeholder": "ROLE",
+         "fontsize": 28,
+         "color": "#cccccc",
+         "x": 80,
+         "y": 672,
+         "font": "assets/Inter-Regular.ttf"
+       }
+     ],
+     "placeholders": {
+       "NAME": "Speaker Name",
+       "ROLE": "Speaker Role"
+     }
+   }
+   #+end_src
+
+2. In eve-mode, press =b= on the segment where you want the title card.
+   Set =file= to =assets/lower-third.json=.  Set =mode= to =replace=.
+
+3. Press =C-c C-b= to edit placeholders for this segment:
+
+   #+begin_example
+   Placeholder NAME (default Speaker Name): Jane Doe
+   Placeholder ROLE (default Speaker Role): Product Lead
+   New placeholder key (blank to finish):
+   #+end_example
+
+4. Compile with =C-c C-c=.  The rendered segment shows =lower-third.png=
+   with "Jane Doe" and "Product Lead" burned in as text overlays at the
+   specified positions and sizes.
+
+Each segment can override different placeholder values from the same
+template.  The template is reused; only the text changes.
+
+** Placeholders without templates
+
+You can also set placeholder key-value pairs directly on a segment without
+a JSON template, using =C-c C-b=.  These are stored in the manifest under
+=edit.broll.placeholders= and are available for any overlay definitions.
+
+** Continuation chains
+
+When a single b-roll clip should span multiple consecutive segments, use
+continuation chains:
+
+1. Press =b= on the first segment and configure the b-roll normally.
+2. Move to the next segment and press =B= (=eve-toggle-broll-continue=).
+
+=B= copies the b-roll metadata from the nearest preceding segment that has
+b-roll, then auto-calculates:
+
+- =continue=: set to =true=.
+- =start_offset=: previous offset + previous segment duration, so playback
+  continues seamlessly from where the last segment left off.
+- =duration=: remaining duration of the b-roll clip (if the original had a
+  duration set).
+
+Repeat =B= on each subsequent segment in the chain.  The renderer treats the
+entire chain as one continuous b-roll playback — the clip advances smoothly
+across segment boundaries without restarting.
 
 * Compilation and Rendering
 :PROPERTIES:

@@ -90,9 +90,21 @@ B-Roll
 
 * Concept: Concept (1).
 * Editing b-roll metadata::
-* Placeholders and templates::
-* Continuation chains::
+* Compositing modes in detail::
 * Audio policy::
+* JSON templates::
+* Placeholders without templates::
+* Continuation chains::
+
+Compositing modes in detail
+
+* Replace mode::
+* Pip mode::
+
+JSON templates
+
+* Overlay fields::
+* Concrete example lower-third title card::
 
 Compilation and Rendering
 
@@ -729,9 +741,11 @@ File: eve.info,  Node: B-Roll,  Next: Compilation and Rendering,  Prev: Filler W
 
 * Concept: Concept (1).
 * Editing b-roll metadata::
-* Placeholders and templates::
-* Continuation chains::
+* Compositing modes in detail::
 * Audio policy::
+* JSON templates::
+* Placeholders without templates::
+* Continuation chains::
 
 
 File: eve.info,  Node: Concept (1),  Next: Editing b-roll metadata,  Up: B-Roll
@@ -740,63 +754,271 @@ File: eve.info,  Node: Concept (1),  Next: Editing b-roll metadata,  Up: B-Roll
 ===========
 
 B-roll is supplementary footage that plays over (or instead of) the main
-recording.  Eve supports two b-roll modes:
+recording.  Eve supports three compositing modes:
 
-   • *Replace* — the b-roll clip completely replaces the source video
-     for the duration of the segment.  The source audio is preserved (or
-     you can use the b-roll's audio).
+   • *Replace* (default) — the b-roll clip completely replaces the
+     source video for the duration of the segment.  The source audio is
+     kept unless you change the audio policy.
 
-   • *Pip* (picture-in-picture) — the b-roll is composited as an overlay
-     on top of the source video.  Position and size are configurable.
+   • *Pip* (picture-in-picture) — the b-roll is scaled down and
+     composited on top of the source video.  You control position and
+     size.
+
+   • *Overlay* — alias for replace.  Treated identically by the
+     renderer.
 
 
-File: eve.info,  Node: Editing b-roll metadata,  Next: Placeholders and templates,  Prev: Concept (1),  Up: B-Roll
+File: eve.info,  Node: Editing b-roll metadata,  Next: Compositing modes in detail,  Prev: Concept (1),  Up: B-Roll
 
 7.2 Editing b-roll metadata
 ===========================
 
+Press ‘b’ (‘eve-edit-broll’) on a segment to set or modify its b-roll.
+The command prompts for each field in turn:
+
+Field            Prompt                              Description
+--------------------------------------------------------------------------------------------------------------------------------
+‘file’           "B-roll file"                       Path to a video, image, or ‘.json’ template.  Blank clears the b-roll.
+‘mode’           "Mode (overlay/replace/pip)"        Compositing mode (see above).
+‘audio’          "Audio (source/mute/broll)"         Which audio track the rendered segment uses.
+‘start_offset’   "Start offset (MM:SS or seconds)"   Where to begin playback in the b-roll clip.
+‘duration’       "Duration (MM:SS or seconds)"       How long the b-roll plays; blank uses the segment duration.
+‘still’          "Treat as still image?"             Auto-detected for ‘.png’, ‘.jpg’, etc.  Loops the image for the segment.
+‘continue’       "Continue from previous?"           Part of a continuation chain (see below).
+
+   Additional keys:
+
 Key         Command                         Description
---------------------------------------------------------------------------------------------------------
-‘b’         ‘eve-edit-broll’                Edit the b-roll entry for the current segment.
-‘B’         ‘eve-toggle-broll-continue’     Mark the segment as continuing the previous b-roll chain.
-‘C-c C-b’   ‘eve-edit-broll-placeholders’   Edit the placeholder substitutions for the segment.
+--------------------------------------------------------------------------------------------------------------
+‘B’         ‘eve-toggle-broll-continue’     Copy b-roll from the previous segment and mark as continuation.
+‘C-c C-b’   ‘eve-edit-broll-placeholders’   Edit placeholder values for the current segment.
 
-   B-roll metadata is stored inside the segment's ‘edit.broll’ field in
-the JSON.
-
-
-File: eve.info,  Node: Placeholders and templates,  Next: Continuation chains,  Prev: Editing b-roll metadata,  Up: B-Roll
-
-7.3 Placeholders and templates
-==============================
-
-B-roll entries can contain placeholder tokens (e.g., ‘[PRODUCT]’) that
-are resolved at render time.  Use ‘C-c C-b’ to define the concrete
-values for each placeholder in the current segment.
+   B-roll metadata is stored in the segment's ‘edit.broll’ field in the
+JSON manifest.
 
 
-File: eve.info,  Node: Continuation chains,  Next: Audio policy,  Prev: Placeholders and templates,  Up: B-Roll
+File: eve.info,  Node: Compositing modes in detail,  Next: Audio policy,  Prev: Editing b-roll metadata,  Up: B-Roll
 
-7.4 Continuation chains
-=======================
+7.3 Compositing modes in detail
+===============================
 
-When a b-roll clip spans multiple consecutive segments, mark the second
-and subsequent segments with ‘B’ (‘eve-toggle-broll-continue’).  The
-renderer treats the chain as a single b-roll clip that plays through all
-of them, advancing its offset continuously rather than restarting.
+* Menu:
+
+* Replace mode::
+* Pip mode::
 
 
-File: eve.info,  Node: Audio policy,  Prev: Continuation chains,  Up: B-Roll
+File: eve.info,  Node: Replace mode,  Next: Pip mode,  Up: Compositing modes in detail
 
-7.5 Audio policy
+7.3.1 Replace mode
+------------------
+
+The b-roll video replaces the source video entirely.  The renderer trims
+the b-roll to the segment's duration, starting at ‘start_offset’.  If
+the b-roll is shorter than the segment, it is extended to fit.
+
+   When ‘still’ is true, the image is looped for the full segment
+duration using ‘ffmpeg -loop 1’.
+
+
+File: eve.info,  Node: Pip mode,  Prev: Replace mode,  Up: Compositing modes in detail
+
+7.3.2 Pip mode
+--------------
+
+The b-roll is scaled and positioned as an inset window over the source.
+Position and size are controlled by a ‘position’ object in the JSON:
+
+     {
+       "file": "demo-recording.mp4",
+       "mode": "pip",
+       "position": {
+         "x": 0.05,
+         "y": 0.05,
+         "width": 0.3
+       }
+     }
+
+Field     Default   Description
+------------------------------------------------------------------------------------------
+‘x’       ‘0.05’    Horizontal offset as a fraction of the main video width (0.0-1.0).
+‘y’       ‘0.05’    Vertical offset as a fraction of the main video height (0.0-1.0).
+‘width’   ‘0.3’     Width of the pip window as a fraction of the main video width.
+
+   The height is calculated automatically to preserve the b-roll's
+aspect ratio.
+
+
+File: eve.info,  Node: Audio policy,  Next: JSON templates,  Prev: Compositing modes in detail,  Up: B-Roll
+
+7.4 Audio policy
 ================
 
-Each b-roll entry has an ‘audio’ field:
+Each b-roll entry has an ‘audio’ field that controls which audio track
+appears in the rendered segment:
 
-   • ‘source’ (default) — use the audio from the main recording.
-   • ‘broll’ — use the audio track from the b-roll clip.
+   • ‘source’ (default) — keep the original recording's audio.
+   • ‘broll’ — use the audio track from the b-roll clip.  Not available
+     for still images.
+   • ‘mute’ — no audio for this segment.
 
-   Edit this via ‘M-x eve-edit-broll’ on the relevant segment.
+
+File: eve.info,  Node: JSON templates,  Next: Placeholders without templates,  Prev: Audio policy,  Up: B-Roll
+
+7.5 JSON templates
+==================
+
+When the ‘file’ field points to a ‘.json’ file instead of a media file,
+eve treats it as a *template*.  The template JSON has this structure:
+
+     {
+       "template": "lower-third.png",
+       "overlays": [
+         {
+           "placeholder": "SPEAKER_NAME",
+           "fontsize": 36,
+           "color": "white",
+           "x": 80,
+           "y": 620,
+           "boxColor": "black@0.6"
+         },
+         {
+           "placeholder": "SPEAKER_TITLE",
+           "fontsize": 24,
+           "color": "#cccccc",
+           "x": 80,
+           "y": 665
+         }
+       ],
+       "placeholders": {
+         "SPEAKER_NAME": "Full Name",
+         "SPEAKER_TITLE": "Job Title"
+       }
+     }
+
+   • ‘template’ — path to the actual media file (image or video).
+   • ‘overlays’ — a list of text overlays rendered with ffmpeg
+     ‘drawtext’.  Each overlay references a ‘placeholder’ key by name.
+   • ‘placeholders’ — default values for each placeholder.
+     Segment-level overrides (set via ‘C-c C-b’) take precedence.
+
+* Menu:
+
+* Overlay fields::
+* Concrete example lower-third title card::
+
+
+File: eve.info,  Node: Overlay fields,  Next: Concrete example lower-third title card,  Up: JSON templates
+
+7.5.1 Overlay fields
+--------------------
+
+Each overlay in the ‘overlays’ array supports:
+
+Field                                     Description
+-------------------------------------------------------------------------------------------------------------------
+‘placeholder’                             Name of the placeholder key this overlay renders.
+‘fontsize’ (or ‘size’)                    Font size in pixels.
+‘color’ (or ‘fontColor’)                  Font colour (ffmpeg colour syntax: name, ‘#rrggbb’, ‘white@0.8’).
+‘x’ (or ‘position_x’)                     Horizontal position (pixels or ffmpeg expression like ‘(w-text_w)/2’).
+‘y’ (or ‘position_y’)                     Vertical position (pixels or ffmpeg expression).
+‘align’                                   Set to ‘"center"’ to auto-centre horizontally and vertically.
+‘font’ (or ‘fontfile’)                    Path to a ‘.ttf’ or ‘.otf’ font file.
+‘boxColor’ (or ‘box_color’)               Background box colour (e.g.  ‘black@0.6’ for 60% opacity).
+‘shadowColor’ / ‘shadow_x’ / ‘shadow_y’   Drop shadow parameters.
+‘start’ / ‘end’ / ‘duration’              Time window (seconds) during which the overlay is visible.
+
+
+File: eve.info,  Node: Concrete example lower-third title card,  Prev: Overlay fields,  Up: JSON templates
+
+7.5.2 Concrete example: lower-third title card
+----------------------------------------------
+
+Suppose you have a background image ‘lower-third.png’ and you want to
+show the speaker's name and title during a segment.
+
+  1. Create the template file ‘assets/lower-third.json’:
+
+          {
+            "template": "assets/lower-third.png",
+            "overlays": [
+              {
+                "placeholder": "NAME",
+                "fontsize": 42,
+                "color": "white",
+                "x": 80,
+                "y": 620,
+                "font": "assets/Inter-Bold.ttf",
+                "boxColor": "black@0.5"
+              },
+              {
+                "placeholder": "ROLE",
+                "fontsize": 28,
+                "color": "#cccccc",
+                "x": 80,
+                "y": 672,
+                "font": "assets/Inter-Regular.ttf"
+              }
+            ],
+            "placeholders": {
+              "NAME": "Speaker Name",
+              "ROLE": "Speaker Role"
+            }
+          }
+
+  2. In eve-mode, press ‘b’ on the segment where you want the title
+     card.  Set ‘file’ to ‘assets/lower-third.json’.  Set ‘mode’ to
+     ‘replace’.
+
+  3. Press ‘C-c C-b’ to edit placeholders for this segment:
+
+          Placeholder NAME (default Speaker Name): Jane Doe
+          Placeholder ROLE (default Speaker Role): Product Lead
+          New placeholder key (blank to finish):
+
+  4. Compile with ‘C-c C-c’.  The rendered segment shows
+     ‘lower-third.png’ with "Jane Doe" and "Product Lead" burned in as
+     text overlays at the specified positions and sizes.
+
+   Each segment can override different placeholder values from the same
+template.  The template is reused; only the text changes.
+
+
+File: eve.info,  Node: Placeholders without templates,  Next: Continuation chains,  Prev: JSON templates,  Up: B-Roll
+
+7.6 Placeholders without templates
+==================================
+
+You can also set placeholder key-value pairs directly on a segment
+without a JSON template, using ‘C-c C-b’.  These are stored in the
+manifest under ‘edit.broll.placeholders’ and are available for any
+overlay definitions.
+
+
+File: eve.info,  Node: Continuation chains,  Prev: Placeholders without templates,  Up: B-Roll
+
+7.7 Continuation chains
+=======================
+
+When a single b-roll clip should span multiple consecutive segments, use
+continuation chains:
+
+  1. Press ‘b’ on the first segment and configure the b-roll normally.
+  2. Move to the next segment and press ‘B’
+     (‘eve-toggle-broll-continue’).
+
+   ‘B’ copies the b-roll metadata from the nearest preceding segment
+that has b-roll, then auto-calculates:
+
+   • ‘continue’: set to ‘true’.
+   • ‘start_offset’: previous offset + previous segment duration, so
+     playback continues seamlessly from where the last segment left off.
+   • ‘duration’: remaining duration of the b-roll clip (if the original
+     had a duration set).
+
+   Repeat ‘B’ on each subsequent segment in the chain.  The renderer
+treats the entire chain as one continuous b-roll playback — the clip
+advances smoothly across segment boundaries without restarting.
 
 
 File: eve.info,  Node: Compilation and Rendering,  Next: Playback,  Prev: B-Roll,  Up: Top
@@ -1477,89 +1699,95 @@ or visit the repository at <https://github.com/behaghel/eve.el>.
 
 Tag Table:
 Node: Top205
-Node: Introduction3313
-Node: The Big Idea3619
-Node: The Core Workflow4391
-Node: About This Manual5492
-Node: Getting Started5891
-Node: Installation6069
-Node: Requirements6302
-Node: Installing the CLI6627
-Node: Installing the Emacs package7282
-Node: straightel7540
-Node: Manual7758
-Node: Accessing the manual in Emacs8094
-Node: Quick Start8547
-Node: The TJM Manifest9852
-Node: Structure10084
-Node: How eve-mode renders a manifest11206
-Node: The raw JSON companion buffer11838
-Node: Transcription12272
-Node: Starting transcription from Emacs12508
-Node: Backends13140
-Node: Configuration14113
-Node: Installing optional backends14916
-Node: Editing15374
-Node: Navigation15667
-Node: Deletion and restoration16044
-Node: Splitting and merging16683
-Node: Reordering17175
-Node: Markers and sections17509
-Node: Inline editing18011
-Node: Metadata18342
-Node: Undo and redo18916
-Node: Validation19243
-Node: Filler Words19569
-Node: Concept19781
-Node: Configuration (1)20183
-Node: Commands20776
-Node: Auto-tagging on file open21716
-Node: B-Roll22065
-Node: Concept (1)22316
-Node: Editing b-roll metadata22875
-Node: Placeholders and templates23612
-Node: Continuation chains24000
-Node: Audio policy24454
-Node: Compilation and Rendering24821
-Node: Two modes draft and final25173
-Node: Under the hood25651
-Node: Pre-flight validation26754
-Node: Dry-run analysis27491
-Node: Checkpoint and resume28017
-Node: Progressive output28498
-Node: Configuration reference28900
-Node: CLI reference30244
-Node: Playback31373
-Node: Source playback31620
-Node: Rendered playback32081
-Node: Playback tracking and segment highlighting32579
-Node: Controls33006
-Node: Video layout33987
-Node: Display35523
-Node: Timestamp ruler35709
-Node: Hiding deleted segments36306
-Node: Word-level display36740
-Node: Key Bindings37554
-Node: Single-key bindings37795
-Node: Navigation (1)38133
-Node: Editing (1)38493
-Node: Metadata (1)38949
-Node: Fillers39307
-Node: Playback (1)39552
-Node: Structure and display40009
-Node: C-c prefix bindings40399
-Node: Playback-mode overrides41350
-Node: The hydra cheatsheet41677
-Node: Configuration Reference42079
-Node: Architecture45739
-Node: Two-layer boundary45926
-Node: Shared contract46730
-Node: Development47202
-Node: devenv commands47427
-Node: Running tests48623
-Node: Project layout49060
-Node: Dependencies49738
-Node: Appendix A TJM v11 Specification50053
+Node: Introduction3508
+Node: The Big Idea3814
+Node: The Core Workflow4586
+Node: About This Manual5687
+Node: Getting Started6086
+Node: Installation6264
+Node: Requirements6497
+Node: Installing the CLI6822
+Node: Installing the Emacs package7477
+Node: straightel7735
+Node: Manual7953
+Node: Accessing the manual in Emacs8289
+Node: Quick Start8742
+Node: The TJM Manifest10047
+Node: Structure10279
+Node: How eve-mode renders a manifest11401
+Node: The raw JSON companion buffer12033
+Node: Transcription12467
+Node: Starting transcription from Emacs12703
+Node: Backends13335
+Node: Configuration14308
+Node: Installing optional backends15111
+Node: Editing15569
+Node: Navigation15862
+Node: Deletion and restoration16239
+Node: Splitting and merging16878
+Node: Reordering17370
+Node: Markers and sections17704
+Node: Inline editing18206
+Node: Metadata18537
+Node: Undo and redo19111
+Node: Validation19438
+Node: Filler Words19764
+Node: Concept19976
+Node: Configuration (1)20378
+Node: Commands20971
+Node: Auto-tagging on file open21911
+Node: B-Roll22260
+Node: Concept (1)22566
+Node: Editing b-roll metadata23222
+Node: Compositing modes in detail24991
+Node: Replace mode25216
+Node: Pip mode25664
+Node: Audio policy26583
+Node: JSON templates27062
+Node: Overlay fields28355
+Node: Concrete example lower-third title card29758
+Node: Placeholders without templates31643
+Node: Continuation chains32066
+Node: Compilation and Rendering33089
+Node: Two modes draft and final33441
+Node: Under the hood33919
+Node: Pre-flight validation35022
+Node: Dry-run analysis35759
+Node: Checkpoint and resume36285
+Node: Progressive output36766
+Node: Configuration reference37168
+Node: CLI reference38512
+Node: Playback39641
+Node: Source playback39888
+Node: Rendered playback40349
+Node: Playback tracking and segment highlighting40847
+Node: Controls41274
+Node: Video layout42255
+Node: Display43791
+Node: Timestamp ruler43977
+Node: Hiding deleted segments44574
+Node: Word-level display45008
+Node: Key Bindings45822
+Node: Single-key bindings46063
+Node: Navigation (1)46401
+Node: Editing (1)46761
+Node: Metadata (1)47217
+Node: Fillers47575
+Node: Playback (1)47820
+Node: Structure and display48277
+Node: C-c prefix bindings48667
+Node: Playback-mode overrides49618
+Node: The hydra cheatsheet49945
+Node: Configuration Reference50347
+Node: Architecture54007
+Node: Two-layer boundary54194
+Node: Shared contract54998
+Node: Development55470
+Node: devenv commands55695
+Node: Running tests56891
+Node: Project layout57328
+Node: Dependencies58006
+Node: Appendix A TJM v11 Specification58321
 
 End Tag Table
 

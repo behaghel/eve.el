@@ -103,9 +103,21 @@ B-Roll
 
 * Concept: Concept (1). 
 * Editing b-roll metadata::
-* Placeholders and templates::
-* Continuation chains::
+* Compositing modes in detail::
 * Audio policy::
+* JSON templates::
+* Placeholders without templates::
+* Continuation chains::
+
+Compositing modes in detail
+
+* Replace mode::
+* Pip mode::
+
+JSON templates
+
+* Overlay fields::
+* Concrete example lower-third title card::
 
 Compilation and Rendering
 
@@ -747,76 +759,329 @@ add a new phrase to @samp{eve-filler-phrases}, reopen the file or run
 @menu
 * Concept: Concept (1). 
 * Editing b-roll metadata::
-* Placeholders and templates::
-* Continuation chains::
+* Compositing modes in detail::
 * Audio policy::
+* JSON templates::
+* Placeholders without templates::
+* Continuation chains::
 @end menu
 
 @node Concept (1)
 @section Concept
 
 B-roll is supplementary footage that plays over (or instead of) the main
-recording.  Eve supports two b-roll modes:
+recording.  Eve supports three compositing modes:
 
 @itemize
 @item
-@strong{Replace} — the b-roll clip completely replaces the source video for the
-duration of the segment.  The source audio is preserved (or you can use the
-b-roll's audio).
+@strong{Replace} (default) — the b-roll clip completely replaces the source video
+for the duration of the segment.  The source audio is kept unless you change
+the audio policy.
 
 @item
-@strong{Pip} (picture-in-picture) — the b-roll is composited as an overlay on top
-of the source video.  Position and size are configurable.
+@strong{Pip} (picture-in-picture) — the b-roll is scaled down and composited on
+top of the source video.  You control position and size.
+
+@item
+@strong{Overlay} — alias for replace.  Treated identically by the renderer.
 @end itemize
 
 @node Editing b-roll metadata
 @section Editing b-roll metadata
 
-@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+Press @samp{b} (@samp{eve-edit-broll}) on a segment to set or modify its b-roll.  The
+command prompts for each field in turn:
+
+@multitable {aaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Field
+@tab Prompt
+@tab Description
+@item @samp{file}
+@tab "B-roll file"
+@tab Path to a video, image, or @samp{.json} template.  Blank clears the b-roll.
+@item @samp{mode}
+@tab "Mode (overlay/replace/pip)"
+@tab Compositing mode (see above).
+@item @samp{audio}
+@tab "Audio (source/mute/broll)"
+@tab Which audio track the rendered segment uses.
+@item @samp{start_offset}
+@tab "Start offset (MM:SS or seconds)"
+@tab Where to begin playback in the b-roll clip.
+@item @samp{duration}
+@tab "Duration (MM:SS or seconds)"
+@tab How long the b-roll plays; blank uses the segment duration.
+@item @samp{still}
+@tab "Treat as still image?"
+@tab Auto-detected for @samp{.png}, @samp{.jpg}, etc.  Loops the image for the segment.
+@item @samp{continue}
+@tab "Continue from previous?"
+@tab Part of a continuation chain (see below).
+@end multitable
+
+Additional keys:
+
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Key
 @tab Command
 @tab Description
-@item @samp{b}
-@tab @samp{eve-edit-broll}
-@tab Edit the b-roll entry for the current segment.
 @item @samp{B}
 @tab @samp{eve-toggle-broll-continue}
-@tab Mark the segment as continuing the previous b-roll chain.
+@tab Copy b-roll from the previous segment and mark as continuation.
 @item @samp{C-c C-b}
 @tab @samp{eve-edit-broll-placeholders}
-@tab Edit the placeholder substitutions for the segment.
+@tab Edit placeholder values for the current segment.
 @end multitable
 
-B-roll metadata is stored inside the segment's @samp{edit.broll} field in the JSON@.
+B-roll metadata is stored in the segment's @samp{edit.broll} field in the JSON
+manifest.
 
-@node Placeholders and templates
-@section Placeholders and templates
+@node Compositing modes in detail
+@section Compositing modes in detail
 
-B-roll entries can contain placeholder tokens (e.g., @samp{[PRODUCT]}) that are
-resolved at render time.  Use @samp{C-c C-b} to define the concrete values for
-each placeholder in the current segment.
+@menu
+* Replace mode::
+* Pip mode::
+@end menu
 
-@node Continuation chains
-@section Continuation chains
+@node Replace mode
+@subsection Replace mode
 
-When a b-roll clip spans multiple consecutive segments, mark the second and
-subsequent segments with @samp{B} (@samp{eve-toggle-broll-continue}).  The renderer
-treats the chain as a single b-roll clip that plays through all of them,
-advancing its offset continuously rather than restarting.
+The b-roll video replaces the source video entirely.  The renderer trims the
+b-roll to the segment's duration, starting at @samp{start_offset}.  If the b-roll
+is shorter than the segment, it is extended to fit.
+
+When @samp{still} is true, the image is looped for the full segment duration using
+@samp{ffmpeg -loop 1}.
+
+@node Pip mode
+@subsection Pip mode
+
+The b-roll is scaled and positioned as an inset window over the source.
+Position and size are controlled by a @samp{position} object in the JSON:
+
+@example
+@{
+  "file": "demo-recording.mp4",
+  "mode": "pip",
+  "position": @{
+    "x": 0.05,
+    "y": 0.05,
+    "width": 0.3
+  @}
+@}
+@end example
+
+@multitable {aaaaaaa} {aaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Field
+@tab Default
+@tab Description
+@item @samp{x}
+@tab @samp{0.05}
+@tab Horizontal offset as a fraction of the main video width (0.0--1.0).
+@item @samp{y}
+@tab @samp{0.05}
+@tab Vertical offset as a fraction of the main video height (0.0--1.0).
+@item @samp{width}
+@tab @samp{0.3}
+@tab Width of the pip window as a fraction of the main video width.
+@end multitable
+
+The height is calculated automatically to preserve the b-roll's aspect ratio.
 
 @node Audio policy
 @section Audio policy
 
-Each b-roll entry has an @samp{audio} field:
+Each b-roll entry has an @samp{audio} field that controls which audio track
+appears in the rendered segment:
 
 @itemize
 @item
-@samp{source} (default) — use the audio from the main recording.
+@samp{source} (default) — keep the original recording's audio.
 @item
-@samp{broll} — use the audio track from the b-roll clip.
+@samp{broll} — use the audio track from the b-roll clip.  Not available for
+still images.
+@item
+@samp{mute} — no audio for this segment.
 @end itemize
 
-Edit this via @samp{M-x eve-edit-broll} on the relevant segment.
+@node JSON templates
+@section JSON templates
+
+When the @samp{file} field points to a @samp{.json} file instead of a media file, eve
+treats it as a @strong{template}.  The template JSON has this structure:
+
+@example
+@{
+  "template": "lower-third.png",
+  "overlays": [
+    @{
+      "placeholder": "SPEAKER_NAME",
+      "fontsize": 36,
+      "color": "white",
+      "x": 80,
+      "y": 620,
+      "boxColor": "black@@0.6"
+    @},
+    @{
+      "placeholder": "SPEAKER_TITLE",
+      "fontsize": 24,
+      "color": "#cccccc",
+      "x": 80,
+      "y": 665
+    @}
+  ],
+  "placeholders": @{
+    "SPEAKER_NAME": "Full Name",
+    "SPEAKER_TITLE": "Job Title"
+  @}
+@}
+@end example
+
+@itemize
+@item
+@samp{template} — path to the actual media file (image or video).
+@item
+@samp{overlays} — a list of text overlays rendered with ffmpeg @samp{drawtext}.
+Each overlay references a @samp{placeholder} key by name.
+@item
+@samp{placeholders} — default values for each placeholder.  Segment-level
+overrides (set via @samp{C-c C-b}) take precedence.
+@end itemize
+
+@menu
+* Overlay fields::
+* Concrete example lower-third title card::
+@end menu
+
+@node Overlay fields
+@subsection Overlay fields
+
+Each overlay in the @samp{overlays} array supports:
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Field
+@tab Description
+@item @samp{placeholder}
+@tab Name of the placeholder key this overlay renders.
+@item @samp{fontsize} (or @samp{size})
+@tab Font size in pixels.
+@item @samp{color} (or @samp{fontColor})
+@tab Font colour (ffmpeg colour syntax: name, @samp{#rrggbb}, @samp{white@@0.8}).
+@item @samp{x} (or @samp{position_x})
+@tab Horizontal position (pixels or ffmpeg expression like @samp{(w-text_w)/2}).
+@item @samp{y} (or @samp{position_y})
+@tab Vertical position (pixels or ffmpeg expression).
+@item @samp{align}
+@tab Set to @samp{"center"} to auto-centre horizontally and vertically.
+@item @samp{font} (or @samp{fontfile})
+@tab Path to a @samp{.ttf} or @samp{.otf} font file.
+@item @samp{boxColor} (or @samp{box_color})
+@tab Background box colour (e.g. @samp{black@@0.6} for 60% opacity).
+@item @samp{shadowColor} / @samp{shadow_x} / @samp{shadow_y}
+@tab Drop shadow parameters.
+@item @samp{start} / @samp{end} / @samp{duration}
+@tab Time window (seconds) during which the overlay is visible.
+@end multitable
+
+@node Concrete example lower-third title card
+@subsection Concrete example: lower-third title card
+
+Suppose you have a background image @samp{lower-third.png} and you want to show
+the speaker's name and title during a segment.
+
+@enumerate
+@item
+Create the template file @samp{assets/lower-third.json}:
+
+@example
+@{
+  "template": "assets/lower-third.png",
+  "overlays": [
+    @{
+      "placeholder": "NAME",
+      "fontsize": 42,
+      "color": "white",
+      "x": 80,
+      "y": 620,
+      "font": "assets/Inter-Bold.ttf",
+      "boxColor": "black@@0.5"
+    @},
+    @{
+      "placeholder": "ROLE",
+      "fontsize": 28,
+      "color": "#cccccc",
+      "x": 80,
+      "y": 672,
+      "font": "assets/Inter-Regular.ttf"
+    @}
+  ],
+  "placeholders": @{
+    "NAME": "Speaker Name",
+    "ROLE": "Speaker Role"
+  @}
+@}
+@end example
+
+@item
+In eve-mode, press @samp{b} on the segment where you want the title card.
+Set @samp{file} to @samp{assets/lower-third.json}.  Set @samp{mode} to @samp{replace}.
+
+@item
+Press @samp{C-c C-b} to edit placeholders for this segment:
+
+@example
+Placeholder NAME (default Speaker Name): Jane Doe
+Placeholder ROLE (default Speaker Role): Product Lead
+New placeholder key (blank to finish):
+@end example
+
+@item
+Compile with @samp{C-c C-c}.  The rendered segment shows @samp{lower-third.png}
+with "Jane Doe" and "Product Lead" burned in as text overlays at the
+specified positions and sizes.
+@end enumerate
+
+Each segment can override different placeholder values from the same
+template.  The template is reused; only the text changes.
+
+@node Placeholders without templates
+@section Placeholders without templates
+
+You can also set placeholder key-value pairs directly on a segment without
+a JSON template, using @samp{C-c C-b}.  These are stored in the manifest under
+@samp{edit.broll.placeholders} and are available for any overlay definitions.
+
+@node Continuation chains
+@section Continuation chains
+
+When a single b-roll clip should span multiple consecutive segments, use
+continuation chains:
+
+@enumerate
+@item
+Press @samp{b} on the first segment and configure the b-roll normally.
+@item
+Move to the next segment and press @samp{B} (@samp{eve-toggle-broll-continue}).
+@end enumerate
+
+@samp{B} copies the b-roll metadata from the nearest preceding segment that has
+b-roll, then auto-calculates:
+
+@itemize
+@item
+@samp{continue}: set to @samp{true}.
+@item
+@samp{start_offset}: previous offset + previous segment duration, so playback
+continues seamlessly from where the last segment left off.
+@item
+@samp{duration}: remaining duration of the b-roll clip (if the original had a
+duration set).
+@end itemize
+
+Repeat @samp{B} on each subsequent segment in the chain.  The renderer treats the
+entire chain as one continuous b-roll playback — the clip advances smoothly
+across segment boundaries without restarting.
 
 @node Compilation and Rendering
 @chapter Compilation and Rendering
