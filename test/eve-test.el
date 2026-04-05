@@ -520,6 +520,68 @@
         (should (equal captured-data-path temp))
        (should (= (length (alist-get 'segments captured-data)) 1))))))
 
+(ert-deftest eve-pre-flight-validate-handles-null-eta ()
+  "Pre-flight must not crash when dry-run returns null estimated_seconds."
+  (with-temp-buffer
+    (let ((buffer-file-name "/tmp/test.tjm.json")
+          (eve-compile-confirm-threshold 30))
+      (cl-letf (((symbol-function 'file-exists-p)
+                 (lambda (_f) t))
+                ((symbol-function 'eve--validate-manifest-sync)
+                 (lambda (_file)
+                   '(:valid t :errors [] :warnings [])))
+                ((symbol-function 'eve--dry-run-analysis)
+                 (lambda (_file _quality)
+                   '(:total_segments 10
+                     :cached_segments 0
+                     :changed_segments 10
+                     :estimated_seconds :null
+                     :cache_hit_rate 0.0
+                     :changed_ids ["s1" "s2"]))))
+        (should (eq t (eve--pre-flight-validate "draft")))))))
+
+(ert-deftest eve-pre-flight-validate-handles-null-counts ()
+  "Pre-flight must not crash when dry-run returns null segment counts."
+  (with-temp-buffer
+    (let ((buffer-file-name "/tmp/test.tjm.json")
+          (eve-compile-confirm-threshold 30))
+      (cl-letf (((symbol-function 'file-exists-p)
+                 (lambda (_f) t))
+                ((symbol-function 'eve--validate-manifest-sync)
+                 (lambda (_file)
+                   '(:valid t :errors [] :warnings [])))
+                ((symbol-function 'eve--dry-run-analysis)
+                 (lambda (_file _quality)
+                   '(:total_segments :null
+                     :cached_segments :null
+                     :changed_segments :null
+                     :estimated_seconds :null
+                     :cache_hit_rate :null
+                     :changed_ids []))))
+        (should (eq t (eve--pre-flight-validate "draft")))))))
+
+(ert-deftest eve-pre-flight-validate-detects-json-false ()
+  "Pre-flight must treat JSON false (:false) as invalid."
+  (with-temp-buffer
+    (let ((buffer-file-name "/tmp/test.tjm.json")
+          (eve-compile-confirm-threshold 30)
+          prompted)
+      (cl-letf (((symbol-function 'file-exists-p)
+                 (lambda (_f) t))
+                ((symbol-function 'eve--validate-manifest-sync)
+                 (lambda (_file)
+                   '(:valid :false
+                     :errors [(:message "missing source")]
+                     :warnings [])))
+                ((symbol-function 'eve--dry-run-analysis)
+                 (lambda (_file _quality) nil))
+                ((symbol-function 'y-or-n-p)
+                 (lambda (_prompt)
+                   (setq prompted t)
+                   t)))
+        (eve--pre-flight-validate "draft")
+        (should prompted)))))
+
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
   (let ((eve-cli-program "eve-custom")

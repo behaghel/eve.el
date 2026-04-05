@@ -814,7 +814,7 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	(eve--echo-segment-info)
 	(message "Copied b-roll from previous segment and set continue")))))
 
-(defun eve--pre-flight-validate (quality)
+(cl-defun eve--pre-flight-validate (quality)
   "Validate manifest and check ETA before compile at QUALITY.
 Return t to proceed, nil to abort."
   (when (and buffer-file-name (file-exists-p buffer-file-name))
