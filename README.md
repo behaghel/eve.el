@@ -45,7 +45,7 @@ The project uses [devenv](https://devenv.sh) at the repository root.
 ```bash
 devenv shell -- format    # format all
 devenv shell -- lint      # lint all (Emacs + Python)
-devenv shell -- test      # ERT + pytest
+devenv shell -- test-all  # ERT + pytest
 devenv shell -- ci        # full pipeline
 devenv shell -- docs      # generate eve.texi and eve.info
 ```

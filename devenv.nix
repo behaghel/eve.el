@@ -111,14 +111,14 @@
       lint-py
     '';
 
-    test.exec = ''
+    test-all.exec = ''
       test-elisp
       test-py
     '';
 
     ci.exec = ''
       lint
-      test
+      test-all
     '';
 
     dev-help-all.exec = ''
@@ -152,7 +152,7 @@
       printf "🚀 Project\n"
       printf "  format                 Format all\n"
       printf "  lint                   Lint all\n"
-      printf "  test                   Test all\n"
+      printf "  test-all               Test all\n"
       printf "  ci                     Full CI pipeline\n\n"
 
       printf "🔧 Tooling\n"
@@ -183,7 +183,7 @@
       B="\033[1m"; R="\033[0m"
       printf "\n''${B}🎬 eve.el''${R} — text-driven video editing in Emacs\n\n"
       printf "📝  ''${B}format''${R}    Format all          🔍  ''${B}lint''${R}   Lint all\n"
-      printf "🧪  ''${B}test''${R}      Test all            🚀  ''${B}ci''${R}     Full CI pipeline\n"
+      printf "🧪  ''${B}test-all''${R}  Test all            🚀  ''${B}ci''${R}     Full CI pipeline\n"
       printf "📖  ''${B}docs''${R}      Generate manual     ▶️   ''${B}run-cli''${R} Run eve CLI\n"
       printf "\n💡 Run ''${B}dev-help-all''${R} for the full command reference.\n\n"
       date +%s > "$stamp"
