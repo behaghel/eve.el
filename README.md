@@ -13,9 +13,9 @@ a small edit re-encodes only the changed segments (often under two seconds).
 Speculative pre-rendering warms the cache on every save.  `C-u C-c C-c`
 exports at full H.264 quality for delivery.
 
-**Full user manual**: `docs/eve.org` — or `C-h i m eve RET` in Emacs after
+**Full user manual**: [`docs/eve.org`](docs/eve.org) — or `C-h i m eve RET` in Emacs after
 installation.  
-**TJM v1.1 format specification**: `docs/tjm-spec.md`.
+**TJM v1.1 format specification**: [`docs/tjm-spec.md`](docs/tjm-spec.md).
 
 ## Installation
 
