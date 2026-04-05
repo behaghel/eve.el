@@ -138,15 +138,6 @@ Key Bindings
 * Playback-mode overrides::
 * The hydra cheatsheet::
 
-Single-key bindings
-
-* Navigation: Navigation (1).
-* Editing: Editing (1).
-* Metadata: Metadata (1).
-* Fillers::
-* Playback: Playback (1).
-* Structure and display::
-
 Architecture
 
 * Two-layer boundary::
@@ -1352,98 +1343,44 @@ File: eve.info,  Node: Single-key bindings,  Next: C-c prefix bindings,  Up: Key
 11.1 Single-key bindings
 ========================
 
-These bindings are active in eve-mode.
+These bindings are active in eve-mode.  The table below is
+auto-generated from the keymap by ‘scripts/gen-docs’.
 
-* Menu:
-
-* Navigation: Navigation (1).
-* Editing: Editing (1).
-* Metadata: Metadata (1).
-* Fillers::
-* Playback: Playback (1).
-* Structure and display::
-
-
-File: eve.info,  Node: Navigation (1),  Next: Editing (1),  Up: Single-key bindings
-
-11.1.1 Navigation
------------------
-
-Key         Command
---------------------------------------
-‘j’ / ‘n’   ‘eve-next-segment’
-‘k’ / ‘p’   ‘eve-previous-segment’
-‘J’         ‘eve-move-segment-down’
-‘K’         ‘eve-move-segment-up’
-
-
-File: eve.info,  Node: Editing (1),  Next: Metadata (1),  Prev: Navigation (1),  Up: Single-key bindings
-
-11.1.2 Editing
---------------
-
-Key     Command
---------------------------------
-‘d’     ‘eve-delete-word’
-‘D’     ‘eve-delete-segment’
-‘s’     ‘eve-split-segment’
-‘m’     ‘eve-merge-with-next’
-‘u’     ‘eve-undo’
-‘C-r’   ‘eve-redo’
-‘e’     ‘eve-dwim-edit’
-‘o’     ‘eve-insert-marker’
-
-
-File: eve.info,  Node: Metadata (1),  Next: Fillers,  Prev: Editing (1),  Up: Single-key bindings
-
-11.1.3 Metadata
----------------
-
-Key   Command
-------------------------------------
-‘t’   ‘eve-toggle-tag’
-‘b’   ‘eve-edit-broll’
-‘B’   ‘eve-toggle-broll-continue’
-‘i’   ‘eve-edit-speaker’
-‘r’   ‘eve-edit-start-end’
-
-
-File: eve.info,  Node: Fillers,  Next: Playback (1),  Prev: Metadata (1),  Up: Single-key bindings
-
-11.1.4 Fillers
---------------
-
-Key   Command
------------------------------
-‘f’   ‘eve-dwim-filler’
-‘F’   ‘eve-delete-fillers’
-
-
-File: eve.info,  Node: Playback (1),  Next: Structure and display,  Prev: Fillers,  Up: Single-key bindings
-
-11.1.5 Playback
----------------
-
-Key             Command
+Key           Command
 --------------------------------------------
-‘SPC’ / ‘RET’   ‘eve-play-segment’
-‘<left>’        ‘eve-seek-short-backward’
-‘<right>’       ‘eve-seek-short-forward’
-‘S-<left>’      ‘eve-seek-long-backward’
-‘S-<right>’     ‘eve-seek-long-forward’
-
-
-File: eve.info,  Node: Structure and display,  Prev: Playback (1),  Up: Single-key bindings
-
-11.1.6 Structure and display
-----------------------------
-
-Key             Command
------------------------------------------
-‘_’ / ‘C-RET’   ‘eve-toggle-separator’
-‘g’             ‘eve-reload’
-‘q’             ‘eve-dwim-quit’
-‘?’             ‘eve--show-help’
+‘?’           ‘eve--show-help’
+‘q’           ‘eve-dwim-quit’
+‘g’           ‘eve-reload’
+‘C-RET’       ‘eve-toggle-separator’
+‘_’           ‘eve-toggle-separator’
+‘S-<right>’   ‘eve-seek-long-forward’
+‘S-<left>’    ‘eve-seek-long-backward’
+‘<right>’     ‘eve-seek-short-forward’
+‘<left>’      ‘eve-seek-short-backward’
+‘RET’         ‘eve-play-segment’
+‘SPC’         ‘eve-play-segment’
+‘F’           ‘eve-delete-fillers’
+‘f’           ‘eve-dwim-filler’
+‘r’           ‘eve-edit-start-end’
+‘i’           ‘eve-edit-speaker’
+‘B’           ‘eve-toggle-broll-continue’
+‘b’           ‘eve-edit-broll’
+‘t’           ‘eve-toggle-tag’
+‘o’           ‘eve-insert-marker’
+‘e’           ‘eve-dwim-edit’
+‘C-r’         ‘eve-redo’
+‘u’           ‘eve-undo’
+‘)’           ‘eve-merge-with-next’
+‘m’           ‘eve-merge-with-next’
+‘s’           ‘eve-split-segment’
+‘D’           ‘eve-delete-segment’
+‘d’           ‘eve-delete-word’
+‘K’           ‘eve-move-segment-up’
+‘J’           ‘eve-move-segment-down’
+‘p’           ‘eve-previous-segment’
+‘n’           ‘eve-next-segment’
+‘k’           ‘eve-previous-segment’
+‘j’           ‘eve-next-segment’
 
 
 File: eve.info,  Node: C-c prefix bindings,  Next: Playback-mode overrides,  Prev: Single-key bindings,  Up: Key Bindings
@@ -1451,24 +1388,25 @@ File: eve.info,  Node: C-c prefix bindings,  Next: Playback-mode overrides,  Pre
 11.2 C-c prefix bindings
 ========================
 
-Key             Command
-------------------------------------------------
-‘C-c C-c’       ‘eve-compile’ (draft)
-‘C-u C-c C-c’   ‘eve-compile’ (final)
-‘C-c SPC’       ‘eve-play’ (source)
-‘C-u C-c SPC’   ‘eve-play’ (rendered)
-‘C-c C-p’       ‘eve-play-rendered’
-‘C-c C-s’       ‘eve-play-source’
-‘C-c C-v’       ‘eve-validate’
-‘C-c C-r’       ‘eve-reload’
-‘C-c C-o’       ‘eve-open-raw-json’
-‘C-c C-h’       ‘eve-hide-deleted-mode’
-‘C-c C-w’       ‘eve-toggle-words’
-‘C-c C-l’       ‘eve-ruler-mode’
-‘C-c C-t’       ‘eve-transcribe’
-‘C-c C-d’       ‘eve-delete-fillers’
-‘C-c C-b’       ‘eve-edit-broll-placeholders’
-‘C-c C-n’       ‘eve-edit-notes’
+Key         Command
+--------------------------------------------
+‘C-c C-d’   ‘eve-delete-fillers’
+‘C-c C-n’   ‘eve-edit-notes’
+‘C-c C-b’   ‘eve-edit-broll-placeholders’
+‘C-c SPC’   ‘eve-play’
+‘C-c C-s’   ‘eve-play-source’
+‘C-c C-p’   ‘eve-play-rendered’
+‘C-c C-t’   ‘eve-transcribe’
+‘C-c C-l’   ‘eve-ruler-mode’
+‘C-c C-w’   ‘eve-toggle-words’
+‘C-c C-h’   ‘eve-hide-deleted-mode’
+‘C-c C-o’   ‘eve-open-raw-json’
+‘C-c C-r’   ‘eve-reload’
+‘C-c C-v’   ‘eve-validate’
+‘C-c C-c’   ‘eve-compile’
+
+   Prefix-arg variants: ‘C-u C-c C-c’ compiles at final quality; ‘C-u
+C-c SPC’ plays the rendered output instead of the source.
 
 
 File: eve.info,  Node: Playback-mode overrides,  Next: The hydra cheatsheet,  Prev: C-c prefix bindings,  Up: Key Bindings
@@ -1476,9 +1414,16 @@ File: eve.info,  Node: Playback-mode overrides,  Next: The hydra cheatsheet,  Pr
 11.3 Playback-mode overrides
 ============================
 
-During active playback, ‘SPC’ is remapped to
-‘eve-playback-pause-resume’.  All other bindings remain active; moving
-point seeks mpv.
+During active playback, these bindings override the normal keymap:
+
+Key           Command
+--------------------------------------------
+‘q’           ‘eve-stop-playback’
+‘S-<right>’   ‘eve-seek-long-forward’
+‘S-<left>’    ‘eve-seek-long-backward’
+‘<right>’     ‘eve-seek-short-forward’
+‘<left>’      ‘eve-seek-short-backward’
+‘SPC’         ‘eve-playback-pause-resume’
 
 
 File: eve.info,  Node: The hydra cheatsheet,  Prev: Playback-mode overrides,  Up: Key Bindings
@@ -1503,36 +1448,39 @@ File: eve.info,  Node: Configuration Reference,  Next: Architecture,  Prev: Key 
 All eve variables belong to the ‘eve’ customization group.  Access it
 with ‘M-x customize-group RET eve RET’.
 
-Variable                           Default                  Description
---------------------------------------------------------------------------------------------------------------------------------------------
-‘eve-auto-render’                  ‘t’                      Speculatively pre-render changed segments after each save.
-‘eve-auto-render-idle-seconds’     ‘2.0’                    Idle delay before the speculative render fires.
-‘eve-cli-program’                  ‘"eve"’                  Name or path of the eve CLI executable.
-‘eve-compile-cache’                ‘t’                      Use the ‘.eve-cache/’ segment cache.
-‘eve-compile-confirm-threshold’    ‘30’                     Estimated seconds above which a confirmation prompt appears before rendering.
-‘eve-compile-jobs’                 ‘0’                      Parallel encode workers; 0 = auto-detect CPU count.
-‘eve-compile-quality’              ‘"draft"’                ‘"draft"’ for fast preview, ‘"final"’ for delivery.
-‘eve-compile-scale’                ‘1.0’                    Resolution scale factor for draft renders (e.g.  ‘0.5’ = half res).
-‘eve-filler-phrases’               ‘("um" "uh")’            Words and phrases tagged as fillers.
-‘eve-filler-regex’                 ‘(list ...)’             Legacy regex patterns for filler matching.
-‘eve-media-extensions’             ‘("mp4" "mov" ...)’      File types scanned by ‘eve-transcribe’.
-‘eve-play-after-compile’           ‘nil’                    Play the output automatically after successful compilation.
-‘eve-play-args’                    ‘(list "--quiet" ...)’   Extra arguments passed to the player.
-‘eve-play-program’                 ‘"mpv"’                  Player binary.
-‘eve-preserve-gaps-max’            ‘2.0’                    Maximum gap (seconds) preserved between segments during compilation.
-‘eve-ruler-interval’               ‘30.0’                   Seconds between timestamp ruler markers.
-‘eve-seek-long-backward-seconds’   ‘30’                     Long backward seek step.
-‘eve-seek-long-forward-seconds’    ‘10’                     Long forward seek step.
-‘eve-seek-short-seconds’           ‘5’                      Short seek step.
-‘eve-show-words-by-default’        ‘nil’                    Show per-word timing annotations when a buffer opens.
-‘eve-transcribe-backend’           ‘"faster-whisper"’       Transcription backend.
-‘eve-transcribe-model’             ‘"medium.en"’            Model passed to the backend.
-‘eve-transcribe-tag-fillers’       ‘t’                      Tag filler words during transcription.
-‘eve-transcribe-verbatim’          ‘t’                      Pass ‘--verbatim’ to the transcription backend.
-‘eve-validation-on-save’           ‘t’                      Validate the manifest on every save.
-‘eve-validation-time-tolerance’    ‘0.1’                    Timing slack tolerated during validation (seconds).
-‘eve-video-layout’                 ‘nil’                    Arrange the screen automatically on the first play command.
-‘eve-video-layout-ratio’           ‘0.6’                    Fraction of screen height reserved for the video window.
+   The table below is auto-generated from the defcustom forms in
+‘eve.el’ by ‘scripts/gen-docs’.
+
+Variable                           Default                     Description
+-----------------------------------------------------------------------------------------------------------------------------------------------
+‘eve-auto-render’                  ‘t’                         Whether to speculatively pre-render changed segments on save.
+‘eve-auto-render-idle-seconds’     ‘2.0’                       Idle time in seconds before a background speculative render fires after save.
+‘eve-cli-program’                  ‘"eve"’                     Executable used for 'eve' CLI commands.
+‘eve-compile-cache’                ‘t’                         Whether to use the persistent segment cache during compilation.
+‘eve-compile-confirm-threshold’    ‘30’                        Seconds above which 'eve-compile' asks before starting.
+‘eve-compile-jobs’                 ‘0’                         Number of segments to encode in parallel, passed to 'eve text-edit -jobs'.
+‘eve-compile-quality’              ‘"draft"’                   Default encoding quality passed to 'eve text-edit -quality'.
+‘eve-compile-scale’                ‘1.0’                       Resolution scale factor passed to 'eve text-edit -scale'.
+‘eve-filler-phrases’               ‘("um" "uh")’               Filler words/phrases to tag in transcripts.
+‘eve-filler-regex’                 ‘("\\`um\\'" "\\`uh\\'")’   Regexps matched against word text when tagging filler words.
+‘eve-media-extensions’             ‘(...)’                     Supported media extensions for transcription inputs.
+‘eve-play-after-compile’           ‘nil’                       Whether to play the rendered video automatically after compilation.
+‘eve-play-args’                    ‘(...)’                     Additional arguments passed to 'eve-play-program'.
+‘eve-play-program’                 ‘"mpv"’                     Executable used for segment playback.
+‘eve-preserve-gaps-max’            ‘2.0’                       Maximum gap duration preserved during 'eve text-edit' compilation.
+‘eve-ruler-interval’               ‘30.0’                      Interval in seconds between right-margin timestamp ruler markers.
+‘eve-seek-long-backward-seconds’   ‘30’                        Seconds used by long backward seek commands.
+‘eve-seek-long-forward-seconds’    ‘10’                        Seconds used by long forward seek commands.
+‘eve-seek-short-seconds’           ‘5’                         Seconds used by short seek commands.
+‘eve-show-words-by-default’        ‘nil’                       If non-nil, show per-word timings when rendering segments.
+‘eve-transcribe-backend’           ‘"faster-whisper"’          Backend passed to 'eve transcribe'.
+‘eve-transcribe-model’             ‘"medium.en"’               Model passed to 'eve transcribe'.
+‘eve-transcribe-tag-fillers’       ‘t’                         Whether 'eve transcribe' should tag filler words.
+‘eve-transcribe-verbatim’          ‘t’                         Whether 'eve transcribe' should preserve verbatim output.
+‘eve-validation-on-save’           ‘t’                         Whether TJM buffers should be validated automatically on save.
+‘eve-validation-time-tolerance’    ‘0.1’                       Permitted slack (in seconds) when comparing segment and word timings.
+‘eve-video-layout’                 ‘nil’                       When non-nil, arrange the screen for video editing on the first play command.
+‘eve-video-layout-ratio’           ‘0.6’                       Fraction of screen height reserved for the video window (0.0–1.0).
 
 
 File: eve.info,  Node: Architecture,  Next: Development,  Prev: Configuration Reference,  Up: Top
@@ -1699,95 +1647,89 @@ or visit the repository at <https://github.com/behaghel/eve.el>.
 
 Tag Table:
 Node: Top205
-Node: Introduction3508
-Node: The Big Idea3814
-Node: The Core Workflow4586
-Node: About This Manual5687
-Node: Getting Started6086
-Node: Installation6264
-Node: Requirements6497
-Node: Installing the CLI6822
-Node: Installing the Emacs package7477
-Node: straightel7735
-Node: Manual7953
-Node: Accessing the manual in Emacs8289
-Node: Quick Start8742
-Node: The TJM Manifest10047
-Node: Structure10279
-Node: How eve-mode renders a manifest11401
-Node: The raw JSON companion buffer12033
-Node: Transcription12467
-Node: Starting transcription from Emacs12703
-Node: Backends13335
-Node: Configuration14308
-Node: Installing optional backends15111
-Node: Editing15569
-Node: Navigation15862
-Node: Deletion and restoration16239
-Node: Splitting and merging16878
-Node: Reordering17370
-Node: Markers and sections17704
-Node: Inline editing18206
-Node: Metadata18537
-Node: Undo and redo19111
-Node: Validation19438
-Node: Filler Words19764
-Node: Concept19976
-Node: Configuration (1)20378
-Node: Commands20971
-Node: Auto-tagging on file open21911
-Node: B-Roll22260
-Node: Concept (1)22566
-Node: Editing b-roll metadata23222
-Node: Compositing modes in detail24991
-Node: Replace mode25216
-Node: Pip mode25664
-Node: Audio policy26583
-Node: JSON templates27062
-Node: Overlay fields28355
-Node: Concrete example lower-third title card29758
-Node: Placeholders without templates31643
-Node: Continuation chains32066
-Node: Compilation and Rendering33089
-Node: Two modes draft and final33441
-Node: Under the hood33919
-Node: Pre-flight validation35022
-Node: Dry-run analysis35759
-Node: Checkpoint and resume36285
-Node: Progressive output36766
-Node: Configuration reference37168
-Node: CLI reference38512
-Node: Playback39641
-Node: Source playback39888
-Node: Rendered playback40349
-Node: Playback tracking and segment highlighting40847
-Node: Controls41274
-Node: Video layout42255
-Node: Display43791
-Node: Timestamp ruler43977
-Node: Hiding deleted segments44574
-Node: Word-level display45008
-Node: Key Bindings45822
-Node: Single-key bindings46063
-Node: Navigation (1)46401
-Node: Editing (1)46761
-Node: Metadata (1)47217
-Node: Fillers47575
-Node: Playback (1)47820
-Node: Structure and display48277
-Node: C-c prefix bindings48667
-Node: Playback-mode overrides49618
-Node: The hydra cheatsheet49945
-Node: Configuration Reference50347
-Node: Architecture54007
-Node: Two-layer boundary54194
-Node: Shared contract54998
-Node: Development55470
-Node: devenv commands55695
-Node: Running tests56891
-Node: Project layout57328
-Node: Dependencies58006
-Node: Appendix A TJM v11 Specification58321
+Node: Introduction3342
+Node: The Big Idea3648
+Node: The Core Workflow4420
+Node: About This Manual5521
+Node: Getting Started5920
+Node: Installation6098
+Node: Requirements6331
+Node: Installing the CLI6656
+Node: Installing the Emacs package7311
+Node: straightel7569
+Node: Manual7787
+Node: Accessing the manual in Emacs8123
+Node: Quick Start8576
+Node: The TJM Manifest9881
+Node: Structure10113
+Node: How eve-mode renders a manifest11235
+Node: The raw JSON companion buffer11867
+Node: Transcription12301
+Node: Starting transcription from Emacs12537
+Node: Backends13169
+Node: Configuration14142
+Node: Installing optional backends14945
+Node: Editing15403
+Node: Navigation15696
+Node: Deletion and restoration16073
+Node: Splitting and merging16712
+Node: Reordering17204
+Node: Markers and sections17538
+Node: Inline editing18040
+Node: Metadata18371
+Node: Undo and redo18945
+Node: Validation19272
+Node: Filler Words19598
+Node: Concept19810
+Node: Configuration (1)20212
+Node: Commands20805
+Node: Auto-tagging on file open21745
+Node: B-Roll22094
+Node: Concept (1)22400
+Node: Editing b-roll metadata23056
+Node: Compositing modes in detail24825
+Node: Replace mode25050
+Node: Pip mode25498
+Node: Audio policy26417
+Node: JSON templates26896
+Node: Overlay fields28189
+Node: Concrete example lower-third title card29592
+Node: Placeholders without templates31477
+Node: Continuation chains31900
+Node: Compilation and Rendering32923
+Node: Two modes draft and final33275
+Node: Under the hood33753
+Node: Pre-flight validation34856
+Node: Dry-run analysis35593
+Node: Checkpoint and resume36119
+Node: Progressive output36600
+Node: Configuration reference37002
+Node: CLI reference38346
+Node: Playback39475
+Node: Source playback39722
+Node: Rendered playback40183
+Node: Playback tracking and segment highlighting40681
+Node: Controls41108
+Node: Video layout42089
+Node: Display43625
+Node: Timestamp ruler43811
+Node: Hiding deleted segments44408
+Node: Word-level display44842
+Node: Key Bindings45656
+Node: Single-key bindings45897
+Node: C-c prefix bindings47615
+Node: Playback-mode overrides48530
+Node: The hydra cheatsheet49131
+Node: Configuration Reference49533
+Node: Architecture53708
+Node: Two-layer boundary53895
+Node: Shared contract54699
+Node: Development55171
+Node: devenv commands55396
+Node: Running tests56592
+Node: Project layout57029
+Node: Dependencies57707
+Node: Appendix A TJM v11 Specification58022
 
 End Tag Table
 

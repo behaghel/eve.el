@@ -862,91 +862,23 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 
 ** Single-key bindings
 
-These bindings are active in eve-mode.
+These bindings are active in eve-mode.  The table below is auto-generated
+from the keymap by =scripts/gen-docs=.
 
-*** Navigation
-
-| Key | Command |
-|-----+---------|
-| =j= / =n= | =eve-next-segment= |
-| =k= / =p= | =eve-previous-segment= |
-| =J= | =eve-move-segment-down= |
-| =K= | =eve-move-segment-up= |
-
-*** Editing
-
-| Key | Command |
-|-----+---------|
-| =d= | =eve-delete-word= |
-| =D= | =eve-delete-segment= |
-| =s= | =eve-split-segment= |
-| =m= | =eve-merge-with-next= |
-| =u= | =eve-undo= |
-| =C-r= | =eve-redo= |
-| =e= | =eve-dwim-edit= |
-| =o= | =eve-insert-marker= |
-
-*** Metadata
-
-| Key | Command |
-|-----+---------|
-| =t= | =eve-toggle-tag= |
-| =b= | =eve-edit-broll= |
-| =B= | =eve-toggle-broll-continue= |
-| =i= | =eve-edit-speaker= |
-| =r= | =eve-edit-start-end= |
-
-*** Fillers
-
-| Key | Command |
-|-----+---------|
-| =f= | =eve-dwim-filler= |
-| =F= | =eve-delete-fillers= |
-
-*** Playback
-
-| Key | Command |
-|-----+---------|
-| =SPC= / =RET= | =eve-play-segment= |
-| =<left>= | =eve-seek-short-backward= |
-| =<right>= | =eve-seek-short-forward= |
-| =S-<left>= | =eve-seek-long-backward= |
-| =S-<right>= | =eve-seek-long-forward= |
-
-*** Structure and display
-
-| Key | Command |
-|-----+---------|
-| =_= / =C-RET= | =eve-toggle-separator= |
-| =g= | =eve-reload= |
-| =q= | =eve-dwim-quit= |
-| =?= | =eve--show-help= |
+#+INCLUDE: "generated/keybindings-single.org"
 
 ** C-c prefix bindings
 
-| Key | Command |
-|-----+---------|
-| =C-c C-c= | =eve-compile= (draft) |
-| =C-u C-c C-c= | =eve-compile= (final) |
-| =C-c SPC= | =eve-play= (source) |
-| =C-u C-c SPC= | =eve-play= (rendered) |
-| =C-c C-p= | =eve-play-rendered= |
-| =C-c C-s= | =eve-play-source= |
-| =C-c C-v= | =eve-validate= |
-| =C-c C-r= | =eve-reload= |
-| =C-c C-o= | =eve-open-raw-json= |
-| =C-c C-h= | =eve-hide-deleted-mode= |
-| =C-c C-w= | =eve-toggle-words= |
-| =C-c C-l= | =eve-ruler-mode= |
-| =C-c C-t= | =eve-transcribe= |
-| =C-c C-d= | =eve-delete-fillers= |
-| =C-c C-b= | =eve-edit-broll-placeholders= |
-| =C-c C-n= | =eve-edit-notes= |
+#+INCLUDE: "generated/keybindings-cc.org"
+
+Prefix-arg variants: =C-u C-c C-c= compiles at final quality; =C-u C-c SPC=
+plays the rendered output instead of the source.
 
 ** Playback-mode overrides
 
-During active playback, =SPC= is remapped to =eve-playback-pause-resume=.
-All other bindings remain active; moving point seeks mpv.
+During active playback, these bindings override the normal keymap:
+
+#+INCLUDE: "generated/keybindings-playback.org"
 
 ** The hydra cheatsheet
 
@@ -968,36 +900,10 @@ To install hydra:
 All eve variables belong to the =eve= customization group.  Access it with
 =M-x customize-group RET eve RET=.
 
-| Variable | Default | Description |
-|----------+---------+-------------|
-| =eve-auto-render= | =t= | Speculatively pre-render changed segments after each save. |
-| =eve-auto-render-idle-seconds= | =2.0= | Idle delay before the speculative render fires. |
-| =eve-cli-program= | ="eve"= | Name or path of the eve CLI executable. |
-| =eve-compile-cache= | =t= | Use the =.eve-cache/= segment cache. |
-| =eve-compile-confirm-threshold= | =30= | Estimated seconds above which a confirmation prompt appears before rendering. |
-| =eve-compile-jobs= | =0= | Parallel encode workers; 0 = auto-detect CPU count. |
-| =eve-compile-quality= | ="draft"= | ="draft"= for fast preview, ="final"= for delivery. |
-| =eve-compile-scale= | =1.0= | Resolution scale factor for draft renders (e.g. =0.5= = half res). |
-| =eve-filler-phrases= | =("um" "uh")= | Words and phrases tagged as fillers. |
-| =eve-filler-regex= | =(list ...)= | Legacy regex patterns for filler matching. |
-| =eve-media-extensions= | =("mp4" "mov" ...)= | File types scanned by =eve-transcribe=. |
-| =eve-play-after-compile= | =nil= | Play the output automatically after successful compilation. |
-| =eve-play-args= | =(list "--quiet" ...)= | Extra arguments passed to the player. |
-| =eve-play-program= | ="mpv"= | Player binary. |
-| =eve-preserve-gaps-max= | =2.0= | Maximum gap (seconds) preserved between segments during compilation. |
-| =eve-ruler-interval= | =30.0= | Seconds between timestamp ruler markers. |
-| =eve-seek-long-backward-seconds= | =30= | Long backward seek step. |
-| =eve-seek-long-forward-seconds= | =10= | Long forward seek step. |
-| =eve-seek-short-seconds= | =5= | Short seek step. |
-| =eve-show-words-by-default= | =nil= | Show per-word timing annotations when a buffer opens. |
-| =eve-transcribe-backend= | ="faster-whisper"= | Transcription backend. |
-| =eve-transcribe-model= | ="medium.en"= | Model passed to the backend. |
-| =eve-transcribe-tag-fillers= | =t= | Tag filler words during transcription. |
-| =eve-transcribe-verbatim= | =t= | Pass =--verbatim= to the transcription backend. |
-| =eve-validation-on-save= | =t= | Validate the manifest on every save. |
-| =eve-validation-time-tolerance= | =0.1= | Timing slack tolerated during validation (seconds). |
-| =eve-video-layout= | =nil= | Arrange the screen automatically on the first play command. |
-| =eve-video-layout-ratio= | =0.6= | Fraction of screen height reserved for the video window. |
+The table below is auto-generated from the defcustom forms in =eve.el= by
+=scripts/gen-docs=.
+
+#+INCLUDE: "generated/config-reference.org"
 
 * Architecture
 :PROPERTIES:

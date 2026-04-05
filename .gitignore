@@ -46,3 +46,6 @@ devenv.local.yaml
 
 # Eve segment render cache
 .eve-cache/
+
+# Generated doc fragments (rebuilt by scripts/gen-docs)
+docs/generated/

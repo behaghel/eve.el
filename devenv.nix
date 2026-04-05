@@ -112,11 +112,11 @@ Project
 
     docs.exec = ''
       cd "$DEVENV_ROOT"
+      ./scripts/gen-docs
       emacs --batch -l ox-texinfo --visit docs/eve.org \
         --funcall org-texinfo-export-to-texinfo
       makeinfo --no-split docs/eve.texi -o docs/eve.info
       install-info --dir=docs/dir docs/eve.info
-      echo "docs: generated docs/eve.texi, docs/eve.info, docs/dir"
     '';
 
     format.exec = ''
@@ -124,11 +124,18 @@ Project
       format-py
     '';
 
+    check-doc-drift.exec = ''
+      cd "$DEVENV_ROOT"
+      ./scripts/gen-docs
+      ./scripts/check-doc-drift
+    '';
+
     lint.exec = ''
       parse
       checkdoc
       load-check
       compile
+      check-doc-drift
       lint-py
     '';
 

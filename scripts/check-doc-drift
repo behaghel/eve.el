@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Verify that every user-facing eve defcustom and keymap-bound command
+# is mentioned somewhere in docs/eve.org (including #+INCLUDEd fragments).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+manual="$repo_root/docs/eve.org"
+generated="$repo_root/docs/generated"
+
+if [ ! -f "$manual" ]; then
+  echo "check-doc-drift: docs/eve.org not found" >&2
+  exit 1
+fi
+
+all_docs=$(cat "$manual" "$generated"/*.org 2>/dev/null)
+exit_code=0
+
+emacs --batch -Q -L "$repo_root" -l eve.el --eval "
+(progn
+  (let ((missing nil))
+
+    ;; Check defcustoms
+    (mapatoms
+     (lambda (sym)
+       (when (and (custom-variable-p sym)
+                  (string-prefix-p \"eve-\" (symbol-name sym))
+                  (not (string-prefix-p \"eve--\" (symbol-name sym)))
+                  (not (string-suffix-p \"-hook\" (symbol-name sym))))
+         (push (symbol-name sym) missing))))
+
+    ;; Check keymap-bound interactive commands
+    (map-keymap
+     (lambda (_event binding)
+       (when (and (symbolp binding)
+                  (string-prefix-p \"eve-\" (symbol-name binding))
+                  (commandp binding))
+         (push (symbol-name binding) missing))
+       (when (keymapp binding)
+         (map-keymap
+          (lambda (_sub-event sub-binding)
+            (when (and (symbolp sub-binding)
+                       (string-prefix-p \"eve-\" (symbol-name sub-binding))
+                       (commandp sub-binding))
+              (push (symbol-name sub-binding) missing)))
+          binding)))
+     eve-mode-map)
+
+    ;; Deduplicate
+    (setq missing (delete-dups missing))
+    (setq missing (sort missing #'string<))
+
+    ;; Print all symbols for the shell to check
+    (dolist (name missing)
+      (princ (format \"%s\n\" name)))))
+" 2>/dev/null | while IFS= read -r symbol; do
+  if ! echo "$all_docs" | grep -qF "$symbol"; then
+    echo "check-doc-drift: '$symbol' not documented in docs/eve.org" >&2
+    exit_code=1
+  fi
+done
+
+if [ "$exit_code" -ne 0 ]; then
+  echo "check-doc-drift: FAIL — undocumented symbols found (see above)" >&2
+  exit 1
+fi
+
+echo "check-doc-drift: all symbols documented"

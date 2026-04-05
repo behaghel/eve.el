@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Extract defcustoms and keybindings from eve.el into Org table fragments
+# for #+INCLUDE into docs/eve.org.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+out_dir="$repo_root/docs/generated"
+mkdir -p "$out_dir"
+
+emacs --batch -Q -L "$repo_root" -l eve.el --eval "
+(progn
+  ;; ── Configuration Reference ──────────────────────────────────────
+  (with-temp-file \"$out_dir/config-reference.org\"
+    (insert \"| Variable | Default | Description |\\n\")
+    (insert \"|----------+---------+-------------|\\n\")
+    (let ((customs nil))
+      (mapatoms
+       (lambda (sym)
+         (when (and (custom-variable-p sym)
+                    (string-prefix-p \"eve-\" (symbol-name sym))
+                    (not (string-prefix-p \"eve--\" (symbol-name sym)))
+                    (not (string-suffix-p \"-hook\" (symbol-name sym))))
+           (push sym customs))))
+      (setq customs (sort customs (lambda (a b) (string< (symbol-name a) (symbol-name b)))))
+      (dolist (sym customs)
+        (let* ((name (symbol-name sym))
+               (val (default-value sym))
+               (default (cond
+                         ((eq val t) \"=t=\")
+                         ((null val) \"=nil=\")
+                         ((stringp val) (format \"=\\\"%s\\\"=\" val))
+                         ((numberp val) (format \"=%s=\" val))
+                         ((and (listp val) (< (length (format \"%S\" val)) 30))
+                          (format \"=%S=\" val))
+                         (t \"=(...)=\")))
+               (doc (or (get sym 'variable-documentation) \"\"))
+               (first-line (car (split-string doc \"\\n\"))))
+          (insert (format \"| =%s= | %s | %s |\\n\" name default first-line))))))
+
+  ;; ── Single-key bindings ──────────────────────────────────────────
+  (with-temp-file \"$out_dir/keybindings-single.org\"
+    (insert \"| Key | Command |\\n\")
+    (insert \"|-----+---------|\\n\")
+    (map-keymap
+     (lambda (event binding)
+       (when (and (symbolp binding)
+                  (not (keymapp binding))
+                  (string-prefix-p \"eve-\" (symbol-name binding)))
+         (let ((key (key-description (vector event))))
+           (unless (or (string-prefix-p \"C-c\" key)
+                       (string= key \"|\"))
+             (insert (format \"| =%s= | =%s= |\\n\" key (symbol-name binding)))))))
+     eve-mode-map))
+
+  ;; ── C-c prefix bindings ──────────────────────────────────────────
+  (with-temp-file \"$out_dir/keybindings-cc.org\"
+    (insert \"| Key | Command |\\n\")
+    (insert \"|-----+---------|\\n\")
+    (map-keymap
+     (lambda (event binding)
+       (when (keymapp binding)
+         (map-keymap
+          (lambda (sub-event sub-binding)
+            (when (and (symbolp sub-binding)
+                       (not (keymapp sub-binding))
+                       (string-prefix-p \"eve-\" (symbol-name sub-binding)))
+              (let ((key (key-description (vector event sub-event))))
+                (insert (format \"| =%s= | =%s= |\\n\" key (symbol-name sub-binding))))))
+          binding)))
+     eve-mode-map))
+
+  ;; ── Playback-mode bindings ───────────────────────────────────────
+  (with-temp-file \"$out_dir/keybindings-playback.org\"
+    (insert \"| Key | Command |\\n\")
+    (insert \"|-----+---------|\\n\")
+    (map-keymap
+     (lambda (event binding)
+       (when (and (symbolp binding)
+                  (not (keymapp binding))
+                  (not (eq binding 'undefined)))
+         (let ((key (key-description (vector event))))
+           (insert (format \"| =%s= | =%s= |\\n\" key (symbol-name binding))))))
+     eve-playback-mode-map))
+
+  (message \"gen-docs: wrote %s\" \"$out_dir\"))
+" 2>&1

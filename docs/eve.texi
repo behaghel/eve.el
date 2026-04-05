@@ -151,15 +151,6 @@ Key Bindings
 * Playback-mode overrides::
 * The hydra cheatsheet::
 
-Single-key bindings
-
-* Navigation: Navigation (1). 
-* Editing: Editing (1). 
-* Metadata: Metadata (1). 
-* Fillers::
-* Playback: Playback (1). 
-* Structure and display::
-
 Architecture
 
 * Two-layer boundary::
@@ -1425,166 +1416,140 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 @node Single-key bindings
 @section Single-key bindings
 
-These bindings are active in eve-mode.
+These bindings are active in eve-mode.  The table below is auto-generated
+from the keymap by @samp{scripts/gen-docs}.
 
-@menu
-* Navigation: Navigation (1). 
-* Editing: Editing (1). 
-* Metadata: Metadata (1). 
-* Fillers::
-* Playback: Playback (1). 
-* Structure and display::
-@end menu
-
-@node Navigation (1)
-@subsection Navigation
-
-@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Key
 @tab Command
-@item @samp{j} / @samp{n}
-@tab @samp{eve-next-segment}
-@item @samp{k} / @samp{p}
-@tab @samp{eve-previous-segment}
-@item @samp{J}
-@tab @samp{eve-move-segment-down}
-@item @samp{K}
-@tab @samp{eve-move-segment-up}
-@end multitable
-
-@node Editing (1)
-@subsection Editing
-
-@multitable {aaaaa} {aaaaaaaaaaaaaaaaaaaaa}
-@headitem Key
-@tab Command
-@item @samp{d}
-@tab @samp{eve-delete-word}
-@item @samp{D}
-@tab @samp{eve-delete-segment}
-@item @samp{s}
-@tab @samp{eve-split-segment}
-@item @samp{m}
-@tab @samp{eve-merge-with-next}
-@item @samp{u}
-@tab @samp{eve-undo}
-@item @samp{C-r}
-@tab @samp{eve-redo}
-@item @samp{e}
-@tab @samp{eve-dwim-edit}
-@item @samp{o}
-@tab @samp{eve-insert-marker}
-@end multitable
-
-@node Metadata (1)
-@subsection Metadata
-
-@multitable {aaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaa}
-@headitem Key
-@tab Command
-@item @samp{t}
-@tab @samp{eve-toggle-tag}
-@item @samp{b}
-@tab @samp{eve-edit-broll}
-@item @samp{B}
-@tab @samp{eve-toggle-broll-continue}
-@item @samp{i}
-@tab @samp{eve-edit-speaker}
-@item @samp{r}
-@tab @samp{eve-edit-start-end}
-@end multitable
-
-@node Fillers
-@subsection Fillers
-
-@multitable {aaa} {aaaaaaaaaaaaaaaaaaaa}
-@headitem Key
-@tab Command
-@item @samp{f}
-@tab @samp{eve-dwim-filler}
-@item @samp{F}
-@tab @samp{eve-delete-fillers}
-@end multitable
-
-@node Playback (1)
-@subsection Playback
-
-@multitable {aaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa}
-@headitem Key
-@tab Command
-@item @samp{SPC} / @samp{RET}
-@tab @samp{eve-play-segment}
-@item @samp{<left>}
-@tab @samp{eve-seek-short-backward}
-@item @samp{<right>}
-@tab @samp{eve-seek-short-forward}
-@item @samp{S-<left>}
-@tab @samp{eve-seek-long-backward}
-@item @samp{S-<right>}
-@tab @samp{eve-seek-long-forward}
-@end multitable
-
-@node Structure and display
-@subsection Structure and display
-
-@multitable {aaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaa}
-@headitem Key
-@tab Command
-@item @samp{_} / @samp{C-RET}
-@tab @samp{eve-toggle-separator}
-@item @samp{g}
-@tab @samp{eve-reload}
-@item @samp{q}
-@tab @samp{eve-dwim-quit}
 @item @samp{?}
 @tab @samp{eve--show-help}
+@item @samp{q}
+@tab @samp{eve-dwim-quit}
+@item @samp{g}
+@tab @samp{eve-reload}
+@item @samp{C-RET}
+@tab @samp{eve-toggle-separator}
+@item @samp{_}
+@tab @samp{eve-toggle-separator}
+@item @samp{S-<right>}
+@tab @samp{eve-seek-long-forward}
+@item @samp{S-<left>}
+@tab @samp{eve-seek-long-backward}
+@item @samp{<right>}
+@tab @samp{eve-seek-short-forward}
+@item @samp{<left>}
+@tab @samp{eve-seek-short-backward}
+@item @samp{RET}
+@tab @samp{eve-play-segment}
+@item @samp{SPC}
+@tab @samp{eve-play-segment}
+@item @samp{F}
+@tab @samp{eve-delete-fillers}
+@item @samp{f}
+@tab @samp{eve-dwim-filler}
+@item @samp{r}
+@tab @samp{eve-edit-start-end}
+@item @samp{i}
+@tab @samp{eve-edit-speaker}
+@item @samp{B}
+@tab @samp{eve-toggle-broll-continue}
+@item @samp{b}
+@tab @samp{eve-edit-broll}
+@item @samp{t}
+@tab @samp{eve-toggle-tag}
+@item @samp{o}
+@tab @samp{eve-insert-marker}
+@item @samp{e}
+@tab @samp{eve-dwim-edit}
+@item @samp{C-r}
+@tab @samp{eve-redo}
+@item @samp{u}
+@tab @samp{eve-undo}
+@item @samp{)}
+@tab @samp{eve-merge-with-next}
+@item @samp{m}
+@tab @samp{eve-merge-with-next}
+@item @samp{s}
+@tab @samp{eve-split-segment}
+@item @samp{D}
+@tab @samp{eve-delete-segment}
+@item @samp{d}
+@tab @samp{eve-delete-word}
+@item @samp{K}
+@tab @samp{eve-move-segment-up}
+@item @samp{J}
+@tab @samp{eve-move-segment-down}
+@item @samp{p}
+@tab @samp{eve-previous-segment}
+@item @samp{n}
+@tab @samp{eve-next-segment}
+@item @samp{k}
+@tab @samp{eve-previous-segment}
+@item @samp{j}
+@tab @samp{eve-next-segment}
 @end multitable
 
 @node C-c prefix bindings
 @section C-c prefix bindings
 
-@multitable {aaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Key
 @tab Command
-@item @samp{C-c C-c}
-@tab @samp{eve-compile} (draft)
-@item @samp{C-u C-c C-c}
-@tab @samp{eve-compile} (final)
-@item @samp{C-c SPC}
-@tab @samp{eve-play} (source)
-@item @samp{C-u C-c SPC}
-@tab @samp{eve-play} (rendered)
-@item @samp{C-c C-p}
-@tab @samp{eve-play-rendered}
-@item @samp{C-c C-s}
-@tab @samp{eve-play-source}
-@item @samp{C-c C-v}
-@tab @samp{eve-validate}
-@item @samp{C-c C-r}
-@tab @samp{eve-reload}
-@item @samp{C-c C-o}
-@tab @samp{eve-open-raw-json}
-@item @samp{C-c C-h}
-@tab @samp{eve-hide-deleted-mode}
-@item @samp{C-c C-w}
-@tab @samp{eve-toggle-words}
-@item @samp{C-c C-l}
-@tab @samp{eve-ruler-mode}
-@item @samp{C-c C-t}
-@tab @samp{eve-transcribe}
 @item @samp{C-c C-d}
 @tab @samp{eve-delete-fillers}
-@item @samp{C-c C-b}
-@tab @samp{eve-edit-broll-placeholders}
 @item @samp{C-c C-n}
 @tab @samp{eve-edit-notes}
+@item @samp{C-c C-b}
+@tab @samp{eve-edit-broll-placeholders}
+@item @samp{C-c SPC}
+@tab @samp{eve-play}
+@item @samp{C-c C-s}
+@tab @samp{eve-play-source}
+@item @samp{C-c C-p}
+@tab @samp{eve-play-rendered}
+@item @samp{C-c C-t}
+@tab @samp{eve-transcribe}
+@item @samp{C-c C-l}
+@tab @samp{eve-ruler-mode}
+@item @samp{C-c C-w}
+@tab @samp{eve-toggle-words}
+@item @samp{C-c C-h}
+@tab @samp{eve-hide-deleted-mode}
+@item @samp{C-c C-o}
+@tab @samp{eve-open-raw-json}
+@item @samp{C-c C-r}
+@tab @samp{eve-reload}
+@item @samp{C-c C-v}
+@tab @samp{eve-validate}
+@item @samp{C-c C-c}
+@tab @samp{eve-compile}
 @end multitable
+
+Prefix-arg variants: @samp{C-u C-c C-c} compiles at final quality; @samp{C-u C-c SPC}
+plays the rendered output instead of the source.
 
 @node Playback-mode overrides
 @section Playback-mode overrides
 
-During active playback, @samp{SPC} is remapped to @samp{eve-playback-pause-resume}.
-All other bindings remain active; moving point seeks mpv.
+During active playback, these bindings override the normal keymap:
+
+@multitable {aaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{q}
+@tab @samp{eve-stop-playback}
+@item @samp{S-<right>}
+@tab @samp{eve-seek-long-forward}
+@item @samp{S-<left>}
+@tab @samp{eve-seek-long-backward}
+@item @samp{<right>}
+@tab @samp{eve-seek-short-forward}
+@item @samp{<left>}
+@tab @samp{eve-seek-short-backward}
+@item @samp{SPC}
+@tab @samp{eve-playback-pause-resume}
+@end multitable
 
 @node The hydra cheatsheet
 @section The hydra cheatsheet
@@ -1605,94 +1570,97 @@ To install hydra:
 All eve variables belong to the @samp{eve} customization group.  Access it with
 @samp{M-x customize-group RET eve RET}.
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+The table below is auto-generated from the defcustom forms in @samp{eve.el} by
+@samp{scripts/gen-docs}.
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
 @item @samp{eve-auto-render}
 @tab @samp{t}
-@tab Speculatively pre-render changed segments after each save.
+@tab Whether to speculatively pre-render changed segments on save.
 @item @samp{eve-auto-render-idle-seconds}
 @tab @samp{2.0}
-@tab Idle delay before the speculative render fires.
+@tab Idle time in seconds before a background speculative render fires after save.
 @item @samp{eve-cli-program}
 @tab @samp{"eve"}
-@tab Name or path of the eve CLI executable.
+@tab Executable used for `eve` CLI commands.
 @item @samp{eve-compile-cache}
 @tab @samp{t}
-@tab Use the @samp{.eve-cache/} segment cache.
+@tab Whether to use the persistent segment cache during compilation.
 @item @samp{eve-compile-confirm-threshold}
 @tab @samp{30}
-@tab Estimated seconds above which a confirmation prompt appears before rendering.
+@tab Seconds above which `eve-compile' asks before starting.
 @item @samp{eve-compile-jobs}
 @tab @samp{0}
-@tab Parallel encode workers; 0 = auto-detect CPU count.
+@tab Number of segments to encode in parallel, passed to `eve text-edit --jobs'.
 @item @samp{eve-compile-quality}
 @tab @samp{"draft"}
-@tab @samp{"draft"} for fast preview, @samp{"final"} for delivery.
+@tab Default encoding quality passed to `eve text-edit --quality'.
 @item @samp{eve-compile-scale}
 @tab @samp{1.0}
-@tab Resolution scale factor for draft renders (e.g. @samp{0.5} = half res).
+@tab Resolution scale factor passed to `eve text-edit --scale'.
 @item @samp{eve-filler-phrases}
 @tab @samp{("um" "uh")}
-@tab Words and phrases tagged as fillers.
+@tab Filler words/phrases to tag in transcripts.
 @item @samp{eve-filler-regex}
-@tab @samp{(list ...)}
-@tab Legacy regex patterns for filler matching.
+@tab @samp{("\\`um\\'" "\\`uh\\'")}
+@tab Regexps matched against word text when tagging filler words.
 @item @samp{eve-media-extensions}
-@tab @samp{("mp4" "mov" ...)}
-@tab File types scanned by @samp{eve-transcribe}.
+@tab @samp{(...)}
+@tab Supported media extensions for transcription inputs.
 @item @samp{eve-play-after-compile}
 @tab @samp{nil}
-@tab Play the output automatically after successful compilation.
+@tab Whether to play the rendered video automatically after compilation.
 @item @samp{eve-play-args}
-@tab @samp{(list "--quiet" ...)}
-@tab Extra arguments passed to the player.
+@tab @samp{(...)}
+@tab Additional arguments passed to `eve-play-program'.
 @item @samp{eve-play-program}
 @tab @samp{"mpv"}
-@tab Player binary.
+@tab Executable used for segment playback.
 @item @samp{eve-preserve-gaps-max}
 @tab @samp{2.0}
-@tab Maximum gap (seconds) preserved between segments during compilation.
+@tab Maximum gap duration preserved during `eve text-edit` compilation.
 @item @samp{eve-ruler-interval}
 @tab @samp{30.0}
-@tab Seconds between timestamp ruler markers.
+@tab Interval in seconds between right-margin timestamp ruler markers.
 @item @samp{eve-seek-long-backward-seconds}
 @tab @samp{30}
-@tab Long backward seek step.
+@tab Seconds used by long backward seek commands.
 @item @samp{eve-seek-long-forward-seconds}
 @tab @samp{10}
-@tab Long forward seek step.
+@tab Seconds used by long forward seek commands.
 @item @samp{eve-seek-short-seconds}
 @tab @samp{5}
-@tab Short seek step.
+@tab Seconds used by short seek commands.
 @item @samp{eve-show-words-by-default}
 @tab @samp{nil}
-@tab Show per-word timing annotations when a buffer opens.
+@tab If non-nil, show per-word timings when rendering segments.
 @item @samp{eve-transcribe-backend}
 @tab @samp{"faster-whisper"}
-@tab Transcription backend.
+@tab Backend passed to `eve transcribe'.
 @item @samp{eve-transcribe-model}
 @tab @samp{"medium.en"}
-@tab Model passed to the backend.
+@tab Model passed to `eve transcribe'.
 @item @samp{eve-transcribe-tag-fillers}
 @tab @samp{t}
-@tab Tag filler words during transcription.
+@tab Whether `eve transcribe' should tag filler words.
 @item @samp{eve-transcribe-verbatim}
 @tab @samp{t}
-@tab Pass @samp{--verbatim} to the transcription backend.
+@tab Whether `eve transcribe' should preserve verbatim output.
 @item @samp{eve-validation-on-save}
 @tab @samp{t}
-@tab Validate the manifest on every save.
+@tab Whether TJM buffers should be validated automatically on save.
 @item @samp{eve-validation-time-tolerance}
 @tab @samp{0.1}
-@tab Timing slack tolerated during validation (seconds).
+@tab Permitted slack (in seconds) when comparing segment and word timings.
 @item @samp{eve-video-layout}
 @tab @samp{nil}
-@tab Arrange the screen automatically on the first play command.
+@tab When non-nil, arrange the screen for video editing on the first play command.
 @item @samp{eve-video-layout-ratio}
 @tab @samp{0.6}
-@tab Fraction of screen height reserved for the video window.
+@tab Fraction of screen height reserved for the video window (0.0–1.0).
 @end multitable
 
 @node Architecture
