@@ -40,10 +40,6 @@ Project
 '';
   };
 
-  enterShell = ''
-    printf '%s\n' "$FLOW"
-  '';
-
   scripts = {
     format-elisp.exec = ''
       cd "$DEVENV_ROOT"
@@ -146,6 +142,26 @@ Project
       test
     '';
   };
+
+  enterShell = ''
+    printf '%s\n' "$FLOW"
+
+    # Install a pre-push hook that runs the CI pipeline locally.
+    hook="$DEVENV_ROOT/.git/hooks/pre-push"
+    if [ ! -f "$hook" ] || ! grep -q "eve-ci-pre-push" "$hook" 2>/dev/null; then
+      mkdir -p "$(dirname "$hook")"
+      cat > "$hook" << 'HOOK'
+#!/usr/bin/env bash
+# eve-ci-pre-push — installed by devenv enterShell
+set -euo pipefail
+echo "[pre-push] Running CI checks..."
+cd "$(git rev-parse --show-toplevel)"
+devenv shell -- ci
+HOOK
+      chmod +x "$hook"
+      echo "Installed pre-push hook at $hook"
+    fi
+  '';
 
   enterTest = ''
     ci

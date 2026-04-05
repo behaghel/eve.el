@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from argparse import Namespace
 from contextlib import redirect_stdout
@@ -759,6 +760,10 @@ def test_text_edit_prefers_nested_segment_edit_broll_with_legacy_fallback(
     )
 
 
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None,
+    reason="ffmpeg not available",
+)
 def test_text_edit_end_to_end_render(tmp_path: Path) -> None:
     sample = tmp_path / "sample.mp4"
     still = tmp_path / "still.png"
