@@ -195,10 +195,14 @@
       cat > "$hook" << 'HOOK'
 #!/usr/bin/env bash
 # eve-ci-pre-push — installed by devenv enterShell
-set -euo pipefail
 echo "[pre-push] Running CI checks..."
 cd "$(git rev-parse --show-toplevel)"
 devenv shell -- ci </dev/null
+exit_code=$?
+if [ "$exit_code" -ne 0 ]; then
+  echo "[pre-push] CI failed (exit $exit_code)" >&2
+fi
+exit "$exit_code"
 HOOK
       chmod +x "$hook"
     fi
