@@ -820,7 +820,7 @@ Return t to proceed, nil to abort."
   (when (and buffer-file-name (file-exists-p buffer-file-name))
     (let ((result (eve--validate-manifest-sync buffer-file-name)))
       (when result
-        (let ((valid (plist-get result :valid))
+        (let ((valid (eq t (plist-get result :valid)))
               (errors (plist-get result :errors))
               (warnings (plist-get result :warnings)))
           (dolist (w (if (arrayp warnings) (append warnings nil) warnings))
@@ -832,11 +832,13 @@ Return t to proceed, nil to abort."
               (cl-return-from eve--pre-flight-validate nil)))))
       (let ((analysis (eve--dry-run-analysis buffer-file-name quality)))
         (when analysis
-          (let* ((changed (or (plist-get analysis :changed_segments) 0))
-                 (total (or (plist-get analysis :total_segments) 0))
+          (let* ((raw-changed (plist-get analysis :changed_segments))
+                 (raw-total (plist-get analysis :total_segments))
+                 (changed (if (numberp raw-changed) raw-changed 0))
+                 (total (if (numberp raw-total) raw-total 0))
                  (eta (plist-get analysis :estimated_seconds))
                  (threshold eve-compile-confirm-threshold))
-            (when (and eta (> eta threshold))
+            (when (and (numberp eta) (> eta threshold))
               (unless (y-or-n-p
                        (format "Render %d/%d segments (~%ds).  Proceed? "
                                changed total (round eta)))
