@@ -365,6 +365,7 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     (define-key map (kbd "C-c C-s") #'eve-play-source)
     (define-key map (kbd "C-c C-b") #'eve-edit-broll-placeholders)
     (define-key map (kbd "C-c C-n") #'eve-edit-notes)
+    (define-key map (kbd "C-c C-d") #'eve-delete-fillers)
     map)
   "Keymap used in `eve-mode'.")
 
