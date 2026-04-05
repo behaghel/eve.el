@@ -5,7 +5,7 @@
 ;; Maintainer: Hubert J. Behaghel <behaghel@gmail.com>
 ;; URL: https://github.com/behaghel/eve.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (hydra "0.15.0"))
+;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: multimedia, tools, video
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -34,16 +34,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
-(unless (require 'hydra nil t)
-  (let ((deps-dir
-         (expand-file-name
-          ".elpa"
-          (file-name-directory
-           (or load-file-name buffer-file-name default-directory)))))
-    (when (file-directory-p deps-dir)
-      (let ((default-directory deps-dir))
-        (normal-top-level-add-subdirs-to-load-path)))
-    (require 'hydra)))
+(require 'hydra nil t)
 (require 'image)
 (require 'outline)
 
@@ -351,7 +342,7 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     ;; Display / buffer
     (define-key map "g" #'eve-reload)
     (define-key map "q" #'eve-dwim-quit)
-    (define-key map "?" #'eve-hydra/body)
+    (define-key map "?" #'eve--show-help)
     ;; Global C-c C-x (convention-compliant)
     (define-key map (kbd "C-c C-c") #'eve-compile)
     (define-key map (kbd "C-c C-v") #'eve-validate)
@@ -966,8 +957,9 @@ When non-nil (the default), saving a TJM manifest triggers a background
 	(message "No compiled output for '%s'; compiling section..." (or title slug))
 	(eve-compile)))))
 
-(defhydra eve-hydra (:hint nil :color teal)
-  "
+(when (featurep 'hydra)
+  (defhydra eve-hydra (:hint nil :color teal)
+    "
 Navigation        Edit              Fillers           Playback
 ──────────────   ──────────────   ──────────────   ──────────────────────
 _j_/_k_  next/prev  _d_ del word      _f_ filler        _SPC_/_RET_ play
@@ -988,52 +980,64 @@ _?_ this help     _C-c C-p_ play rendered  _C-c C-s_ play source
                   _C-c C-b_ b-roll placeholders
                   _C-c C-n_ edit notes
 "
-  ("j" eve-next-segment)
-  ("k" eve-previous-segment)
-  ("n" eve-next-segment)
-  ("p" eve-previous-segment)
-  ("J" eve-move-segment-down)
-  ("K" eve-move-segment-up)
-  ("d" eve-delete-word)
-  ("D" eve-delete-segment)
-  ("s" eve-split-segment)
-  ("|" eve-split-segment)
-  ("m" eve-merge-with-next)
-  (")" eve-merge-with-next)
-  ("u" eve-undo)
-  ("C-r" eve-redo)
-  ("e" eve-dwim-edit)
-  ("o" eve-insert-marker)
-  ("t" eve-toggle-tag)
-  ("b" eve-edit-broll)
-  ("B" eve-toggle-broll-continue)
-  ("i" eve-edit-speaker)
-  ("r" eve-edit-start-end)
-  ("f" eve-dwim-filler)
-  ("F" eve-delete-fillers)
-  ("SPC" eve-play-segment)
-  ("RET" eve-play-segment)
-  ("<left>" eve-seek-short-backward)
-  ("<right>" eve-seek-short-forward)
-  ("S-<left>" eve-seek-long-backward)
-  ("S-<right>" eve-seek-long-forward)
-  ("_" eve-toggle-separator)
-  ("C-RET" eve-toggle-separator)
-  ("g" eve-reload)
-  ("C-c C-c" eve-compile)
-  ("C-c C-v" eve-validate)
-  ("C-c C-r" eve-reload)
-  ("C-c C-o" eve-open-raw-json)
-  ("C-c C-h" eve-hide-deleted-mode)
-  ("C-c C-w" eve-toggle-words)
-  ("C-c C-l" eve-ruler-mode)
-  ("C-c C-t" eve-transcribe)
-  ("C-c C-p" eve-play-rendered)
-  ("C-c C-s" eve-play-source)
-  ("C-c C-b" eve-edit-broll-placeholders)
-  ("C-c C-n" eve-edit-notes)
-  ("?" nil "close")
-  ("q" nil "close"))
+    ("j" eve-next-segment)
+    ("k" eve-previous-segment)
+    ("n" eve-next-segment)
+    ("p" eve-previous-segment)
+    ("J" eve-move-segment-down)
+    ("K" eve-move-segment-up)
+    ("d" eve-delete-word)
+    ("D" eve-delete-segment)
+    ("s" eve-split-segment)
+    ("|" eve-split-segment)
+    ("m" eve-merge-with-next)
+    (")" eve-merge-with-next)
+    ("u" eve-undo)
+    ("C-r" eve-redo)
+    ("e" eve-dwim-edit)
+    ("o" eve-insert-marker)
+    ("t" eve-toggle-tag)
+    ("b" eve-edit-broll)
+    ("B" eve-toggle-broll-continue)
+    ("i" eve-edit-speaker)
+    ("r" eve-edit-start-end)
+    ("f" eve-dwim-filler)
+    ("F" eve-delete-fillers)
+    ("SPC" eve-play-segment)
+    ("RET" eve-play-segment)
+    ("<left>" eve-seek-short-backward)
+    ("<right>" eve-seek-short-forward)
+    ("S-<left>" eve-seek-long-backward)
+    ("S-<right>" eve-seek-long-forward)
+    ("_" eve-toggle-separator)
+    ("C-RET" eve-toggle-separator)
+    ("g" eve-reload)
+    ("C-c C-c" eve-compile)
+    ("C-c C-v" eve-validate)
+    ("C-c C-r" eve-reload)
+    ("C-c C-o" eve-open-raw-json)
+    ("C-c C-h" eve-hide-deleted-mode)
+    ("C-c C-w" eve-toggle-words)
+    ("C-c C-l" eve-ruler-mode)
+    ("C-c C-t" eve-transcribe)
+    ("C-c C-p" eve-play-rendered)
+    ("C-c C-s" eve-play-source)
+    ("C-c C-b" eve-edit-broll-placeholders)
+    ("C-c C-n" eve-edit-notes)
+    ("?" nil "close")
+    ("q" nil "close")))
+
+(defun eve--show-help ()
+  "Show the eve keybinding cheatsheet.
+Uses the hydra popup when hydra is available; falls back to a brief
+summary in the echo area."
+  (interactive)
+  (if (and (featurep 'hydra) (fboundp 'eve-hydra/body))
+      (eve-hydra/body)
+    (message
+     (concat "eve bindings: j/k nav  d del-word  D del-seg  s split  m merge  "
+             "u undo  C-r redo  f filler  F del-fillers  "
+             "SPC play  C-c C-c compile  ? (install hydra for full cheatsheet)"))))
 
 (defun eve--snapshot ()
   "Create a deep copy of `eve--data'."

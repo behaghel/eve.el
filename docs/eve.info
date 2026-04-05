@@ -1,0 +1,1570 @@
+This is eve.info, produced by makeinfo version 7.2 from eve.texi.
+
+INFO-DIR-SECTION Emacs misc features
+START-INFO-DIR-ENTRY
+* Eve: (eve).           Text-driven video editing in Emacs.
+END-INFO-DIR-ENTRY
+
+
+File: eve.info,  Node: Top,  Next: Introduction,  Up: (dir)
+
+Eve Manual
+**********
+
+* Menu:
+
+* Introduction::
+* Getting Started::              Installing and first steps.
+* The TJM Manifest::             Structure and representation of .tjm.json files.
+* Transcription::                Generating manifests from audio and video files.
+* Editing::                      Navigation, deletion, splitting, merging, and metadata.
+* Filler Words::                 Non-destructive tagging and deletion of filler words.
+* B-Roll::                       Attaching and managing supplementary video footage.
+* Compilation and Rendering::    Turning the manifest into a video file.
+* Playback::                     Live preview of source and rendered video.
+* Display::                      Timestamp ruler, hidden segments, and word-level view.
+* Key Bindings::                 Complete keybinding reference.
+* Configuration Reference::      Alphabetical listing of all customizable variables.
+* Architecture::                 Two-layer design and the Emacs–CLI contract.
+* Development::                  Working on eve.el and the CLI.
+* Appendix A TJM v1.1 Specification: Appendix A TJM v11 Specification.  Reference to the normative TJM format specification.
+
+-- The Detailed Node Listing --
+
+Introduction
+
+* The Big Idea::
+* The Core Workflow::
+* About This Manual::
+
+Getting Started
+
+* Installation::
+* Quick Start::
+
+Installation
+
+* Requirements::
+* Installing the CLI::
+* Installing the Emacs package::
+* Accessing the manual in Emacs::
+
+Installing the Emacs package
+
+* straight.el: straightel.
+* Manual::
+
+The TJM Manifest
+
+* Structure::
+* How eve-mode renders a manifest::
+* The raw JSON companion buffer::
+
+Transcription
+
+* Starting transcription from Emacs::
+* Backends::
+* Configuration::
+* Installing optional backends::
+
+Editing
+
+* Navigation::
+* Deletion and restoration::
+* Splitting and merging::
+* Reordering::
+* Markers and sections::
+* Inline editing::
+* Metadata::
+* Undo and redo::
+* Validation::
+
+Filler Words
+
+* Concept::
+* Configuration: Configuration (1).
+* Commands::
+* Auto-tagging on file open::
+
+B-Roll
+
+* Concept: Concept (1).
+* Editing b-roll metadata::
+* Placeholders and templates::
+* Continuation chains::
+* Audio policy::
+
+Compilation and Rendering
+
+* Two modes draft and final::
+* Under the hood::
+* Pre-flight validation::
+* Dry-run analysis::
+* Checkpoint and resume::
+* Progressive output::
+* Configuration reference::
+* CLI reference::
+
+Playback
+
+* Source playback::
+* Rendered playback::
+* Playback tracking and segment highlighting::
+* Controls::
+* Video layout::
+
+Display
+
+* Timestamp ruler::
+* Hiding deleted segments::
+* Word-level display::
+
+Key Bindings
+
+* Single-key bindings::
+* C-c prefix bindings::
+* Playback-mode overrides::
+* The hydra cheatsheet::
+
+Single-key bindings
+
+* Navigation: Navigation (1).
+* Editing: Editing (1).
+* Metadata: Metadata (1).
+* Fillers::
+* Playback: Playback (1).
+* Structure and display::
+
+Architecture
+
+* Two-layer boundary::
+* Shared contract::
+
+Development
+
+* devenv commands::
+* Running tests::
+* Project layout::
+* Dependencies::
+
+
+File: eve.info,  Node: Introduction,  Next: Getting Started,  Prev: Top,  Up: Top
+
+1 Introduction
+**************
+
+Eve is an Emacs major mode for editing spoken-word videos by
+manipulating text instead of cutting timelines manually.
+
+* Menu:
+
+* The Big Idea::
+* The Core Workflow::
+* About This Manual::
+
+
+File: eve.info,  Node: The Big Idea,  Next: The Core Workflow,  Up: Introduction
+
+1.1 The Big Idea
+================
+
+Traditional video editing works at the frame level: you scrub a
+timeline, find a cut point, and trim.  When your source material is a
+talking-head recording or a podcast, almost every edit decision is
+driven by what was _said_ — not by what is visible.
+
+   Eve flips the model.  A Textual Join Manifest (‘.tjm.json’) stores
+your video as a sequence of transcribed segments, each with per-word
+timestamps.  You read and edit the transcript in Emacs.  Delete a word,
+and it disappears from the rendered video.  Reorder paragraphs, and the
+clips follow.  Annotate a segment with a b-roll clip, and the renderer
+splices it in.  The text is the edit.
+
+
+File: eve.info,  Node: The Core Workflow,  Next: About This Manual,  Prev: The Big Idea,  Up: Introduction
+
+1.2 The Core Workflow
+=====================
+
+The typical eve session looks like this:
+
+  1. *Transcribe* — run ‘M-x eve-transcribe’ on a directory of raw
+     recordings.  Eve calls ‘eve transcribe’ and opens the resulting
+     ‘.tjm.json’ in eve-mode.
+
+  2. *Edit* — delete filler words (‘d’, ‘f’, ‘F’), reorder segments
+     (‘J’, ‘K’), add markers to name sections (‘o’), attach b-roll
+     (‘b’).
+
+  3. *Preview* — press ‘C-c SPC’ to play the source clip from point, or
+     ‘C-c C-c’ to compile a draft video in seconds.
+
+  4. *Compile* — ‘C-c C-c’ renders the manifest as an ‘.mp4’.  Draft
+     renders are fast (mjpeg, parallel, cached).  ‘C-u C-c C-c’ produces
+     a final delivery-quality H.264 export.
+
+  5. *Iterate* — the segment cache means only changed segments
+     re-encode.  Speculative pre-rendering warms the cache on every
+     save, so pressing ‘C-c C-c’ after a small edit is nearly instant.
+
+
+File: eve.info,  Node: About This Manual,  Prev: The Core Workflow,  Up: Introduction
+
+1.3 About This Manual
+=====================
+
+This manual covers the Emacs package (‘eve.el’) and the accompanying CLI
+(‘eve text-edit’, ‘eve transcribe’).  The normative TJM v1.1 format
+specification is in ‘docs/tjm-spec.md’; this manual cross-references it
+but does not reproduce it in full.
+
+
+File: eve.info,  Node: Getting Started,  Next: The TJM Manifest,  Prev: Introduction,  Up: Top
+
+2 Getting Started
+*****************
+
+* Menu:
+
+* Installation::
+* Quick Start::
+
+
+File: eve.info,  Node: Installation,  Next: Quick Start,  Up: Getting Started
+
+2.1 Installation
+================
+
+* Menu:
+
+* Requirements::
+* Installing the CLI::
+* Installing the Emacs package::
+* Accessing the manual in Emacs::
+
+
+File: eve.info,  Node: Requirements,  Next: Installing the CLI,  Up: Installation
+
+2.1.1 Requirements
+------------------
+
+   • *Emacs* 29.1 or later
+   • *mpv* for live playback tracking
+   • *eve CLI* for transcription and rendering (see below)
+   • *hydra* (optional) for the ‘?’ keybinding cheatsheet popup
+
+
+File: eve.info,  Node: Installing the CLI,  Next: Installing the Emacs package,  Prev: Requirements,  Up: Installation
+
+2.1.2 Installing the CLI
+------------------------
+
+The ‘eve’ CLI ships as a Python package inside this repository.  On a
+fresh clone it bootstraps itself automatically via ‘scripts/run-cli.sh’
+using the pre-built wheel in ‘cli/dist/’ — no ‘uv’ or Python package
+manager required at runtime.
+
+   To install ‘eve’ globally so ‘M-x eve-transcribe’ can find it:
+
+     pip install cli/dist/eve_cli-*.whl
+     # or with uv:
+     uv pip install cli/dist/eve_cli-*.whl
+
+   Verify it works:
+
+     eve doctor --json
+
+
+File: eve.info,  Node: Installing the Emacs package,  Next: Accessing the manual in Emacs,  Prev: Installing the CLI,  Up: Installation
+
+2.1.3 Installing the Emacs package
+----------------------------------
+
+* Menu:
+
+* straight.el: straightel.
+* Manual::
+
+
+File: eve.info,  Node: straightel,  Next: Manual,  Up: Installing the Emacs package
+
+2.1.3.1 straight.el
+...................
+
+     (use-package eve
+       :straight (:type git :host github :repo "behaghel/eve.el"))
+
+
+File: eve.info,  Node: Manual,  Prev: straightel,  Up: Installing the Emacs package
+
+2.1.3.2 Manual
+..............
+
+Clone the repository, add it to ‘load-path’, and require it:
+
+     (add-to-list 'load-path "/path/to/eve.el")
+     (require 'eve)
+
+   Opening any ‘*.tjm.json’ file then activates ‘eve-mode’
+automatically.
+
+
+File: eve.info,  Node: Accessing the manual in Emacs,  Prev: Installing the Emacs package,  Up: Installation
+
+2.1.4 Accessing the manual in Emacs
+-----------------------------------
+
+After installing the package, add the ‘docs/’ directory to Emacs's Info
+path:
+
+     (add-to-list 'Info-directory-list
+                  (expand-file-name "docs" (file-name-directory (locate-library "eve"))))
+
+   Then browse the manual with ‘C-h i m eve RET’.
+
+
+File: eve.info,  Node: Quick Start,  Prev: Installation,  Up: Getting Started
+
+2.2 Quick Start
+===============
+
+This walkthrough takes you from a raw recording to a rendered clip in
+five steps.
+
+  1. *Transcribe a recording*
+
+          M-x eve-transcribe RET
+
+     Select the directory containing your ‘.mp4’ files.  Eve starts ‘eve
+     transcribe’ in the background.  When it finishes, the manifest
+     opens automatically in eve-mode.
+
+  2. *Read through the transcript*
+
+     Navigate with ‘j’ / ‘k’.  The buffer shows each spoken segment as a
+     block of text.  Timestamps appear in the right margin.
+
+  3. *Delete unwanted content*
+
+     Place point on a word and press ‘d’ to delete it.  Press ‘D’ to
+     delete the whole segment.  Press ‘f’ on a word to tag it as a
+     filler; press ‘F’ to delete all tagged fillers at once.
+
+  4. *Compile a draft preview*
+
+          C-c C-c
+
+     Eve validates the manifest, pre-renders changed segments in the
+     background, and produces a draft ‘.mp4’ in seconds.  Play it back
+     with ‘C-u C-c SPC’ or your usual player.
+
+  5. *Export for delivery*
+
+          C-u C-c C-c
+
+     Compiles at full H.264 quality using the same segment cache.  Only
+     segments that haven't been cached yet need re-encoding.
+
+
+File: eve.info,  Node: The TJM Manifest,  Next: Transcription,  Prev: Getting Started,  Up: Top
+
+3 The TJM Manifest
+******************
+
+* Menu:
+
+* Structure::
+* How eve-mode renders a manifest::
+* The raw JSON companion buffer::
+
+
+File: eve.info,  Node: Structure,  Next: How eve-mode renders a manifest,  Up: The TJM Manifest
+
+3.1 Structure
+=============
+
+A TJM manifest is a JSON file with two top-level arrays:
+
+   • ‘sources’ — a list of media files referenced by the edit.  Each
+     entry has an ‘id’ used throughout the manifest and a ‘file’ path.
+
+   • ‘segments’ — the ordered timeline.  Each segment references a
+     source, a start and end time (in seconds or ticks), and the spoken
+     text.  Optional fields carry per-word timestamps, b-roll metadata,
+     speaker identity, tags, and notes.
+
+   A minimal manifest:
+
+     {
+       "version": 1,
+       "sources": [
+         { "id": "clip01", "file": "raw/recording.mp4" }
+       ],
+       "segments": [
+         {
+           "id": "clip01-s0001",
+           "source": "clip01",
+           "start": 12.34,
+           "end": 15.60,
+           "text": "This is what was said."
+         }
+       ]
+     }
+
+   The TJM v1.1 specification in ‘docs/tjm-spec.md’ defines every field,
+including the tick-based timing model, the edit overlay, and the render
+contract.
+
+
+File: eve.info,  Node: How eve-mode renders a manifest,  Next: The raw JSON companion buffer,  Prev: Structure,  Up: The TJM Manifest
+
+3.2 How eve-mode renders a manifest
+===================================
+
+Eve-mode presents the manifest as readable text.  Each segment is shown
+as a paragraph with its text content.  Markers appear as section
+headings.  Deleted words are hidden by default (toggle with ‘C-c C-h’).
+Per-word timestamps are hidden unless ‘C-c C-w’ is active.
+
+   The buffer is read-only as prose — you interact through keybindings,
+not direct text editing.  The underlying JSON is always kept in sync.
+
+
+File: eve.info,  Node: The raw JSON companion buffer,  Prev: How eve-mode renders a manifest,  Up: The TJM Manifest
+
+3.3 The raw JSON companion buffer
+=================================
+
+Press ‘C-c C-o’ (‘eve-open-raw-json’) to open the underlying JSON in a
+companion buffer.  This is useful for low-level inspection or edits that
+the structured commands don't cover.  Saving the companion buffer
+reloads the eve-mode view.
+
+
+File: eve.info,  Node: Transcription,  Next: Editing,  Prev: The TJM Manifest,  Up: Top
+
+4 Transcription
+***************
+
+* Menu:
+
+* Starting transcription from Emacs::
+* Backends::
+* Configuration::
+* Installing optional backends::
+
+
+File: eve.info,  Node: Starting transcription from Emacs,  Next: Backends,  Up: Transcription
+
+4.1 Starting transcription from Emacs
+=====================================
+
+Two commands launch transcription:
+
+   • ‘M-x eve-transcribe’ prompts for a directory, scans for media
+     files, and starts ‘eve transcribe’ asynchronously.  On success the
+     manifest opens automatically in eve-mode.
+
+   • ‘M-x eve-dired-transcribe’ runs from Dired using the marked files
+     (or the file at point when nothing is marked).
+
+   On failure, the ‘*eve transcribe*’ buffer appears so you can inspect
+the error output.
+
+
+File: eve.info,  Node: Backends,  Next: Configuration,  Prev: Starting transcription from Emacs,  Up: Transcription
+
+4.2 Backends
+============
+
+‘eve transcribe’ supports three backends:
+
+Backend            Flag                         Notes
+--------------------------------------------------------------------------------------------
+‘faster-whisper’   ‘--backend faster-whisper’   Default.  Fast, local, good accuracy.
+‘transformers’     ‘--backend transformers’     HuggingFace models.  Needs optional deps.
+‘nemo’             ‘--backend nemo’             NVIDIA NeMo.  Needs optional deps.
+
+   The ‘--verbatim’ flag (on by default in Emacs) biases
+‘faster-whisper’ toward preserving disfluencies and filler words.  For
+‘transformers’ and ‘nemo’, choose a verbatim-friendly model instead.
+
+   Good starting points:
+   • ‘transformers’: ‘nyrahealth/CrisperWhisper’
+   • ‘nemo’: ‘nvidia/parakeet-ctc-1.1b’
+
+
+File: eve.info,  Node: Configuration,  Next: Installing optional backends,  Prev: Backends,  Up: Transcription
+
+4.3 Configuration
+=================
+
+Variable                       Default               Description
+------------------------------------------------------------------------------------------------
+‘eve-transcribe-backend’       ‘"faster-whisper"’    Backend name passed to ‘eve transcribe’.
+‘eve-transcribe-model’         ‘"medium.en"’         Model identifier.
+‘eve-transcribe-verbatim’      ‘t’                   Pass ‘--verbatim’ to the backend.
+‘eve-transcribe-tag-fillers’   ‘t’                   Tag filler words during transcription.
+‘eve-media-extensions’         ‘("mp4" "mov" ...)’   File types scanned by ‘eve-transcribe’.
+
+
+File: eve.info,  Node: Installing optional backends,  Prev: Configuration,  Up: Transcription
+
+4.4 Installing optional backends
+================================
+
+The ‘transformers’ and ‘nemo’ backends need extra Python dependencies.
+From the repository root:
+
+     uv sync --project cli --extra transformers
+     # or
+     uv sync --project cli --extra nemo
+
+   Or from ‘cli/’:
+
+     uv pip install .[transformers]
+     uv pip install .[nemo]
+
+
+File: eve.info,  Node: Editing,  Next: Filler Words,  Prev: Transcription,  Up: Top
+
+5 Editing
+*********
+
+* Menu:
+
+* Navigation::
+* Deletion and restoration::
+* Splitting and merging::
+* Reordering::
+* Markers and sections::
+* Inline editing::
+* Metadata::
+* Undo and redo::
+* Validation::
+
+
+File: eve.info,  Node: Navigation,  Next: Deletion and restoration,  Up: Editing
+
+5.1 Navigation
+==============
+
+Key         Command                  Description
+-----------------------------------------------------------------
+‘j’ / ‘n’   ‘eve-next-segment’       Move to next segment.
+‘k’ / ‘p’   ‘eve-previous-segment’   Move to previous segment.
+
+
+File: eve.info,  Node: Deletion and restoration,  Next: Splitting and merging,  Prev: Navigation,  Up: Editing
+
+5.2 Deletion and restoration
+============================
+
+   • ‘d’ (‘eve-delete-word’) — marks the word at point as deleted.
+     Deleted words are hidden in the buffer (‘eve-hide-deleted-mode’)
+     and excluded from compilation.  The operation is non-destructive:
+     the word remains in the JSON and can be restored.
+
+   • ‘D’ (‘eve-delete-segment’) — marks the entire current segment as
+     deleted.
+
+   Deleted content is shown or hidden with ‘C-c C-h’
+(‘eve-hide-deleted-mode’).
+
+
+File: eve.info,  Node: Splitting and merging,  Next: Reordering,  Prev: Deletion and restoration,  Up: Editing
+
+5.3 Splitting and merging
+=========================
+
+   • ‘s’ or ‘|’ (‘eve-split-segment’) — splits the current segment at
+     point, creating two segments with the text and timing divided at
+     the cut.
+
+   • ‘m’ or ‘)’ (‘eve-merge-with-next’) — merges the current segment
+     with the one below, combining text and adjusting the end time.
+
+
+File: eve.info,  Node: Reordering,  Next: Markers and sections,  Prev: Splitting and merging,  Up: Editing
+
+5.4 Reordering
+==============
+
+   • ‘J’ (‘eve-move-segment-down’) — move the current segment one
+     position down.
+   • ‘K’ (‘eve-move-segment-up’) — move the current segment one position
+     up.
+
+
+File: eve.info,  Node: Markers and sections,  Next: Inline editing,  Prev: Reordering,  Up: Editing
+
+5.5 Markers and sections
+========================
+
+Press ‘o’ (‘eve-insert-marker’) to insert a marker above the current
+segment.  Markers act as named section headings.  They appear in the
+buffer as bold titles.
+
+   When you compile with ‘C-c C-c’ while point is on a marker, only the
+segments in that section are compiled.  This is useful for working on
+one chapter of a longer video.
+
+
+File: eve.info,  Node: Inline editing,  Next: Metadata,  Prev: Markers and sections,  Up: Editing
+
+5.6 Inline editing
+==================
+
+Press ‘e’ (‘eve-dwim-edit’) to edit the text or metadata of the segment
+at point.  The command adapts to context: on a word it edits the spoken
+text; on a marker it edits the title.
+
+
+File: eve.info,  Node: Metadata,  Next: Undo and redo,  Prev: Inline editing,  Up: Editing
+
+5.7 Metadata
+============
+
+Key         Command                Description
+-----------------------------------------------------------------------------
+‘t’         ‘eve-toggle-tag’       Toggle a tag on the segment at point.
+‘i’         ‘eve-edit-speaker’     Set the speaker label for the segment.
+‘r’         ‘eve-edit-start-end’   Edit the segment's start/end timecodes.
+‘C-c C-n’   ‘eve-edit-notes’       Edit free-form notes for the segment.
+
+
+File: eve.info,  Node: Undo and redo,  Next: Validation,  Prev: Metadata,  Up: Editing
+
+5.8 Undo and redo
+=================
+
+   • ‘u’ (‘eve-undo’) — undo the last edit.
+   • ‘C-r’ (‘eve-redo’) — redo a previously undone edit.
+
+   Eve maintains its own undo stack separate from Emacs's built-in undo.
+
+
+File: eve.info,  Node: Validation,  Prev: Undo and redo,  Up: Editing
+
+5.9 Validation
+==============
+
+Eve validates the manifest automatically on every save (controlled by
+‘eve-validation-on-save’).  Manual validation runs with ‘C-c C-v’
+(‘eve-validate’).  Timing inconsistencies are reported in the echo area.
+
+
+File: eve.info,  Node: Filler Words,  Next: B-Roll,  Prev: Editing,  Up: Top
+
+6 Filler Words
+**************
+
+* Menu:
+
+* Concept::
+* Configuration: Configuration (1).
+* Commands::
+* Auto-tagging on file open::
+
+
+File: eve.info,  Node: Concept,  Next: Configuration (1),  Up: Filler Words
+
+6.1 Concept
+===========
+
+Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
+workflow is non-destructive: words are _tagged_ as fillers first, then
+_optionally deleted_.  Tagged fillers are highlighted in the buffer with
+a distinct face and excluded from compilation.  You can untag them at
+any time.
+
+
+File: eve.info,  Node: Configuration (1),  Next: Commands,  Prev: Concept,  Up: Filler Words
+
+6.2 Configuration
+=================
+
+     ;; Plain strings — single words or multi-word phrases
+     (setq eve-filler-phrases '("um" "uh" "you know" "to be honest with you"))
+
+   ‘eve-filler-phrases’ stores phrases as plain strings.  Matching is
+case-insensitive and ignores punctuation.  The list is persisted when
+you use the interactive add commands.
+
+   The legacy ‘eve-filler-regex’ variable is still honoured for
+backwards compatibility but ‘eve-filler-phrases’ is preferred.
+
+
+File: eve.info,  Node: Commands,  Next: Auto-tagging on file open,  Prev: Configuration (1),  Up: Filler Words
+
+6.3 Commands
+============
+
+Key         Command                         Description
+----------------------------------------------------------------------------------------------------------------------
+‘f’         ‘eve-dwim-filler’               Add the word at point to phrases and retag; or delete region as filler.
+‘F’         ‘eve-delete-fillers’            Mark all tagged fillers as deleted.
+‘C-c C-d’   ‘eve-delete-fillers’            Same as ‘F’ from the ‘C-c’ prefix map.
+—           ‘M-x eve-tag-fillers’           Tag all matching words in the buffer.
+—           ‘M-x eve-add-filler-at-point’   Add the word at point to ‘eve-filler-phrases’ and retag.
+—           ‘M-x eve-add-filler-region’     Add the selected phrase to ‘eve-filler-phrases’ and retag.
+
+
+File: eve.info,  Node: Auto-tagging on file open,  Prev: Commands,  Up: Filler Words
+
+6.4 Auto-tagging on file open
+=============================
+
+Fillers are tagged automatically every time a TJM manifest is opened.
+If you add a new phrase to ‘eve-filler-phrases’, reopen the file or run
+‘M-x eve-tag-fillers’ to apply the updated list.
+
+
+File: eve.info,  Node: B-Roll,  Next: Compilation and Rendering,  Prev: Filler Words,  Up: Top
+
+7 B-Roll
+********
+
+* Menu:
+
+* Concept: Concept (1).
+* Editing b-roll metadata::
+* Placeholders and templates::
+* Continuation chains::
+* Audio policy::
+
+
+File: eve.info,  Node: Concept (1),  Next: Editing b-roll metadata,  Up: B-Roll
+
+7.1 Concept
+===========
+
+B-roll is supplementary footage that plays over (or instead of) the main
+recording.  Eve supports two b-roll modes:
+
+   • *Replace* — the b-roll clip completely replaces the source video
+     for the duration of the segment.  The source audio is preserved (or
+     you can use the b-roll's audio).
+
+   • *Pip* (picture-in-picture) — the b-roll is composited as an overlay
+     on top of the source video.  Position and size are configurable.
+
+
+File: eve.info,  Node: Editing b-roll metadata,  Next: Placeholders and templates,  Prev: Concept (1),  Up: B-Roll
+
+7.2 Editing b-roll metadata
+===========================
+
+Key         Command                         Description
+--------------------------------------------------------------------------------------------------------
+‘b’         ‘eve-edit-broll’                Edit the b-roll entry for the current segment.
+‘B’         ‘eve-toggle-broll-continue’     Mark the segment as continuing the previous b-roll chain.
+‘C-c C-b’   ‘eve-edit-broll-placeholders’   Edit the placeholder substitutions for the segment.
+
+   B-roll metadata is stored inside the segment's ‘edit.broll’ field in
+the JSON.
+
+
+File: eve.info,  Node: Placeholders and templates,  Next: Continuation chains,  Prev: Editing b-roll metadata,  Up: B-Roll
+
+7.3 Placeholders and templates
+==============================
+
+B-roll entries can contain placeholder tokens (e.g., ‘[PRODUCT]’) that
+are resolved at render time.  Use ‘C-c C-b’ to define the concrete
+values for each placeholder in the current segment.
+
+
+File: eve.info,  Node: Continuation chains,  Next: Audio policy,  Prev: Placeholders and templates,  Up: B-Roll
+
+7.4 Continuation chains
+=======================
+
+When a b-roll clip spans multiple consecutive segments, mark the second
+and subsequent segments with ‘B’ (‘eve-toggle-broll-continue’).  The
+renderer treats the chain as a single b-roll clip that plays through all
+of them, advancing its offset continuously rather than restarting.
+
+
+File: eve.info,  Node: Audio policy,  Prev: Continuation chains,  Up: B-Roll
+
+7.5 Audio policy
+================
+
+Each b-roll entry has an ‘audio’ field:
+
+   • ‘source’ (default) — use the audio from the main recording.
+   • ‘broll’ — use the audio track from the b-roll clip.
+
+   Edit this via ‘M-x eve-edit-broll’ on the relevant segment.
+
+
+File: eve.info,  Node: Compilation and Rendering,  Next: Playback,  Prev: B-Roll,  Up: Top
+
+8 Compilation and Rendering
+***************************
+
+* Menu:
+
+* Two modes draft and final::
+* Under the hood::
+* Pre-flight validation::
+* Dry-run analysis::
+* Checkpoint and resume::
+* Progressive output::
+* Configuration reference::
+* CLI reference::
+
+
+File: eve.info,  Node: Two modes draft and final,  Next: Under the hood,  Up: Compilation and Rendering
+
+8.1 Two modes: draft and final
+==============================
+
+‘C-c C-c’ (‘eve-compile’) compiles the manifest at draft quality — fast
+enough to catch mistakes before committing to a full export.
+
+   ‘C-u C-c C-c’ compiles at final quality (H.264 medium/CRF 18) for
+delivery.
+
+   The quality used can be changed permanently with
+‘eve-compile-quality’.
+
+
+File: eve.info,  Node: Under the hood,  Next: Pre-flight validation,  Prev: Two modes draft and final,  Up: Compilation and Rendering
+
+8.2 Under the hood
+==================
+
+Eve's rendering pipeline is designed to be fast after the first run:
+
+   • *Quality profiles* — draft uses MJPEG encoding at ultrafast preset;
+     final uses H.264 at medium preset.  The codec and preset are
+     resolved automatically from the ‘--quality’ flag.
+
+   • *Parallel encoding* — segments are encoded concurrently across all
+     available CPU cores (‘eve-compile-jobs’).
+
+   • *Segment cache* — rendered segments are stored in ‘.eve-cache/’
+     next to the manifest, keyed by a SHA-256 hash of the segment's
+     content and encoding settings.  Unchanged segments are reused; only
+     changed ones re-encode.
+
+   • *Speculative pre-rendering* — after each save, an idle timer
+     (‘eve-auto-render-idle-seconds’) fires a background render of the
+     segments that changed.  When you press ‘C-c C-c’, the cache is
+     already warm and compilation reduces to a concat step.
+
+
+File: eve.info,  Node: Pre-flight validation,  Next: Dry-run analysis,  Prev: Under the hood,  Up: Compilation and Rendering
+
+8.3 Pre-flight validation
+=========================
+
+Before starting a render, eve validates the manifest:
+
+   • All source files must exist and be readable.
+   • All b-roll files must exist.
+   • Segment timecodes must be non-negative and end after start.
+   • Words must fall within their segment bounds.
+
+   Warnings appear in the echo area.  Errors block compilation unless
+you confirm.  Run validation explicitly with ‘C-c C-v’ (‘eve-validate’).
+
+   If the estimated render time (from the dry-run analysis) exceeds
+‘eve-compile-confirm-threshold’ seconds, eve asks for confirmation.
+
+
+File: eve.info,  Node: Dry-run analysis,  Next: Checkpoint and resume,  Prev: Pre-flight validation,  Up: Compilation and Rendering
+
+8.4 Dry-run analysis
+====================
+
+Before rendering, eve can report which segments would be re-encoded and
+estimate the render time:
+
+     eve text-edit manifest.tjm.json --output out.mp4 --dry-run
+
+   The output (JSON with ‘--json’) includes ‘total_segments’,
+‘changed_segments’, and ‘estimated_seconds’.  This information feeds the
+pre-flight confirmation prompt.
+
+
+File: eve.info,  Node: Checkpoint and resume,  Next: Progressive output,  Prev: Dry-run analysis,  Up: Compilation and Rendering
+
+8.5 Checkpoint and resume
+=========================
+
+If a render is interrupted, eve writes a checkpoint file in
+‘.eve-cache/’ as segments complete.  The next run picks up from where it
+left off: segments already in the cache are reused, and only the
+remaining ones are encoded.
+
+   Pass ‘--no-resume’ to force a fresh render from scratch.
+
+
+File: eve.info,  Node: Progressive output,  Next: Configuration reference,  Prev: Checkpoint and resume,  Up: Compilation and Rendering
+
+8.6 Progressive output
+======================
+
+With ‘--partial-every N’, eve writes a partial ‘<output>.partial.mp4’
+after every N segments complete.  A JSON event is emitted on stdout for
+each partial file, which Emacs can use to update a live preview.
+
+
+File: eve.info,  Node: Configuration reference,  Next: CLI reference,  Prev: Progressive output,  Up: Compilation and Rendering
+
+8.7 Configuration reference
+===========================
+
+Variable                          Default     Description
+---------------------------------------------------------------------------------------------------------------
+‘eve-compile-quality’             ‘"draft"’   ‘"draft"’ for fast preview, ‘"final"’ for delivery.
+‘eve-compile-jobs’                ‘0’         Parallel encode workers; 0 = auto-detect CPU count.
+‘eve-compile-scale’               ‘1.0’       Resolution scale for draft (e.g.  ‘0.5’ = half res).
+‘eve-compile-cache’               ‘t’         Use the ‘.eve-cache/’ segment cache.
+‘eve-compile-confirm-threshold’   ‘30’        Estimated seconds above which a confirmation prompt appears.
+‘eve-auto-render’                 ‘t’         Speculatively pre-render changed segments after each save.
+‘eve-auto-render-idle-seconds’    ‘2.0’       Idle delay before the speculative render fires.
+‘eve-play-after-compile’          ‘nil’       When non-nil, play the output automatically after compilation.
+‘eve-preserve-gaps-max’           ‘2.0’       Maximum gap (seconds) that is preserved between segments.
+
+
+File: eve.info,  Node: CLI reference,  Prev: Configuration reference,  Up: Compilation and Rendering
+
+8.8 CLI reference
+=================
+
+Under normal Emacs usage you never need to call ‘eve text-edit’ directly
+— the Emacs commands handle all flags.  For scripting or CI:
+
+     eve text-edit manifest.tjm.json --output out.mp4 [FLAGS]
+
+     --quality draft|final   Encoding profile (default: draft)
+     --codec h264|mjpeg      Override intermediate codec
+     --scale FACTOR          Resolution scale (e.g. 0.5)
+     --jobs N                Parallel workers (0 = auto)
+     --cache-dir PATH        Segment cache location (default: .eve-cache/)
+     --no-cache              Disable segment cache
+     --cache-max-size GB     Cache eviction threshold (default: 10)
+     --validate              Check manifest without rendering
+     --dry-run               Report cache hits/misses and estimated time
+     --segments ID [ID …]    Pre-render only listed segments into cache
+     --no-resume             Ignore checkpoint from a prior interrupted render
+     --partial-every N       Write a partial .mp4 every N segments
+
+
+File: eve.info,  Node: Playback,  Next: Display,  Prev: Compilation and Rendering,  Up: Top
+
+9 Playback
+**********
+
+* Menu:
+
+* Source playback::
+* Rendered playback::
+* Playback tracking and segment highlighting::
+* Controls::
+* Video layout::
+
+
+File: eve.info,  Node: Source playback,  Next: Rendered playback,  Up: Playback
+
+9.1 Source playback
+===================
+
+‘C-c SPC’ (‘eve-play’) or ‘SPC’ / ‘RET’ (‘eve-play-segment’) plays the
+source media from the current segment to the end of the clip.  All
+segments from the same source file are tracked, so the playback
+highlight follows even across segments.
+
+   Playback position maps directly to the original recording timestamps.
+
+
+File: eve.info,  Node: Rendered playback,  Next: Playback tracking and segment highlighting,  Prev: Source playback,  Up: Playback
+
+9.2 Rendered playback
+=====================
+
+‘C-u C-c SPC’ (‘eve-play’ with prefix) or ‘C-c C-p’
+(‘eve-play-rendered’) plays the compiled output file.  If the output is
+missing or older than the manifest, eve compiles it first.
+
+   Progress is tracked using the post-edit rendered timeline; deleted
+content is skipped in the position calculation.
+
+
+File: eve.info,  Node: Playback tracking and segment highlighting,  Next: Controls,  Prev: Rendered playback,  Up: Playback
+
+9.3 Playback tracking and segment highlighting
+==============================================
+
+Eve integrates with mpv via its JSON IPC socket.  The currently-playing
+segment is highlighted with a vivid amber overlay (‘eve-playback-face’),
+distinct from both the focus highlight and the region.
+
+
+File: eve.info,  Node: Controls,  Next: Video layout,  Prev: Playback tracking and segment highlighting,  Up: Playback
+
+9.4 Controls
+============
+
+Key                                 Action
+----------------------------------------------------------------------------------------------------
+‘SPC’ (during playback)             Pause / resume.
+Move point to a segment             Seek mpv to that segment's start time.
+‘C-c k’ / ‘M-x eve-stop-playback’   Stop playback and restore keybindings.
+‘<left>’                            Seek backward ‘eve-seek-short-seconds’ (default 5s).
+‘<right>’                           Seek forward ‘eve-seek-short-seconds’ (default 5s).
+‘S-<left>’                          Seek backward ‘eve-seek-long-backward-seconds’ (default 30s).
+‘S-<right>’                         Seek forward ‘eve-seek-long-forward-seconds’ (default 10s).
+
+   Stopping playback restores all keybindings to their normal state.
+
+
+File: eve.info,  Node: Video layout,  Prev: Controls,  Up: Playback
+
+9.5 Video layout
+================
+
+Set ‘eve-video-layout’ to ‘t’ to arrange the screen for editing: Emacs
+takes the bottom portion of the display and mpv sits directly above it —
+borderless, always-on-top, with automatic letterboxing.
+
+     (setq eve-video-layout t)
+
+     ;; Fraction of screen height for the video window (default 0.6 = 60%)
+     (setq eve-video-layout-ratio 0.6)
+
+   The layout activates on the first play command and the original frame
+geometry is restored when playback stops.  Skipped when Emacs is in
+macOS native fullscreen.
+
+   Configuration:
+
+Variable                           Default                  Description
+-------------------------------------------------------------------------------------------------------
+‘eve-play-program’                 ‘"mpv"’                  Player binary.
+‘eve-play-args’                    ‘(list "--quiet" ...)’   Extra arguments passed to the player.
+‘eve-video-layout’                 ‘nil’                    Enable automatic screen layout on play.
+‘eve-video-layout-ratio’           ‘0.6’                    Fraction of screen height for the video.
+‘eve-seek-short-seconds’           ‘5’                      Short seek step in seconds.
+‘eve-seek-long-backward-seconds’   ‘30’                     Long backward seek step in seconds.
+‘eve-seek-long-forward-seconds’    ‘10’                     Long forward seek step in seconds.
+
+
+File: eve.info,  Node: Display,  Next: Key Bindings,  Prev: Playback,  Up: Top
+
+10 Display
+**********
+
+* Menu:
+
+* Timestamp ruler::
+* Hiding deleted segments::
+* Word-level display::
+
+
+File: eve.info,  Node: Timestamp ruler,  Next: Hiding deleted segments,  Up: Display
+
+10.1 Timestamp ruler
+====================
+
+‘eve-ruler-mode’ (active by default) displays ‘[hh:mm:ss]’ markers in
+the right margin.  Each marker is placed next to the segment that
+_reaches_ that milestone in the rendered video — deleted content is
+excluded from the running total.
+
+   The total rendered duration appears in the mode line.
+
+     ;; Change the milestone interval (default 30 seconds)
+     (setq eve-ruler-interval 60.0)
+
+   Toggle the ruler with ‘C-c C-l’ (‘eve-ruler-mode’).
+
+
+File: eve.info,  Node: Hiding deleted segments,  Next: Word-level display,  Prev: Timestamp ruler,  Up: Display
+
+10.2 Hiding deleted segments
+============================
+
+‘C-c C-h’ (‘eve-hide-deleted-mode’) toggles visibility of deleted words
+and segments.  When active (the default), deleted content is hidden and
+the transcript reads as it will render.  When inactive, deleted content
+appears with a strikethrough face.
+
+
+File: eve.info,  Node: Word-level display,  Prev: Hiding deleted segments,  Up: Display
+
+10.3 Word-level display
+=======================
+
+‘C-c C-w’ (‘eve-toggle-words’) shows or hides per-word timing
+annotations under each segment.  Useful when inspecting or adjusting
+precise cut points.
+
+Variable                          Default   Description
+--------------------------------------------------------------------------------------------------
+‘eve-ruler-interval’              ‘30.0’    Seconds between ruler markers.
+‘eve-show-words-by-default’       ‘nil’     Show word timings on buffer open.
+‘eve-validation-on-save’          ‘t’       Validate manifest on every save.
+‘eve-validation-time-tolerance’   ‘0.1’     Timing slack tolerated during validation (seconds).
+
+
+File: eve.info,  Node: Key Bindings,  Next: Configuration Reference,  Prev: Display,  Up: Top
+
+11 Key Bindings
+***************
+
+* Menu:
+
+* Single-key bindings::
+* C-c prefix bindings::
+* Playback-mode overrides::
+* The hydra cheatsheet::
+
+
+File: eve.info,  Node: Single-key bindings,  Next: C-c prefix bindings,  Up: Key Bindings
+
+11.1 Single-key bindings
+========================
+
+These bindings are active in eve-mode.
+
+* Menu:
+
+* Navigation: Navigation (1).
+* Editing: Editing (1).
+* Metadata: Metadata (1).
+* Fillers::
+* Playback: Playback (1).
+* Structure and display::
+
+
+File: eve.info,  Node: Navigation (1),  Next: Editing (1),  Up: Single-key bindings
+
+11.1.1 Navigation
+-----------------
+
+Key         Command
+--------------------------------------
+‘j’ / ‘n’   ‘eve-next-segment’
+‘k’ / ‘p’   ‘eve-previous-segment’
+‘J’         ‘eve-move-segment-down’
+‘K’         ‘eve-move-segment-up’
+
+
+File: eve.info,  Node: Editing (1),  Next: Metadata (1),  Prev: Navigation (1),  Up: Single-key bindings
+
+11.1.2 Editing
+--------------
+
+Key     Command
+--------------------------------
+‘d’     ‘eve-delete-word’
+‘D’     ‘eve-delete-segment’
+‘s’     ‘eve-split-segment’
+‘m’     ‘eve-merge-with-next’
+‘u’     ‘eve-undo’
+‘C-r’   ‘eve-redo’
+‘e’     ‘eve-dwim-edit’
+‘o’     ‘eve-insert-marker’
+
+
+File: eve.info,  Node: Metadata (1),  Next: Fillers,  Prev: Editing (1),  Up: Single-key bindings
+
+11.1.3 Metadata
+---------------
+
+Key   Command
+------------------------------------
+‘t’   ‘eve-toggle-tag’
+‘b’   ‘eve-edit-broll’
+‘B’   ‘eve-toggle-broll-continue’
+‘i’   ‘eve-edit-speaker’
+‘r’   ‘eve-edit-start-end’
+
+
+File: eve.info,  Node: Fillers,  Next: Playback (1),  Prev: Metadata (1),  Up: Single-key bindings
+
+11.1.4 Fillers
+--------------
+
+Key   Command
+-----------------------------
+‘f’   ‘eve-dwim-filler’
+‘F’   ‘eve-delete-fillers’
+
+
+File: eve.info,  Node: Playback (1),  Next: Structure and display,  Prev: Fillers,  Up: Single-key bindings
+
+11.1.5 Playback
+---------------
+
+Key             Command
+--------------------------------------------
+‘SPC’ / ‘RET’   ‘eve-play-segment’
+‘<left>’        ‘eve-seek-short-backward’
+‘<right>’       ‘eve-seek-short-forward’
+‘S-<left>’      ‘eve-seek-long-backward’
+‘S-<right>’     ‘eve-seek-long-forward’
+
+
+File: eve.info,  Node: Structure and display,  Prev: Playback (1),  Up: Single-key bindings
+
+11.1.6 Structure and display
+----------------------------
+
+Key             Command
+-----------------------------------------
+‘_’ / ‘C-RET’   ‘eve-toggle-separator’
+‘g’             ‘eve-reload’
+‘q’             ‘eve-dwim-quit’
+‘?’             ‘eve--show-help’
+
+
+File: eve.info,  Node: C-c prefix bindings,  Next: Playback-mode overrides,  Prev: Single-key bindings,  Up: Key Bindings
+
+11.2 C-c prefix bindings
+========================
+
+Key             Command
+------------------------------------------------
+‘C-c C-c’       ‘eve-compile’ (draft)
+‘C-u C-c C-c’   ‘eve-compile’ (final)
+‘C-c SPC’       ‘eve-play’ (source)
+‘C-u C-c SPC’   ‘eve-play’ (rendered)
+‘C-c C-p’       ‘eve-play-rendered’
+‘C-c C-s’       ‘eve-play-source’
+‘C-c C-v’       ‘eve-validate’
+‘C-c C-r’       ‘eve-reload’
+‘C-c C-o’       ‘eve-open-raw-json’
+‘C-c C-h’       ‘eve-hide-deleted-mode’
+‘C-c C-w’       ‘eve-toggle-words’
+‘C-c C-l’       ‘eve-ruler-mode’
+‘C-c C-t’       ‘eve-transcribe’
+‘C-c C-d’       ‘eve-delete-fillers’
+‘C-c C-b’       ‘eve-edit-broll-placeholders’
+‘C-c C-n’       ‘eve-edit-notes’
+
+
+File: eve.info,  Node: Playback-mode overrides,  Next: The hydra cheatsheet,  Prev: C-c prefix bindings,  Up: Key Bindings
+
+11.3 Playback-mode overrides
+============================
+
+During active playback, ‘SPC’ is remapped to
+‘eve-playback-pause-resume’.  All other bindings remain active; moving
+point seeks mpv.
+
+
+File: eve.info,  Node: The hydra cheatsheet,  Prev: Playback-mode overrides,  Up: Key Bindings
+
+11.4 The hydra cheatsheet
+=========================
+
+If the ‘hydra’ package is installed, pressing ‘?’ opens a graphical
+popup showing all keybindings grouped by category.  Without hydra, ‘?’
+displays a brief summary in the echo area instead.
+
+   To install hydra:
+
+     (use-package hydra)
+
+
+File: eve.info,  Node: Configuration Reference,  Next: Architecture,  Prev: Key Bindings,  Up: Top
+
+12 Configuration Reference
+**************************
+
+All eve variables belong to the ‘eve’ customization group.  Access it
+with ‘M-x customize-group RET eve RET’.
+
+Variable                           Default                  Description
+--------------------------------------------------------------------------------------------------------------------------------------------
+‘eve-auto-render’                  ‘t’                      Speculatively pre-render changed segments after each save.
+‘eve-auto-render-idle-seconds’     ‘2.0’                    Idle delay before the speculative render fires.
+‘eve-cli-program’                  ‘"eve"’                  Name or path of the eve CLI executable.
+‘eve-compile-cache’                ‘t’                      Use the ‘.eve-cache/’ segment cache.
+‘eve-compile-confirm-threshold’    ‘30’                     Estimated seconds above which a confirmation prompt appears before rendering.
+‘eve-compile-jobs’                 ‘0’                      Parallel encode workers; 0 = auto-detect CPU count.
+‘eve-compile-quality’              ‘"draft"’                ‘"draft"’ for fast preview, ‘"final"’ for delivery.
+‘eve-compile-scale’                ‘1.0’                    Resolution scale factor for draft renders (e.g.  ‘0.5’ = half res).
+‘eve-filler-phrases’               ‘("um" "uh")’            Words and phrases tagged as fillers.
+‘eve-filler-regex’                 ‘(list ...)’             Legacy regex patterns for filler matching.
+‘eve-media-extensions’             ‘("mp4" "mov" ...)’      File types scanned by ‘eve-transcribe’.
+‘eve-play-after-compile’           ‘nil’                    Play the output automatically after successful compilation.
+‘eve-play-args’                    ‘(list "--quiet" ...)’   Extra arguments passed to the player.
+‘eve-play-program’                 ‘"mpv"’                  Player binary.
+‘eve-preserve-gaps-max’            ‘2.0’                    Maximum gap (seconds) preserved between segments during compilation.
+‘eve-ruler-interval’               ‘30.0’                   Seconds between timestamp ruler markers.
+‘eve-seek-long-backward-seconds’   ‘30’                     Long backward seek step.
+‘eve-seek-long-forward-seconds’    ‘10’                     Long forward seek step.
+‘eve-seek-short-seconds’           ‘5’                      Short seek step.
+‘eve-show-words-by-default’        ‘nil’                    Show per-word timing annotations when a buffer opens.
+‘eve-transcribe-backend’           ‘"faster-whisper"’       Transcription backend.
+‘eve-transcribe-model’             ‘"medium.en"’            Model passed to the backend.
+‘eve-transcribe-tag-fillers’       ‘t’                      Tag filler words during transcription.
+‘eve-transcribe-verbatim’          ‘t’                      Pass ‘--verbatim’ to the transcription backend.
+‘eve-validation-on-save’           ‘t’                      Validate the manifest on every save.
+‘eve-validation-time-tolerance’    ‘0.1’                    Timing slack tolerated during validation (seconds).
+‘eve-video-layout’                 ‘nil’                    Arrange the screen automatically on the first play command.
+‘eve-video-layout-ratio’           ‘0.6’                    Fraction of screen height reserved for the video window.
+
+
+File: eve.info,  Node: Architecture,  Next: Development,  Prev: Configuration Reference,  Up: Top
+
+13 Architecture
+***************
+
+* Menu:
+
+* Two-layer boundary::
+* Shared contract::
+
+
+File: eve.info,  Node: Two-layer boundary,  Next: Shared contract,  Up: Architecture
+
+13.1 Two-layer boundary
+=======================
+
+Eve is deliberately split into two independent layers:
+
+   • *The Emacs package* (‘eve.el’) owns the user interface: major mode,
+     interactive editing commands, playback integration, asynchronous
+     process launching, and parsing of CLI output.  It does not
+     implement media-processing logic.
+
+   • *The CLI* (‘cli/’, Python) owns all media processing: manifest
+     generation, denoise orchestration, filler policy, timeline
+     construction, and FFmpeg invocation.  It does not embed
+     Emacs-specific behaviour.
+
+   This boundary means the CLI can be used standalone (e.g.  in CI
+pipelines) and the Emacs package can evolve independently.
+
+
+File: eve.info,  Node: Shared contract,  Prev: Two-layer boundary,  Up: Architecture
+
+13.2 Shared contract
+====================
+
+The two layers communicate through:
+
+   • *TJM files on disk* — the ‘.tjm.json’ format defined in
+     ‘docs/tjm-spec.md’.
+   • *Machine-readable JSON output* — the CLI emits structured JSON when
+     called with ‘--json’; the Emacs package parses it.
+   • *Stable exit codes* — 0 for success, non-zero for failure.
+
+
+File: eve.info,  Node: Development,  Next: Appendix A TJM v11 Specification,  Prev: Architecture,  Up: Top
+
+14 Development
+**************
+
+* Menu:
+
+* devenv commands::
+* Running tests::
+* Project layout::
+* Dependencies::
+
+
+File: eve.info,  Node: devenv commands,  Next: Running tests,  Up: Development
+
+14.1 devenv commands
+====================
+
+The project uses devenv (https://devenv.sh) at the repository root.
+
+     # Emacs
+     devenv shell -- format-elisp   # Format .el files
+     devenv shell -- parse           # Check Emacs Lisp syntax
+     devenv shell -- checkdoc        # Lint docstrings
+     devenv shell -- load-check      # Verify the package loads
+     devenv shell -- compile         # Byte-compile
+     devenv shell -- test-elisp      # Run ERT tests
+
+     # Python CLI
+     devenv shell -- sync-py         # Install Python deps
+     devenv shell -- format-py       # Format Python code
+     devenv shell -- lint-py         # Run ruff / mypy
+     devenv shell -- test-py         # Run pytest
+     devenv shell -- build-py        # Build the wheel
+     devenv shell -- run-cli -- --help
+
+     # Combined
+     devenv shell -- format          # Format all
+     devenv shell -- lint            # Lint all
+     devenv shell -- test            # Test all
+     devenv shell -- ci              # Full CI pipeline
+
+     # Documentation
+     devenv shell -- docs            # Generate eve.texi and eve.info
+
+
+File: eve.info,  Node: Running tests,  Next: Project layout,  Prev: devenv commands,  Up: Development
+
+14.2 Running tests
+==================
+
+     # ERT (Emacs Lisp)
+     devenv shell -- test-elisp
+     # or directly:
+     emacs --batch -Q -L . -l ert -l test/eve-test.el -f ert-run-tests-batch-and-exit
+
+     # Pytest (Python CLI)
+     devenv shell -- test-py
+     # or directly:
+     PYTHONPATH=cli/src python3 -m pytest cli/tests/
+
+
+File: eve.info,  Node: Project layout,  Next: Dependencies,  Prev: Running tests,  Up: Development
+
+14.3 Project layout
+===================
+
+     eve.el            Main Emacs library
+     test/             ERT test suite
+     docs/             User documentation
+       eve.org           This manual (source)
+       eve.texi          Texinfo export (generated)
+       eve.info          Info file (generated)
+       tjm-spec.md       TJM v1.1 format specification
+       internal/         Working documents and migration notes
+     cli/              Python package
+       src/eve_cli/      CLI source
+       tests/            Pytest suite
+     scripts/          Build helpers
+
+
+File: eve.info,  Node: Dependencies,  Prev: Project layout,  Up: Development
+
+14.4 Dependencies
+=================
+
+Hard requirements:
+
+   • Emacs 29.1+
+   • mpv (playback)
+   • ‘eve’ CLI (transcription and rendering)
+
+   Optional:
+
+   • ‘hydra’ — enables the ‘?’ graphical cheatsheet popup
+
+
+File: eve.info,  Node: Appendix A TJM v11 Specification,  Prev: Development,  Up: Top
+
+Appendix A Appendix A: TJM v1.1 Specification
+*********************************************
+
+The normative TJM v1.1 specification is maintained in ‘docs/tjm-spec.md’
+in the repository.  It defines:
+
+   • The complete JSON schema for ‘.tjm.json’ files.
+   • The tick-based timing model and its relationship to real-time
+     seconds.
+   • The edit overlay structure (‘edit’ field on segments and words).
+   • The deterministic render contract that ‘eve text-edit’ implements.
+   • Migration paths from earlier TJM versions.
+
+   To read the specification, open ‘docs/tjm-spec.md’ in the repository
+or visit the repository at <https://github.com/behaghel/eve.el>.
+
+
+Tag Table:
+Node: Top205
+Node: Introduction3313
+Node: The Big Idea3619
+Node: The Core Workflow4391
+Node: About This Manual5492
+Node: Getting Started5891
+Node: Installation6069
+Node: Requirements6302
+Node: Installing the CLI6627
+Node: Installing the Emacs package7282
+Node: straightel7540
+Node: Manual7758
+Node: Accessing the manual in Emacs8094
+Node: Quick Start8547
+Node: The TJM Manifest9852
+Node: Structure10084
+Node: How eve-mode renders a manifest11206
+Node: The raw JSON companion buffer11838
+Node: Transcription12272
+Node: Starting transcription from Emacs12508
+Node: Backends13140
+Node: Configuration14113
+Node: Installing optional backends14916
+Node: Editing15374
+Node: Navigation15667
+Node: Deletion and restoration16044
+Node: Splitting and merging16683
+Node: Reordering17175
+Node: Markers and sections17509
+Node: Inline editing18011
+Node: Metadata18342
+Node: Undo and redo18916
+Node: Validation19243
+Node: Filler Words19569
+Node: Concept19781
+Node: Configuration (1)20183
+Node: Commands20776
+Node: Auto-tagging on file open21716
+Node: B-Roll22065
+Node: Concept (1)22316
+Node: Editing b-roll metadata22875
+Node: Placeholders and templates23612
+Node: Continuation chains24000
+Node: Audio policy24454
+Node: Compilation and Rendering24821
+Node: Two modes draft and final25173
+Node: Under the hood25651
+Node: Pre-flight validation26754
+Node: Dry-run analysis27491
+Node: Checkpoint and resume28017
+Node: Progressive output28498
+Node: Configuration reference28900
+Node: CLI reference30244
+Node: Playback31373
+Node: Source playback31620
+Node: Rendered playback32081
+Node: Playback tracking and segment highlighting32579
+Node: Controls33006
+Node: Video layout33987
+Node: Display35523
+Node: Timestamp ruler35709
+Node: Hiding deleted segments36306
+Node: Word-level display36740
+Node: Key Bindings37554
+Node: Single-key bindings37795
+Node: Navigation (1)38133
+Node: Editing (1)38493
+Node: Metadata (1)38949
+Node: Fillers39307
+Node: Playback (1)39552
+Node: Structure and display40009
+Node: C-c prefix bindings40399
+Node: Playback-mode overrides41350
+Node: The hydra cheatsheet41677
+Node: Configuration Reference42079
+Node: Architecture45739
+Node: Two-layer boundary45926
+Node: Shared contract46730
+Node: Development47202
+Node: devenv commands47427
+Node: Running tests48623
+Node: Project layout49060
+Node: Dependencies49738
+Node: Appendix A TJM v11 Specification50053
+
+End Tag Table
+
+
+Local Variables:
+coding: utf-8
+Info-documentlanguage: en
+End:

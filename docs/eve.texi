@@ -1,0 +1,1595 @@
+\input texinfo    @c -*- texinfo -*-
+@c %**start of header
+@setfilename eve.info
+@settitle Eve Manual
+@documentencoding UTF-8
+@documentlanguage en
+@c %**end of header
+
+@dircategory Emacs misc features
+@direntry
+* Eve: (eve).           Text-driven video editing in Emacs.
+@end direntry
+
+@finalout
+@titlepage
+@title Eve Manual
+@author Hubert Behaghel
+@end titlepage
+
+@contents
+
+@ifnottex
+@node Top
+@top Eve Manual
+@end ifnottex
+
+@menu
+* Introduction::
+* Getting Started::              Installing and first steps.
+* The TJM Manifest::             Structure and representation of .tjm.json files.
+* Transcription::                Generating manifests from audio and video files.
+* Editing::                      Navigation, deletion, splitting, merging, and metadata.
+* Filler Words::                 Non-destructive tagging and deletion of filler words.
+* B-Roll::                       Attaching and managing supplementary video footage.
+* Compilation and Rendering::    Turning the manifest into a video file.
+* Playback::                     Live preview of source and rendered video.
+* Display::                      Timestamp ruler, hidden segments, and word-level view.
+* Key Bindings::                 Complete keybinding reference.
+* Configuration Reference::      Alphabetical listing of all customizable variables.
+* Architecture::                 Two-layer design and the Emacs–CLI contract.
+* Development::                  Working on eve.el and the CLI.
+* Appendix A TJM v1.1 Specification: Appendix A TJM v11 Specification.  Reference to the normative TJM format specification.
+
+@detailmenu
+--- The Detailed Node Listing ---
+
+Introduction
+
+* The Big Idea::
+* The Core Workflow::
+* About This Manual::
+
+Getting Started
+
+* Installation::
+* Quick Start::
+
+Installation
+
+* Requirements::
+* Installing the CLI::
+* Installing the Emacs package::
+* Accessing the manual in Emacs::
+
+Installing the Emacs package
+
+* straight.el: straightel. 
+* Manual::
+
+The TJM Manifest
+
+* Structure::
+* How eve-mode renders a manifest::
+* The raw JSON companion buffer::
+
+Transcription
+
+* Starting transcription from Emacs::
+* Backends::
+* Configuration::
+* Installing optional backends::
+
+Editing
+
+* Navigation::
+* Deletion and restoration::
+* Splitting and merging::
+* Reordering::
+* Markers and sections::
+* Inline editing::
+* Metadata::
+* Undo and redo::
+* Validation::
+
+Filler Words
+
+* Concept::
+* Configuration: Configuration (1). 
+* Commands::
+* Auto-tagging on file open::
+
+B-Roll
+
+* Concept: Concept (1). 
+* Editing b-roll metadata::
+* Placeholders and templates::
+* Continuation chains::
+* Audio policy::
+
+Compilation and Rendering
+
+* Two modes draft and final::
+* Under the hood::
+* Pre-flight validation::
+* Dry-run analysis::
+* Checkpoint and resume::
+* Progressive output::
+* Configuration reference::
+* CLI reference::
+
+Playback
+
+* Source playback::
+* Rendered playback::
+* Playback tracking and segment highlighting::
+* Controls::
+* Video layout::
+
+Display
+
+* Timestamp ruler::
+* Hiding deleted segments::
+* Word-level display::
+
+Key Bindings
+
+* Single-key bindings::
+* C-c prefix bindings::
+* Playback-mode overrides::
+* The hydra cheatsheet::
+
+Single-key bindings
+
+* Navigation: Navigation (1). 
+* Editing: Editing (1). 
+* Metadata: Metadata (1). 
+* Fillers::
+* Playback: Playback (1). 
+* Structure and display::
+
+Architecture
+
+* Two-layer boundary::
+* Shared contract::
+
+Development
+
+* devenv commands::
+* Running tests::
+* Project layout::
+* Dependencies::
+
+@end detailmenu
+@end menu
+
+@node Introduction
+@chapter Introduction
+
+Eve is an Emacs major mode for editing spoken-word videos by manipulating text
+instead of cutting timelines manually.
+
+@menu
+* The Big Idea::
+* The Core Workflow::
+* About This Manual::
+@end menu
+
+@node The Big Idea
+@section The Big Idea
+
+Traditional video editing works at the frame level: you scrub a timeline, find
+a cut point, and trim.  When your source material is a talking-head recording
+or a podcast, almost every edit decision is driven by what was @emph{said} — not by
+what is visible.
+
+Eve flips the model.  A Textual Join Manifest (@samp{.tjm.json}) stores your video
+as a sequence of transcribed segments, each with per-word timestamps.  You
+read and edit the transcript in Emacs.  Delete a word, and it disappears from
+the rendered video.  Reorder paragraphs, and the clips follow.  Annotate a
+segment with a b-roll clip, and the renderer splices it in.  The text is the
+edit.
+
+@node The Core Workflow
+@section The Core Workflow
+
+The typical eve session looks like this:
+
+@enumerate
+@item
+@strong{Transcribe} — run @samp{M-x eve-transcribe} on a directory of raw recordings.
+Eve calls @samp{eve transcribe} and opens the resulting @samp{.tjm.json} in eve-mode.
+
+@item
+@strong{Edit} — delete filler words (@samp{d}, @samp{f}, @samp{F}), reorder segments (@samp{J}, @samp{K}),
+add markers to name sections (@samp{o}), attach b-roll (@samp{b}).
+
+@item
+@strong{Preview} — press @samp{C-c SPC} to play the source clip from point, or
+@samp{C-c C-c} to compile a draft video in seconds.
+
+@item
+@strong{Compile} — @samp{C-c C-c} renders the manifest as an @samp{.mp4}.  Draft renders
+are fast (mjpeg, parallel, cached).  @samp{C-u C-c C-c} produces a final
+delivery-quality H.264 export.
+
+@item
+@strong{Iterate} — the segment cache means only changed segments re-encode.
+Speculative pre-rendering warms the cache on every save, so pressing
+@samp{C-c C-c} after a small edit is nearly instant.
+@end enumerate
+
+@node About This Manual
+@section About This Manual
+
+This manual covers the Emacs package (@samp{eve.el}) and the accompanying CLI
+(@samp{eve text-edit}, @samp{eve transcribe}).  The normative TJM v1.1 format
+specification is in @samp{docs/tjm-spec.md}; this manual cross-references it but
+does not reproduce it in full.
+
+@node Getting Started
+@chapter Getting Started
+
+@menu
+* Installation::
+* Quick Start::
+@end menu
+
+@node Installation
+@section Installation
+
+@menu
+* Requirements::
+* Installing the CLI::
+* Installing the Emacs package::
+* Accessing the manual in Emacs::
+@end menu
+
+@node Requirements
+@subsection Requirements
+
+@itemize
+@item
+@strong{Emacs} 29.1 or later
+@item
+@strong{mpv} for live playback tracking
+@item
+@strong{eve CLI} for transcription and rendering (see below)
+@item
+@strong{hydra} (optional) for the @samp{?} keybinding cheatsheet popup
+@end itemize
+
+@node Installing the CLI
+@subsection Installing the CLI
+
+The @samp{eve} CLI ships as a Python package inside this repository.  On a fresh
+clone it bootstraps itself automatically via @samp{scripts/run-cli.sh} using the
+pre-built wheel in @samp{cli/dist/} — no @samp{uv} or Python package manager required
+at runtime.
+
+To install @samp{eve} globally so @samp{M-x eve-transcribe} can find it:
+
+@example
+pip install cli/dist/eve_cli-*.whl
+# or with uv:
+uv pip install cli/dist/eve_cli-*.whl
+@end example
+
+Verify it works:
+
+@example
+eve doctor --json
+@end example
+
+@node Installing the Emacs package
+@subsection Installing the Emacs package
+
+@menu
+* straight.el: straightel. 
+* Manual::
+@end menu
+
+@node straightel
+@subsubsection straight.el
+
+@lisp
+(use-package eve
+  :straight (:type git :host github :repo "behaghel/eve.el"))
+@end lisp
+
+@node Manual
+@subsubsection Manual
+
+Clone the repository, add it to @samp{load-path}, and require it:
+
+@lisp
+(add-to-list 'load-path "/path/to/eve.el")
+(require 'eve)
+@end lisp
+
+Opening any @samp{*.tjm.json} file then activates @samp{eve-mode} automatically.
+
+@node Accessing the manual in Emacs
+@subsection Accessing the manual in Emacs
+
+After installing the package, add the @samp{docs/} directory to Emacs's Info path:
+
+@lisp
+(add-to-list 'Info-directory-list
+             (expand-file-name "docs" (file-name-directory (locate-library "eve"))))
+@end lisp
+
+Then browse the manual with @samp{C-h i m eve RET}.
+
+@node Quick Start
+@section Quick Start
+
+This walkthrough takes you from a raw recording to a rendered clip in five
+steps.
+
+@enumerate
+@item
+@strong{Transcribe a recording}
+
+@example
+M-x eve-transcribe RET
+@end example
+
+Select the directory containing your @samp{.mp4} files.  Eve starts
+@samp{eve transcribe} in the background.  When it finishes, the manifest opens
+automatically in eve-mode.
+
+@item
+@strong{Read through the transcript}
+
+Navigate with @samp{j} / @samp{k}.  The buffer shows each spoken segment as a block
+of text.  Timestamps appear in the right margin.
+
+@item
+@strong{Delete unwanted content}
+
+Place point on a word and press @samp{d} to delete it.  Press @samp{D} to delete the
+whole segment.  Press @samp{f} on a word to tag it as a filler; press @samp{F} to
+delete all tagged fillers at once.
+
+@item
+@strong{Compile a draft preview}
+
+@example
+C-c C-c
+@end example
+
+Eve validates the manifest, pre-renders changed segments in the background,
+and produces a draft @samp{.mp4} in seconds.  Play it back with
+@samp{C-u C-c SPC} or your usual player.
+
+@item
+@strong{Export for delivery}
+
+@example
+C-u C-c C-c
+@end example
+
+Compiles at full H.264 quality using the same segment cache.  Only
+segments that haven't been cached yet need re-encoding.
+@end enumerate
+
+@node The TJM Manifest
+@chapter The TJM Manifest
+
+@menu
+* Structure::
+* How eve-mode renders a manifest::
+* The raw JSON companion buffer::
+@end menu
+
+@node Structure
+@section Structure
+
+A TJM manifest is a JSON file with two top-level arrays:
+
+@itemize
+@item
+@samp{sources} — a list of media files referenced by the edit.  Each entry has
+an @samp{id} used throughout the manifest and a @samp{file} path.
+
+@item
+@samp{segments} — the ordered timeline.  Each segment references a source, a
+start and end time (in seconds or ticks), and the spoken text.  Optional
+fields carry per-word timestamps, b-roll metadata, speaker identity, tags,
+and notes.
+@end itemize
+
+A minimal manifest:
+
+@example
+@{
+  "version": 1,
+  "sources": [
+    @{ "id": "clip01", "file": "raw/recording.mp4" @}
+  ],
+  "segments": [
+    @{
+      "id": "clip01-s0001",
+      "source": "clip01",
+      "start": 12.34,
+      "end": 15.60,
+      "text": "This is what was said."
+    @}
+  ]
+@}
+@end example
+
+The TJM v1.1 specification in @samp{docs/tjm-spec.md} defines every field,
+including the tick-based timing model, the edit overlay, and the render
+contract.
+
+@node How eve-mode renders a manifest
+@section How eve-mode renders a manifest
+
+Eve-mode presents the manifest as readable text.  Each segment is shown as a
+paragraph with its text content.  Markers appear as section headings.
+Deleted words are hidden by default (toggle with @samp{C-c C-h}).  Per-word
+timestamps are hidden unless @samp{C-c C-w} is active.
+
+The buffer is read-only as prose — you interact through keybindings, not
+direct text editing.  The underlying JSON is always kept in sync.
+
+@node The raw JSON companion buffer
+@section The raw JSON companion buffer
+
+Press @samp{C-c C-o} (@samp{eve-open-raw-json}) to open the underlying JSON in a
+companion buffer.  This is useful for low-level inspection or edits that
+the structured commands don't cover.  Saving the companion buffer reloads
+the eve-mode view.
+
+@node Transcription
+@chapter Transcription
+
+@menu
+* Starting transcription from Emacs::
+* Backends::
+* Configuration::
+* Installing optional backends::
+@end menu
+
+@node Starting transcription from Emacs
+@section Starting transcription from Emacs
+
+Two commands launch transcription:
+
+@itemize
+@item
+@samp{M-x eve-transcribe} prompts for a directory, scans for media files, and
+starts @samp{eve transcribe} asynchronously.  On success the manifest opens
+automatically in eve-mode.
+
+@item
+@samp{M-x eve-dired-transcribe} runs from Dired using the marked files (or the
+file at point when nothing is marked).
+@end itemize
+
+On failure, the @samp{*eve transcribe*} buffer appears so you can inspect the error
+output.
+
+@node Backends
+@section Backends
+
+@samp{eve transcribe} supports three backends:
+
+@multitable {aaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Backend
+@tab Flag
+@tab Notes
+@item @samp{faster-whisper}
+@tab @samp{--backend faster-whisper}
+@tab Default.  Fast, local, good accuracy.
+@item @samp{transformers}
+@tab @samp{--backend transformers}
+@tab HuggingFace models.  Needs optional deps.
+@item @samp{nemo}
+@tab @samp{--backend nemo}
+@tab NVIDIA NeMo.  Needs optional deps.
+@end multitable
+
+The @samp{--verbatim} flag (on by default in Emacs) biases @samp{faster-whisper} toward
+preserving disfluencies and filler words.  For @samp{transformers} and @samp{nemo},
+choose a verbatim-friendly model instead.
+
+Good starting points:
+@itemize
+@item
+@samp{transformers}: @samp{nyrahealth/CrisperWhisper}
+@item
+@samp{nemo}: @samp{nvidia/parakeet-ctc-1.1b}
+@end itemize
+
+@node Configuration
+@section Configuration
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Variable
+@tab Default
+@tab Description
+@item @samp{eve-transcribe-backend}
+@tab @samp{"faster-whisper"}
+@tab Backend name passed to @samp{eve transcribe}.
+@item @samp{eve-transcribe-model}
+@tab @samp{"medium.en"}
+@tab Model identifier.
+@item @samp{eve-transcribe-verbatim}
+@tab @samp{t}
+@tab Pass @samp{--verbatim} to the backend.
+@item @samp{eve-transcribe-tag-fillers}
+@tab @samp{t}
+@tab Tag filler words during transcription.
+@item @samp{eve-media-extensions}
+@tab @samp{("mp4" "mov" ...)}
+@tab File types scanned by @samp{eve-transcribe}.
+@end multitable
+
+@node Installing optional backends
+@section Installing optional backends
+
+The @samp{transformers} and @samp{nemo} backends need extra Python dependencies.  From
+the repository root:
+
+@example
+uv sync --project cli --extra transformers
+# or
+uv sync --project cli --extra nemo
+@end example
+
+Or from @samp{cli/}:
+
+@example
+uv pip install .[transformers]
+uv pip install .[nemo]
+@end example
+
+@node Editing
+@chapter Editing
+
+@menu
+* Navigation::
+* Deletion and restoration::
+* Splitting and merging::
+* Reordering::
+* Markers and sections::
+* Inline editing::
+* Metadata::
+* Undo and redo::
+* Validation::
+@end menu
+
+@node Navigation
+@section Navigation
+
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@tab Description
+@item @samp{j} / @samp{n}
+@tab @samp{eve-next-segment}
+@tab Move to next segment.
+@item @samp{k} / @samp{p}
+@tab @samp{eve-previous-segment}
+@tab Move to previous segment.
+@end multitable
+
+@node Deletion and restoration
+@section Deletion and restoration
+
+@itemize
+@item
+@samp{d} (@samp{eve-delete-word}) — marks the word at point as deleted.  Deleted
+words are hidden in the buffer (@samp{eve-hide-deleted-mode}) and excluded from
+compilation.  The operation is non-destructive: the word remains in the JSON
+and can be restored.
+
+@item
+@samp{D} (@samp{eve-delete-segment}) — marks the entire current segment as deleted.
+@end itemize
+
+Deleted content is shown or hidden with @samp{C-c C-h} (@samp{eve-hide-deleted-mode}).
+
+@node Splitting and merging
+@section Splitting and merging
+
+@itemize
+@item
+@samp{s} or @samp{|} (@samp{eve-split-segment}) — splits the current segment at point,
+creating two segments with the text and timing divided at the cut.
+
+@item
+@samp{m} or @samp{)} (@samp{eve-merge-with-next}) — merges the current segment with the
+one below, combining text and adjusting the end time.
+@end itemize
+
+@node Reordering
+@section Reordering
+
+@itemize
+@item
+@samp{J} (@samp{eve-move-segment-down}) — move the current segment one position down.
+@item
+@samp{K} (@samp{eve-move-segment-up}) — move the current segment one position up.
+@end itemize
+
+@node Markers and sections
+@section Markers and sections
+
+Press @samp{o} (@samp{eve-insert-marker}) to insert a marker above the current segment.
+Markers act as named section headings.  They appear in the buffer as bold
+titles.
+
+When you compile with @samp{C-c C-c} while point is on a marker, only the segments
+in that section are compiled.  This is useful for working on one chapter of a
+longer video.
+
+@node Inline editing
+@section Inline editing
+
+Press @samp{e} (@samp{eve-dwim-edit}) to edit the text or metadata of the segment at
+point.  The command adapts to context: on a word it edits the spoken text; on
+a marker it edits the title.
+
+@node Metadata
+@section Metadata
+
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@tab Description
+@item @samp{t}
+@tab @samp{eve-toggle-tag}
+@tab Toggle a tag on the segment at point.
+@item @samp{i}
+@tab @samp{eve-edit-speaker}
+@tab Set the speaker label for the segment.
+@item @samp{r}
+@tab @samp{eve-edit-start-end}
+@tab Edit the segment's start/end timecodes.
+@item @samp{C-c C-n}
+@tab @samp{eve-edit-notes}
+@tab Edit free-form notes for the segment.
+@end multitable
+
+@node Undo and redo
+@section Undo and redo
+
+@itemize
+@item
+@samp{u} (@samp{eve-undo}) — undo the last edit.
+@item
+@samp{C-r} (@samp{eve-redo}) — redo a previously undone edit.
+@end itemize
+
+Eve maintains its own undo stack separate from Emacs's built-in undo.
+
+@node Validation
+@section Validation
+
+Eve validates the manifest automatically on every save (controlled by
+@samp{eve-validation-on-save}).  Manual validation runs with @samp{C-c C-v}
+(@samp{eve-validate}).  Timing inconsistencies are reported in the echo area.
+
+@node Filler Words
+@chapter Filler Words
+
+@menu
+* Concept::
+* Configuration: Configuration (1). 
+* Commands::
+* Auto-tagging on file open::
+@end menu
+
+@node Concept
+@section Concept
+
+Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
+workflow is non-destructive: words are @emph{tagged} as fillers first, then
+@emph{optionally deleted}.  Tagged fillers are highlighted in the buffer with a
+distinct face and excluded from compilation.  You can untag them at any time.
+
+@node Configuration (1)
+@section Configuration
+
+@lisp
+;; Plain strings — single words or multi-word phrases
+(setq eve-filler-phrases '("um" "uh" "you know" "to be honest with you"))
+@end lisp
+
+@samp{eve-filler-phrases} stores phrases as plain strings.  Matching is
+case-insensitive and ignores punctuation.  The list is persisted when you use
+the interactive add commands.
+
+The legacy @samp{eve-filler-regex} variable is still honoured for backwards
+compatibility but @samp{eve-filler-phrases} is preferred.
+
+@node Commands
+@section Commands
+
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@tab Description
+@item @samp{f}
+@tab @samp{eve-dwim-filler}
+@tab Add the word at point to phrases and retag; or delete region as filler.
+@item @samp{F}
+@tab @samp{eve-delete-fillers}
+@tab Mark all tagged fillers as deleted.
+@item @samp{C-c C-d}
+@tab @samp{eve-delete-fillers}
+@tab Same as @samp{F} from the @samp{C-c} prefix map.
+@item —
+@tab @samp{M-x eve-tag-fillers}
+@tab Tag all matching words in the buffer.
+@item —
+@tab @samp{M-x eve-add-filler-at-point}
+@tab Add the word at point to @samp{eve-filler-phrases} and retag.
+@item —
+@tab @samp{M-x eve-add-filler-region}
+@tab Add the selected phrase to @samp{eve-filler-phrases} and retag.
+@end multitable
+
+@node Auto-tagging on file open
+@section Auto-tagging on file open
+
+Fillers are tagged automatically every time a TJM manifest is opened.  If you
+add a new phrase to @samp{eve-filler-phrases}, reopen the file or run
+@samp{M-x eve-tag-fillers} to apply the updated list.
+
+@node B-Roll
+@chapter B-Roll
+
+@menu
+* Concept: Concept (1). 
+* Editing b-roll metadata::
+* Placeholders and templates::
+* Continuation chains::
+* Audio policy::
+@end menu
+
+@node Concept (1)
+@section Concept
+
+B-roll is supplementary footage that plays over (or instead of) the main
+recording.  Eve supports two b-roll modes:
+
+@itemize
+@item
+@strong{Replace} — the b-roll clip completely replaces the source video for the
+duration of the segment.  The source audio is preserved (or you can use the
+b-roll's audio).
+
+@item
+@strong{Pip} (picture-in-picture) — the b-roll is composited as an overlay on top
+of the source video.  Position and size are configurable.
+@end itemize
+
+@node Editing b-roll metadata
+@section Editing b-roll metadata
+
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@tab Description
+@item @samp{b}
+@tab @samp{eve-edit-broll}
+@tab Edit the b-roll entry for the current segment.
+@item @samp{B}
+@tab @samp{eve-toggle-broll-continue}
+@tab Mark the segment as continuing the previous b-roll chain.
+@item @samp{C-c C-b}
+@tab @samp{eve-edit-broll-placeholders}
+@tab Edit the placeholder substitutions for the segment.
+@end multitable
+
+B-roll metadata is stored inside the segment's @samp{edit.broll} field in the JSON@.
+
+@node Placeholders and templates
+@section Placeholders and templates
+
+B-roll entries can contain placeholder tokens (e.g., @samp{[PRODUCT]}) that are
+resolved at render time.  Use @samp{C-c C-b} to define the concrete values for
+each placeholder in the current segment.
+
+@node Continuation chains
+@section Continuation chains
+
+When a b-roll clip spans multiple consecutive segments, mark the second and
+subsequent segments with @samp{B} (@samp{eve-toggle-broll-continue}).  The renderer
+treats the chain as a single b-roll clip that plays through all of them,
+advancing its offset continuously rather than restarting.
+
+@node Audio policy
+@section Audio policy
+
+Each b-roll entry has an @samp{audio} field:
+
+@itemize
+@item
+@samp{source} (default) — use the audio from the main recording.
+@item
+@samp{broll} — use the audio track from the b-roll clip.
+@end itemize
+
+Edit this via @samp{M-x eve-edit-broll} on the relevant segment.
+
+@node Compilation and Rendering
+@chapter Compilation and Rendering
+
+@menu
+* Two modes draft and final::
+* Under the hood::
+* Pre-flight validation::
+* Dry-run analysis::
+* Checkpoint and resume::
+* Progressive output::
+* Configuration reference::
+* CLI reference::
+@end menu
+
+@node Two modes draft and final
+@section Two modes: draft and final
+
+@samp{C-c C-c} (@samp{eve-compile}) compiles the manifest at draft quality — fast
+enough to catch mistakes before committing to a full export.
+
+@samp{C-u C-c C-c} compiles at final quality (H.264 medium/CRF 18) for delivery.
+
+The quality used can be changed permanently with @samp{eve-compile-quality}.
+
+@node Under the hood
+@section Under the hood
+
+Eve's rendering pipeline is designed to be fast after the first run:
+
+@itemize
+@item
+@strong{Quality profiles} — draft uses MJPEG encoding at ultrafast preset; final
+uses H.264 at medium preset.  The codec and preset are resolved
+automatically from the @samp{--quality} flag.
+
+@item
+@strong{Parallel encoding} — segments are encoded concurrently across all available
+CPU cores (@samp{eve-compile-jobs}).
+
+@item
+@strong{Segment cache} — rendered segments are stored in @samp{.eve-cache/} next to the
+manifest, keyed by a SHA-256 hash of the segment's content and encoding
+settings.  Unchanged segments are reused; only changed ones re-encode.
+
+@item
+@strong{Speculative pre-rendering} — after each save, an idle timer
+(@samp{eve-auto-render-idle-seconds}) fires a background render of the segments
+that changed.  When you press @samp{C-c C-c}, the cache is already warm and
+compilation reduces to a concat step.
+@end itemize
+
+@node Pre-flight validation
+@section Pre-flight validation
+
+Before starting a render, eve validates the manifest:
+
+@itemize
+@item
+All source files must exist and be readable.
+@item
+All b-roll files must exist.
+@item
+Segment timecodes must be non-negative and end after start.
+@item
+Words must fall within their segment bounds.
+@end itemize
+
+Warnings appear in the echo area.  Errors block compilation unless you
+confirm.  Run validation explicitly with @samp{C-c C-v} (@samp{eve-validate}).
+
+If the estimated render time (from the dry-run analysis) exceeds
+@samp{eve-compile-confirm-threshold} seconds, eve asks for confirmation.
+
+@node Dry-run analysis
+@section Dry-run analysis
+
+Before rendering, eve can report which segments would be re-encoded and
+estimate the render time:
+
+@example
+eve text-edit manifest.tjm.json --output out.mp4 --dry-run
+@end example
+
+The output (JSON with @samp{--json}) includes @samp{total_segments},
+@samp{changed_segments}, and @samp{estimated_seconds}.  This information feeds the
+pre-flight confirmation prompt.
+
+@node Checkpoint and resume
+@section Checkpoint and resume
+
+If a render is interrupted, eve writes a checkpoint file in @samp{.eve-cache/} as
+segments complete.  The next run picks up from where it left off: segments
+already in the cache are reused, and only the remaining ones are encoded.
+
+Pass @samp{--no-resume} to force a fresh render from scratch.
+
+@node Progressive output
+@section Progressive output
+
+With @samp{--partial-every N}, eve writes a partial @samp{<output>.partial.mp4} after
+every N segments complete.  A JSON event is emitted on stdout for each
+partial file, which Emacs can use to update a live preview.
+
+@node Configuration reference
+@section Configuration reference
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Variable
+@tab Default
+@tab Description
+@item @samp{eve-compile-quality}
+@tab @samp{"draft"}
+@tab @samp{"draft"} for fast preview, @samp{"final"} for delivery.
+@item @samp{eve-compile-jobs}
+@tab @samp{0}
+@tab Parallel encode workers; 0 = auto-detect CPU count.
+@item @samp{eve-compile-scale}
+@tab @samp{1.0}
+@tab Resolution scale for draft (e.g. @samp{0.5} = half res).
+@item @samp{eve-compile-cache}
+@tab @samp{t}
+@tab Use the @samp{.eve-cache/} segment cache.
+@item @samp{eve-compile-confirm-threshold}
+@tab @samp{30}
+@tab Estimated seconds above which a confirmation prompt appears.
+@item @samp{eve-auto-render}
+@tab @samp{t}
+@tab Speculatively pre-render changed segments after each save.
+@item @samp{eve-auto-render-idle-seconds}
+@tab @samp{2.0}
+@tab Idle delay before the speculative render fires.
+@item @samp{eve-play-after-compile}
+@tab @samp{nil}
+@tab When non-nil, play the output automatically after compilation.
+@item @samp{eve-preserve-gaps-max}
+@tab @samp{2.0}
+@tab Maximum gap (seconds) that is preserved between segments.
+@end multitable
+
+@node CLI reference
+@section CLI reference
+
+Under normal Emacs usage you never need to call @samp{eve text-edit} directly —
+the Emacs commands handle all flags.  For scripting or CI:
+
+@example
+eve text-edit manifest.tjm.json --output out.mp4 [FLAGS]
+
+--quality draft|final   Encoding profile (default: draft)
+--codec h264|mjpeg      Override intermediate codec
+--scale FACTOR          Resolution scale (e.g. 0.5)
+--jobs N                Parallel workers (0 = auto)
+--cache-dir PATH        Segment cache location (default: .eve-cache/)
+--no-cache              Disable segment cache
+--cache-max-size GB     Cache eviction threshold (default: 10)
+--validate              Check manifest without rendering
+--dry-run               Report cache hits/misses and estimated time
+--segments ID [ID …]    Pre-render only listed segments into cache
+--no-resume             Ignore checkpoint from a prior interrupted render
+--partial-every N       Write a partial .mp4 every N segments
+@end example
+
+@node Playback
+@chapter Playback
+
+@menu
+* Source playback::
+* Rendered playback::
+* Playback tracking and segment highlighting::
+* Controls::
+* Video layout::
+@end menu
+
+@node Source playback
+@section Source playback
+
+@samp{C-c SPC} (@samp{eve-play}) or @samp{SPC} / @samp{RET} (@samp{eve-play-segment}) plays the
+source media from the current segment to the end of the clip.  All segments
+from the same source file are tracked, so the playback highlight follows even
+across segments.
+
+Playback position maps directly to the original recording timestamps.
+
+@node Rendered playback
+@section Rendered playback
+
+@samp{C-u C-c SPC} (@samp{eve-play} with prefix) or @samp{C-c C-p} (@samp{eve-play-rendered})
+plays the compiled output file.  If the output is missing or older than the
+manifest, eve compiles it first.
+
+Progress is tracked using the post-edit rendered timeline; deleted content is
+skipped in the position calculation.
+
+@node Playback tracking and segment highlighting
+@section Playback tracking and segment highlighting
+
+Eve integrates with mpv via its JSON IPC socket.  The currently-playing
+segment is highlighted with a vivid amber overlay (@samp{eve-playback-face}),
+distinct from both the focus highlight and the region.
+
+@node Controls
+@section Controls
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Action
+@item @samp{SPC} (during playback)
+@tab Pause / resume.
+@item Move point to a segment
+@tab Seek mpv to that segment's start time.
+@item @samp{C-c k} / @samp{M-x eve-stop-playback}
+@tab Stop playback and restore keybindings.
+@item @samp{<left>}
+@tab Seek backward @samp{eve-seek-short-seconds} (default 5s).
+@item @samp{<right>}
+@tab Seek forward @samp{eve-seek-short-seconds} (default 5s).
+@item @samp{S-<left>}
+@tab Seek backward @samp{eve-seek-long-backward-seconds} (default 30s).
+@item @samp{S-<right>}
+@tab Seek forward @samp{eve-seek-long-forward-seconds} (default 10s).
+@end multitable
+
+Stopping playback restores all keybindings to their normal state.
+
+@node Video layout
+@section Video layout
+
+Set @samp{eve-video-layout} to @samp{t} to arrange the screen for editing: Emacs takes
+the bottom portion of the display and mpv sits directly above it —
+borderless, always-on-top, with automatic letterboxing.
+
+@lisp
+(setq eve-video-layout t)
+
+;; Fraction of screen height for the video window (default 0.6 = 60%)
+(setq eve-video-layout-ratio 0.6)
+@end lisp
+
+The layout activates on the first play command and the original frame geometry
+is restored when playback stops.  Skipped when Emacs is in macOS native
+fullscreen.
+
+Configuration:
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Variable
+@tab Default
+@tab Description
+@item @samp{eve-play-program}
+@tab @samp{"mpv"}
+@tab Player binary.
+@item @samp{eve-play-args}
+@tab @samp{(list "--quiet" ...)}
+@tab Extra arguments passed to the player.
+@item @samp{eve-video-layout}
+@tab @samp{nil}
+@tab Enable automatic screen layout on play.
+@item @samp{eve-video-layout-ratio}
+@tab @samp{0.6}
+@tab Fraction of screen height for the video.
+@item @samp{eve-seek-short-seconds}
+@tab @samp{5}
+@tab Short seek step in seconds.
+@item @samp{eve-seek-long-backward-seconds}
+@tab @samp{30}
+@tab Long backward seek step in seconds.
+@item @samp{eve-seek-long-forward-seconds}
+@tab @samp{10}
+@tab Long forward seek step in seconds.
+@end multitable
+
+@node Display
+@chapter Display
+
+@menu
+* Timestamp ruler::
+* Hiding deleted segments::
+* Word-level display::
+@end menu
+
+@node Timestamp ruler
+@section Timestamp ruler
+
+@samp{eve-ruler-mode} (active by default) displays @samp{[hh:mm:ss]} markers in the
+right margin.  Each marker is placed next to the segment that @emph{reaches} that
+milestone in the rendered video — deleted content is excluded from the running
+total.
+
+The total rendered duration appears in the mode line.
+
+@lisp
+;; Change the milestone interval (default 30 seconds)
+(setq eve-ruler-interval 60.0)
+@end lisp
+
+Toggle the ruler with @samp{C-c C-l} (@samp{eve-ruler-mode}).
+
+@node Hiding deleted segments
+@section Hiding deleted segments
+
+@samp{C-c C-h} (@samp{eve-hide-deleted-mode}) toggles visibility of deleted words and
+segments.  When active (the default), deleted content is hidden and the
+transcript reads as it will render.  When inactive, deleted content appears
+with a strikethrough face.
+
+@node Word-level display
+@section Word-level display
+
+@samp{C-c C-w} (@samp{eve-toggle-words}) shows or hides per-word timing annotations
+under each segment.  Useful when inspecting or adjusting precise cut points.
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Variable
+@tab Default
+@tab Description
+@item @samp{eve-ruler-interval}
+@tab @samp{30.0}
+@tab Seconds between ruler markers.
+@item @samp{eve-show-words-by-default}
+@tab @samp{nil}
+@tab Show word timings on buffer open.
+@item @samp{eve-validation-on-save}
+@tab @samp{t}
+@tab Validate manifest on every save.
+@item @samp{eve-validation-time-tolerance}
+@tab @samp{0.1}
+@tab Timing slack tolerated during validation (seconds).
+@end multitable
+
+@node Key Bindings
+@chapter Key Bindings
+
+@menu
+* Single-key bindings::
+* C-c prefix bindings::
+* Playback-mode overrides::
+* The hydra cheatsheet::
+@end menu
+
+@node Single-key bindings
+@section Single-key bindings
+
+These bindings are active in eve-mode.
+
+@menu
+* Navigation: Navigation (1). 
+* Editing: Editing (1). 
+* Metadata: Metadata (1). 
+* Fillers::
+* Playback: Playback (1). 
+* Structure and display::
+@end menu
+
+@node Navigation (1)
+@subsection Navigation
+
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{j} / @samp{n}
+@tab @samp{eve-next-segment}
+@item @samp{k} / @samp{p}
+@tab @samp{eve-previous-segment}
+@item @samp{J}
+@tab @samp{eve-move-segment-down}
+@item @samp{K}
+@tab @samp{eve-move-segment-up}
+@end multitable
+
+@node Editing (1)
+@subsection Editing
+
+@multitable {aaaaa} {aaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{d}
+@tab @samp{eve-delete-word}
+@item @samp{D}
+@tab @samp{eve-delete-segment}
+@item @samp{s}
+@tab @samp{eve-split-segment}
+@item @samp{m}
+@tab @samp{eve-merge-with-next}
+@item @samp{u}
+@tab @samp{eve-undo}
+@item @samp{C-r}
+@tab @samp{eve-redo}
+@item @samp{e}
+@tab @samp{eve-dwim-edit}
+@item @samp{o}
+@tab @samp{eve-insert-marker}
+@end multitable
+
+@node Metadata (1)
+@subsection Metadata
+
+@multitable {aaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{t}
+@tab @samp{eve-toggle-tag}
+@item @samp{b}
+@tab @samp{eve-edit-broll}
+@item @samp{B}
+@tab @samp{eve-toggle-broll-continue}
+@item @samp{i}
+@tab @samp{eve-edit-speaker}
+@item @samp{r}
+@tab @samp{eve-edit-start-end}
+@end multitable
+
+@node Fillers
+@subsection Fillers
+
+@multitable {aaa} {aaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{f}
+@tab @samp{eve-dwim-filler}
+@item @samp{F}
+@tab @samp{eve-delete-fillers}
+@end multitable
+
+@node Playback (1)
+@subsection Playback
+
+@multitable {aaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{SPC} / @samp{RET}
+@tab @samp{eve-play-segment}
+@item @samp{<left>}
+@tab @samp{eve-seek-short-backward}
+@item @samp{<right>}
+@tab @samp{eve-seek-short-forward}
+@item @samp{S-<left>}
+@tab @samp{eve-seek-long-backward}
+@item @samp{S-<right>}
+@tab @samp{eve-seek-long-forward}
+@end multitable
+
+@node Structure and display
+@subsection Structure and display
+
+@multitable {aaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{_} / @samp{C-RET}
+@tab @samp{eve-toggle-separator}
+@item @samp{g}
+@tab @samp{eve-reload}
+@item @samp{q}
+@tab @samp{eve-dwim-quit}
+@item @samp{?}
+@tab @samp{eve--show-help}
+@end multitable
+
+@node C-c prefix bindings
+@section C-c prefix bindings
+
+@multitable {aaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Key
+@tab Command
+@item @samp{C-c C-c}
+@tab @samp{eve-compile} (draft)
+@item @samp{C-u C-c C-c}
+@tab @samp{eve-compile} (final)
+@item @samp{C-c SPC}
+@tab @samp{eve-play} (source)
+@item @samp{C-u C-c SPC}
+@tab @samp{eve-play} (rendered)
+@item @samp{C-c C-p}
+@tab @samp{eve-play-rendered}
+@item @samp{C-c C-s}
+@tab @samp{eve-play-source}
+@item @samp{C-c C-v}
+@tab @samp{eve-validate}
+@item @samp{C-c C-r}
+@tab @samp{eve-reload}
+@item @samp{C-c C-o}
+@tab @samp{eve-open-raw-json}
+@item @samp{C-c C-h}
+@tab @samp{eve-hide-deleted-mode}
+@item @samp{C-c C-w}
+@tab @samp{eve-toggle-words}
+@item @samp{C-c C-l}
+@tab @samp{eve-ruler-mode}
+@item @samp{C-c C-t}
+@tab @samp{eve-transcribe}
+@item @samp{C-c C-d}
+@tab @samp{eve-delete-fillers}
+@item @samp{C-c C-b}
+@tab @samp{eve-edit-broll-placeholders}
+@item @samp{C-c C-n}
+@tab @samp{eve-edit-notes}
+@end multitable
+
+@node Playback-mode overrides
+@section Playback-mode overrides
+
+During active playback, @samp{SPC} is remapped to @samp{eve-playback-pause-resume}.
+All other bindings remain active; moving point seeks mpv.
+
+@node The hydra cheatsheet
+@section The hydra cheatsheet
+
+If the @samp{hydra} package is installed, pressing @samp{?} opens a graphical popup
+showing all keybindings grouped by category.  Without hydra, @samp{?} displays a
+brief summary in the echo area instead.
+
+To install hydra:
+
+@lisp
+(use-package hydra)
+@end lisp
+
+@node Configuration Reference
+@chapter Configuration Reference
+
+All eve variables belong to the @samp{eve} customization group.  Access it with
+@samp{M-x customize-group RET eve RET}.
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Variable
+@tab Default
+@tab Description
+@item @samp{eve-auto-render}
+@tab @samp{t}
+@tab Speculatively pre-render changed segments after each save.
+@item @samp{eve-auto-render-idle-seconds}
+@tab @samp{2.0}
+@tab Idle delay before the speculative render fires.
+@item @samp{eve-cli-program}
+@tab @samp{"eve"}
+@tab Name or path of the eve CLI executable.
+@item @samp{eve-compile-cache}
+@tab @samp{t}
+@tab Use the @samp{.eve-cache/} segment cache.
+@item @samp{eve-compile-confirm-threshold}
+@tab @samp{30}
+@tab Estimated seconds above which a confirmation prompt appears before rendering.
+@item @samp{eve-compile-jobs}
+@tab @samp{0}
+@tab Parallel encode workers; 0 = auto-detect CPU count.
+@item @samp{eve-compile-quality}
+@tab @samp{"draft"}
+@tab @samp{"draft"} for fast preview, @samp{"final"} for delivery.
+@item @samp{eve-compile-scale}
+@tab @samp{1.0}
+@tab Resolution scale factor for draft renders (e.g. @samp{0.5} = half res).
+@item @samp{eve-filler-phrases}
+@tab @samp{("um" "uh")}
+@tab Words and phrases tagged as fillers.
+@item @samp{eve-filler-regex}
+@tab @samp{(list ...)}
+@tab Legacy regex patterns for filler matching.
+@item @samp{eve-media-extensions}
+@tab @samp{("mp4" "mov" ...)}
+@tab File types scanned by @samp{eve-transcribe}.
+@item @samp{eve-play-after-compile}
+@tab @samp{nil}
+@tab Play the output automatically after successful compilation.
+@item @samp{eve-play-args}
+@tab @samp{(list "--quiet" ...)}
+@tab Extra arguments passed to the player.
+@item @samp{eve-play-program}
+@tab @samp{"mpv"}
+@tab Player binary.
+@item @samp{eve-preserve-gaps-max}
+@tab @samp{2.0}
+@tab Maximum gap (seconds) preserved between segments during compilation.
+@item @samp{eve-ruler-interval}
+@tab @samp{30.0}
+@tab Seconds between timestamp ruler markers.
+@item @samp{eve-seek-long-backward-seconds}
+@tab @samp{30}
+@tab Long backward seek step.
+@item @samp{eve-seek-long-forward-seconds}
+@tab @samp{10}
+@tab Long forward seek step.
+@item @samp{eve-seek-short-seconds}
+@tab @samp{5}
+@tab Short seek step.
+@item @samp{eve-show-words-by-default}
+@tab @samp{nil}
+@tab Show per-word timing annotations when a buffer opens.
+@item @samp{eve-transcribe-backend}
+@tab @samp{"faster-whisper"}
+@tab Transcription backend.
+@item @samp{eve-transcribe-model}
+@tab @samp{"medium.en"}
+@tab Model passed to the backend.
+@item @samp{eve-transcribe-tag-fillers}
+@tab @samp{t}
+@tab Tag filler words during transcription.
+@item @samp{eve-transcribe-verbatim}
+@tab @samp{t}
+@tab Pass @samp{--verbatim} to the transcription backend.
+@item @samp{eve-validation-on-save}
+@tab @samp{t}
+@tab Validate the manifest on every save.
+@item @samp{eve-validation-time-tolerance}
+@tab @samp{0.1}
+@tab Timing slack tolerated during validation (seconds).
+@item @samp{eve-video-layout}
+@tab @samp{nil}
+@tab Arrange the screen automatically on the first play command.
+@item @samp{eve-video-layout-ratio}
+@tab @samp{0.6}
+@tab Fraction of screen height reserved for the video window.
+@end multitable
+
+@node Architecture
+@chapter Architecture
+
+@menu
+* Two-layer boundary::
+* Shared contract::
+@end menu
+
+@node Two-layer boundary
+@section Two-layer boundary
+
+Eve is deliberately split into two independent layers:
+
+@itemize
+@item
+@strong{The Emacs package} (@samp{eve.el}) owns the user interface: major mode,
+interactive editing commands, playback integration, asynchronous process
+launching, and parsing of CLI output.  It does not implement media-processing
+logic.
+
+@item
+@strong{The CLI} (@samp{cli/}, Python) owns all media processing: manifest generation,
+denoise orchestration, filler policy, timeline construction, and FFmpeg
+invocation.  It does not embed Emacs-specific behaviour.
+@end itemize
+
+This boundary means the CLI can be used standalone (e.g. in CI pipelines) and
+the Emacs package can evolve independently.
+
+@node Shared contract
+@section Shared contract
+
+The two layers communicate through:
+
+@itemize
+@item
+@strong{TJM files on disk} — the @samp{.tjm.json} format defined in @samp{docs/tjm-spec.md}.
+@item
+@strong{Machine-readable JSON output} — the CLI emits structured JSON when called
+with @samp{--json}; the Emacs package parses it.
+@item
+@strong{Stable exit codes} — 0 for success, non-zero for failure.
+@end itemize
+
+@node Development
+@chapter Development
+
+@menu
+* devenv commands::
+* Running tests::
+* Project layout::
+* Dependencies::
+@end menu
+
+@node devenv commands
+@section devenv commands
+
+The project uses @uref{https://devenv.sh, devenv} at the repository root.
+
+@example
+# Emacs
+devenv shell -- format-elisp   # Format .el files
+devenv shell -- parse           # Check Emacs Lisp syntax
+devenv shell -- checkdoc        # Lint docstrings
+devenv shell -- load-check      # Verify the package loads
+devenv shell -- compile         # Byte-compile
+devenv shell -- test-elisp      # Run ERT tests
+
+# Python CLI
+devenv shell -- sync-py         # Install Python deps
+devenv shell -- format-py       # Format Python code
+devenv shell -- lint-py         # Run ruff / mypy
+devenv shell -- test-py         # Run pytest
+devenv shell -- build-py        # Build the wheel
+devenv shell -- run-cli -- --help
+
+# Combined
+devenv shell -- format          # Format all
+devenv shell -- lint            # Lint all
+devenv shell -- test            # Test all
+devenv shell -- ci              # Full CI pipeline
+
+# Documentation
+devenv shell -- docs            # Generate eve.texi and eve.info
+@end example
+
+@node Running tests
+@section Running tests
+
+@example
+# ERT (Emacs Lisp)
+devenv shell -- test-elisp
+# or directly:
+emacs --batch -Q -L . -l ert -l test/eve-test.el -f ert-run-tests-batch-and-exit
+
+# Pytest (Python CLI)
+devenv shell -- test-py
+# or directly:
+PYTHONPATH=cli/src python3 -m pytest cli/tests/
+@end example
+
+@node Project layout
+@section Project layout
+
+@example
+eve.el            Main Emacs library
+test/             ERT test suite
+docs/             User documentation
+  eve.org           This manual (source)
+  eve.texi          Texinfo export (generated)
+  eve.info          Info file (generated)
+  tjm-spec.md       TJM v1.1 format specification
+  internal/         Working documents and migration notes
+cli/              Python package
+  src/eve_cli/      CLI source
+  tests/            Pytest suite
+scripts/          Build helpers
+@end example
+
+@node Dependencies
+@section Dependencies
+
+Hard requirements:
+
+@itemize
+@item
+Emacs 29.1+
+@item
+mpv (playback)
+@item
+@samp{eve} CLI (transcription and rendering)
+@end itemize
+
+Optional:
+
+@itemize
+@item
+@samp{hydra} — enables the @samp{?} graphical cheatsheet popup
+@end itemize
+
+@node Appendix A TJM v11 Specification
+@appendix Appendix A: TJM v1.1 Specification
+
+The normative TJM v1.1 specification is maintained in @samp{docs/tjm-spec.md} in
+the repository.  It defines:
+
+@itemize
+@item
+The complete JSON schema for @samp{.tjm.json} files.
+@item
+The tick-based timing model and its relationship to real-time seconds.
+@item
+The edit overlay structure (@samp{edit} field on segments and words).
+@item
+The deterministic render contract that @samp{eve text-edit} implements.
+@item
+Migration paths from earlier TJM versions.
+@end itemize
+
+To read the specification, open @samp{docs/tjm-spec.md} in the repository or visit
+the repository at @uref{https://github.com/behaghel/eve.el}.
+
+@bye

@@ -4,6 +4,7 @@
     pkgs.git
     pkgs.python312
     pkgs.uv
+    pkgs.texinfo
   ];
 
   env = {
@@ -27,6 +28,9 @@ Python
   devenv shell -- test-py
   devenv shell -- build-py
   devenv shell -- run-cli -- --help
+
+Docs
+  devenv shell -- docs
 
 Project
   devenv shell -- format
@@ -108,6 +112,15 @@ Project
     run-cli.exec = ''
       cd "$DEVENV_ROOT"
       ./scripts/run-cli.sh "$@"
+    '';
+
+    docs.exec = ''
+      cd "$DEVENV_ROOT"
+      emacs --batch -l ox-texinfo --visit docs/eve.org \
+        --funcall org-texinfo-export-to-texinfo
+      makeinfo --no-split docs/eve.texi -o docs/eve.info
+      install-info --dir=docs/dir docs/eve.info
+      echo "docs: generated docs/eve.texi, docs/eve.info, docs/dir"
     '';
 
     format.exec = ''

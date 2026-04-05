@@ -1509,7 +1509,7 @@
   (should (eq (lookup-key eve-mode-map (kbd "C-RET")) #'eve-toggle-separator))
   (should (eq (lookup-key eve-mode-map "g") #'eve-reload))
   (should (eq (lookup-key eve-mode-map "q") #'eve-dwim-quit))
-  (should (eq (lookup-key eve-mode-map "?") #'eve-hydra/body)))
+  (should (eq (lookup-key eve-mode-map "?") #'eve--show-help)))
 
 (ert-deftest eve-playback-mode-map-bindings ()
   "Verify playback keybindings in eve-playback-mode-map."
