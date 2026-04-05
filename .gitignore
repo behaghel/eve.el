@@ -12,7 +12,7 @@ auto-save-list/
 var/
 cli/.venv/
 cli/build/
-cli/dist/
+cli/dist/*
 !cli/dist/*.whl
 cli/.coverage
 cli/.python-version.local
