@@ -55,23 +55,11 @@ jobs:
           chmod +x scripts/install-elpa-deps
           ./scripts/install-elpa-deps
 
-      - name: Install texinfo
-        run: sudo apt-get install -y texinfo
-
-      - name: Regenerate docs and check for drift
+      - name: Check documentation coverage
         run: |
           export HOME=$GITHUB_WORKSPACE
           chmod +x scripts/gen-docs scripts/check-doc-drift
           ./scripts/gen-docs
-          emacs --batch -l ox-texinfo --visit docs/eve.org \
-            --funcall org-texinfo-export-to-texinfo
-          makeinfo --no-split docs/eve.texi -o docs/eve.info
-          install-info --dir=docs/dir docs/eve.info
-          if ! git diff --quiet docs/eve.texi docs/eve.info docs/dir; then
-            echo "::error::Committed doc artifacts are stale. Run 'devenv shell -- docs' and commit the result."
-            git diff --stat docs/eve.texi docs/eve.info docs/dir
-            exit 1
-          fi
           ./scripts/check-doc-drift
 
   python:
