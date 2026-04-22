@@ -1,0 +1,70 @@
+* eve.el
+
+[[https://github.com/behaghel/eve.el/actions/workflows/test.yml][https://github.com/behaghel/eve.el/actions/workflows/test.yml/badge.svg]]
+[[https://github.com/behaghel/eve.el/blob/main/LICENSE][https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg]]
+[[https://www.gnu.org/software/emacs/][https://img.shields.io/badge/Emacs-29.1%2B-7F5AB6.svg]]
+[[https://www.python.org/][https://img.shields.io/badge/Python-3.12%2B-3776AB.svg]]
+
+Eve brings transcript-first spoken-word video editing into Emacs. Instead of
+scrubbing a timeline to trim interviews, podcasts, lessons, or talking-head
+recordings, you edit the words that were said. Delete a phrase, move a
+paragraph, add a section marker, attach b-roll, and compile the result without
+leaving the editor.
+
+It stays fast enough for iterative work: playback and preview live inside the
+editing workflow, draft compiles reuse cached and pre-rendered segments, and a
+small text change usually means only the affected parts are rendered again.
+
+The full manual lives in [[https://github.com/behaghel/eve.el/blob/main/docs/eve.org][docs/eve.org]].
+
+* Getting Started
+
+Install the CLI from the wheel bundled in this repo, then verify it:
+
+#+begin_src shell
+pip install cli/dist/eve_cli-*.whl
+eve doctor --json
+#+end_src
+
+Install the Emacs package:
+
+#+begin_src emacs-lisp
+(use-package eve
+  :straight (:type git :host github :repo "behaghel/eve.el"))
+#+end_src
+
+Then use Eve for the main workflow:
+
+1. Run =M-x eve-transcribe= on a directory of recordings.
+2. Open the generated =.tjm.json= file in =eve-mode=.
+3. Delete words, reorder segments, add markers, or attach b-roll.
+4. Press =C-c SPC= to play from point and =C-c C-c= to compile a draft.
+5. Press =C-u C-c C-c= for a final H.264 export.
+
+Opening any =*.tjm.json= file activates =eve-mode= automatically. The manual in
+[[https://github.com/behaghel/eve.el/blob/main/docs/eve.org][docs/eve.org]] covers installation details, commands, and editing features in
+full.
+
+* Why Eve
+
+- Transcript-first editing for spoken-word video inside Emacs.
+- Edit by deleting or reordering text instead of trimming a timeline.
+- Preview and playback stay close to the text you are editing.
+- Draft renders are fast because changed segments are cached and pre-rendered.
+- Final delivery uses the same workflow, with =C-u C-c C-c= for H.264 export.
+
+* Installation Notes
+
+- Emacs 29.1 or later.
+- =mpv= for playback.
+- Python 3.12 or later for the CLI.
+- =hydra= is optional and enables the =?= cheatsheet popup.
+
+* Documentation
+
+- User manual: [[https://github.com/behaghel/eve.el/blob/main/docs/eve.org][docs/eve.org]]
+- TJM v1.1 format specification: [[https://github.com/behaghel/eve.el/blob/main/docs/tjm-spec.md][docs/tjm-spec.md]]
+- Contributor workflow: [[https://github.com/behaghel/eve.el/blob/main/CONTRIBUTING.md][CONTRIBUTING.md]]
+
+The underlying file format is a Textual Join Manifest (=.tjm.json=), but most
+users can treat that as the document Eve edits and compiles.
