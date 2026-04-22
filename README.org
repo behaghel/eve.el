@@ -19,13 +19,6 @@ The full manual lives in [[https://github.com/behaghel/eve.el/blob/main/docs/eve
 
 * Getting Started
 
-Install the CLI from the wheel bundled in this repo, then verify it:
-
-#+begin_src shell
-pip install cli/dist/eve_cli-*.whl
-eve doctor --json
-#+end_src
-
 Install the Emacs package:
 
 #+begin_src emacs-lisp
@@ -33,10 +26,16 @@ Install the Emacs package:
   :straight (:type git :host github :repo "behaghel/eve.el"))
 #+end_src
 
+For standard Emacs use, =M-x eve-transcribe= first looks for =eve= on your
+=PATH=. If it does not find one and =eve-cli-program= is still at its default,
+Eve bootstraps the bundled CLI helper from this checkout the first time you
+need it.
+
 Then use Eve for the main workflow:
 
 1. Run =M-x eve-transcribe= on a directory of recordings.
-2. Open the generated =.tjm.json= file in =eve-mode=.
+2. Eve keeps a visible running status while transcription is in progress, then
+   opens the generated =.tjm.json= manifest automatically in =eve-mode=.
 3. Delete words, reorder segments, add markers, or attach b-roll.
 4. Press =C-c SPC= to play from point and =C-c C-c= to compile a draft.
 5. Press =C-u C-c C-c= for a final H.264 export.
