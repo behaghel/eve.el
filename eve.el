@@ -473,7 +473,7 @@ Forward-declared for the byte-compiler.")
   "Mode-line form used to display global Eve transcription activity.")
 
 (defun eve--ensure-transcribe-mode-line-entry ()
-  "Ensure the global Eve transcription indicator is present in `global-mode-string'."
+  "Ensure `global-mode-string' includes the Eve transcription indicator."
   (unless (member eve--transcribe-mode-line-entry global-mode-string)
     (setq global-mode-string
           (append global-mode-string (list eve--transcribe-mode-line-entry)))))
