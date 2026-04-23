@@ -31,7 +31,8 @@ edit.
 The typical eve session looks like this:
 
 1. *Transcribe* — run =M-x eve-transcribe= on a directory of raw recordings.
-   Eve calls =eve transcribe= and opens the resulting =.tjm.json= in eve-mode.
+   Eve calls =eve transcribe=, shows a visible running status while work is in
+   progress, and opens the resulting =.tjm.json= in eve-mode on success.
 
 2. *Edit* — delete filler words (=d=, =f=, =F=), reorder segments (=J=, =K=),
    add markers to name sections (=o=), attach b-roll (=b=).
@@ -70,12 +71,16 @@ does not reproduce it in full.
 
 *** Installing the CLI
 
-The =eve= CLI ships as a Python package inside this repository.  On a fresh
-clone it bootstraps itself automatically via =scripts/run-cli.sh= using the
-pre-built wheel in =cli/dist/= — no =uv= or Python package manager required
-at runtime.
+The Emacs package first looks for an =eve= executable on your =PATH=.  If it
+does not find one, and =eve-cli-program= is still set to its default ="eve"=,
+it falls back to =scripts/run-cli.sh= inside this checkout.  That script
+creates a local virtualenv and installs the pre-built wheel from =cli/dist/=.
 
-To install =eve= globally so =M-x eve-transcribe= can find it:
+For standard in-Emacs use, that local bootstrap path means a separate global
+=eve= install is optional.  The fallback path assumes Python 3.12 or later is
+available and that the package checkout is writable.
+
+If you want =eve= on your =PATH= for shell use, install it globally:
 
 #+begin_src shell
 pip install cli/dist/eve_cli-*.whl
@@ -131,9 +136,10 @@ steps.
    M-x eve-transcribe RET
    #+end_example
 
-   Select the directory containing your =.mp4= files.  Eve starts
-   =eve transcribe= in the background.  When it finishes, the manifest opens
-   automatically in eve-mode.
+    Select the directory containing your =.mp4= files.  Eve starts
+    =eve transcribe= in the background, keeps a visible =Eve: transcribing…=
+    status in the mode line while it runs, and opens the manifest
+    automatically in eve-mode when it finishes.
 
 2. *Read through the transcript*
 
@@ -233,7 +239,8 @@ the eve-mode view.
 Two commands launch transcription:
 
 - =M-x eve-transcribe= prompts for a directory, scans for media files, and
-  starts =eve transcribe= asynchronously.  On success the manifest opens
+  starts =eve transcribe= asynchronously.  While it runs, Eve shows a visible
+  =Eve: transcribing…= mode-line status.  On success the manifest opens
   automatically in eve-mode.
 
 - =M-x eve-dired-transcribe= runs from Dired using the marked files (or the
@@ -940,79 +947,22 @@ The two layers communicate through:
 :DESCRIPTION: Working on eve.el and the CLI.
 :END:
 
-** devenv commands
+This manual focuses on using Eve.
 
-The project uses [[https://devenv.sh][devenv]] at the repository root.
+For contributor setup, local commands, CI parity, and documentation generation,
+see [[file:../CONTRIBUTING.md][CONTRIBUTING.md]].
 
-#+begin_src shell
-# Emacs
-devenv shell -- format-elisp   # Format .el files
-devenv shell -- parse           # Check Emacs Lisp syntax
-devenv shell -- checkdoc        # Lint docstrings
-devenv shell -- load-check      # Verify the package loads
-devenv shell -- compile         # Byte-compile
-devenv shell -- test-elisp      # Run ERT tests
-
-# Python CLI
-devenv shell -- sync-py         # Install Python deps
-devenv shell -- format-py       # Format Python code
-devenv shell -- lint-py         # Run ruff / mypy
-devenv shell -- test-py         # Run pytest
-devenv shell -- build-py        # Build the wheel
-devenv shell -- run-cli -- --help
-
-# Combined
-devenv shell -- format          # Format all
-devenv shell -- lint            # Lint all
-devenv shell -- test            # Test all
-devenv shell -- ci              # Full CI pipeline
-
-# Documentation
-devenv shell -- docs            # Generate eve.texi and eve.info
-#+end_src
-
-** Running tests
+The combined local test command is:
 
 #+begin_src shell
-# ERT (Emacs Lisp)
-devenv shell -- test-elisp
-# or directly:
-emacs --batch -Q -L . -l ert -l test/eve-test.el -f ert-run-tests-batch-and-exit
-
-# Pytest (Python CLI)
-devenv shell -- test-py
-# or directly:
-PYTHONPATH=cli/src python3 -m pytest cli/tests/
+devenv shell -- test-all
 #+end_src
 
-** Project layout
+If you are editing this manual itself, regenerate the Info output with:
 
-#+begin_example
-eve.el            Main Emacs library
-test/             ERT test suite
-docs/             User documentation
-  eve.org           This manual (source)
-  eve.texi          Texinfo export (generated)
-  eve.info          Info file (generated)
-  tjm-spec.md       TJM v1.1 format specification
-  internal/         Working documents and migration notes
-cli/              Python package
-  src/eve_cli/      CLI source
-  tests/            Pytest suite
-scripts/          Build helpers
-#+end_example
-
-** Dependencies
-
-Hard requirements:
-
-- Emacs 29.1+
-- mpv (playback)
-- =eve= CLI (transcription and rendering)
-
-Optional:
-
-- =hydra= — enables the =?= graphical cheatsheet popup
+#+begin_src shell
+devenv shell -- docs
+#+end_src
 
 * Appendix A: TJM v1.1 Specification
 :PROPERTIES:

@@ -462,6 +462,42 @@ Forward-declared for the byte-compiler.")
 (defconst eve--transcribe-buffer-name "*eve transcribe*"
   "Buffer name used for async `eve transcribe` runs.")
 
+(defvar eve--transcribe-mode-line-string nil
+  "Global mode-line indicator for in-flight Eve transcriptions.")
+
+(defvar eve--transcribe-process-count 0
+  "Number of active Eve transcription processes.")
+
+(defconst eve--transcribe-mode-line-entry
+  'eve--transcribe-mode-line-string
+  "Mode-line form used to display global Eve transcription activity.")
+
+(defun eve--ensure-transcribe-mode-line-entry ()
+  "Ensure `global-mode-string' includes the Eve transcription indicator."
+  (unless (member eve--transcribe-mode-line-entry global-mode-string)
+    (setq global-mode-string
+          (append global-mode-string (list eve--transcribe-mode-line-entry)))))
+
+(defun eve--update-transcribe-mode-line ()
+  "Refresh the global mode-line indicator for active Eve transcriptions."
+  (eve--ensure-transcribe-mode-line-entry)
+  (setq eve--transcribe-mode-line-string
+        (when (> eve--transcribe-process-count 0)
+          (propertize " Eve: transcribing…"
+                      'face 'mode-line-emphasis
+                      'help-echo "Eve is transcribing in the background. The manifest opens automatically on success.")))
+  (force-mode-line-update t))
+
+(defun eve--transcribe-started ()
+  "Record that an Eve transcription process has started."
+  (setq eve--transcribe-process-count (1+ eve--transcribe-process-count))
+  (eve--update-transcribe-mode-line))
+
+(defun eve--transcribe-finished-state ()
+  "Record that an Eve transcription process has finished."
+  (setq eve--transcribe-process-count (max 0 (1- eve--transcribe-process-count)))
+  (eve--update-transcribe-mode-line))
+
 (defun eve--default-output-file ()
   "Compute the default output mp4 path for the current TJM buffer."
   (when buffer-file-name
@@ -673,6 +709,7 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 
 (defun eve--transcribe-finished (process event output-path)
   "Handle completion of transcribe PROCESS EVENT for OUTPUT-PATH."
+  (eve--transcribe-finished-state)
   (let ((buffer (process-buffer process)))
     (if (and (eq (process-status process) 'exit)
              (= (process-exit-status process) 0))
@@ -709,6 +746,7 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
                   :sentinel (lambda (process event)
                               (eve--transcribe-finished
                                process event output-file)))
+    (eve--transcribe-started)
     (message "Started eve transcribe -> %s" output-file)))
 
 (defun eve--compilation-finished (buffer status)

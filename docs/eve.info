@@ -143,13 +143,6 @@ Architecture
 * Two-layer boundary::
 * Shared contract::
 
-Development
-
-* devenv commands::
-* Running tests::
-* Project layout::
-* Dependencies::
-
 
 File: eve.info,  Node: Introduction,  Next: Getting Started,  Prev: Top,  Up: Top
 
@@ -192,8 +185,9 @@ File: eve.info,  Node: The Core Workflow,  Next: About This Manual,  Prev: The B
 The typical eve session looks like this:
 
   1. *Transcribe* — run ‘M-x eve-transcribe’ on a directory of raw
-     recordings.  Eve calls ‘eve transcribe’ and opens the resulting
-     ‘.tjm.json’ in eve-mode.
+     recordings.  Eve calls ‘eve transcribe’, shows a visible running
+     status while work is in progress, and opens the resulting
+     ‘.tjm.json’ in eve-mode on success.
 
   2. *Edit* — delete filler words (‘d’, ‘f’, ‘F’), reorder segments
      (‘J’, ‘K’), add markers to name sections (‘o’), attach b-roll
@@ -262,12 +256,17 @@ File: eve.info,  Node: Installing the CLI,  Next: Installing the Emacs package, 
 2.1.2 Installing the CLI
 ------------------------
 
-The ‘eve’ CLI ships as a Python package inside this repository.  On a
-fresh clone it bootstraps itself automatically via ‘scripts/run-cli.sh’
-using the pre-built wheel in ‘cli/dist/’ — no ‘uv’ or Python package
-manager required at runtime.
+The Emacs package first looks for an ‘eve’ executable on your ‘PATH’.
+If it does not find one, and ‘eve-cli-program’ is still set to its
+default ‘"eve"’, it falls back to ‘scripts/run-cli.sh’ inside this
+checkout.  That script creates a local virtualenv and installs the
+pre-built wheel from ‘cli/dist/’.
 
-   To install ‘eve’ globally so ‘M-x eve-transcribe’ can find it:
+   For standard in-Emacs use, that local bootstrap path means a separate
+global ‘eve’ install is optional.  The fallback path assumes Python 3.12
+or later is available and that the package checkout is writable.
+
+   If you want ‘eve’ on your ‘PATH’ for shell use, install it globally:
 
      pip install cli/dist/eve_cli-*.whl
      # or with uv:
@@ -339,8 +338,9 @@ five steps.
           M-x eve-transcribe RET
 
      Select the directory containing your ‘.mp4’ files.  Eve starts ‘eve
-     transcribe’ in the background.  When it finishes, the manifest
-     opens automatically in eve-mode.
+     transcribe’ in the background, keeps a visible ‘Eve: transcribing…’
+     status in the mode line while it runs, and opens the manifest
+     automatically in eve-mode when it finishes.
 
   2. *Read through the transcript*
 
@@ -465,8 +465,9 @@ File: eve.info,  Node: Starting transcription from Emacs,  Next: Backends,  Up: 
 Two commands launch transcription:
 
    • ‘M-x eve-transcribe’ prompts for a directory, scans for media
-     files, and starts ‘eve transcribe’ asynchronously.  On success the
-     manifest opens automatically in eve-mode.
+     files, and starts ‘eve transcribe’ asynchronously.  While it runs,
+     Eve shows a visible ‘Eve: transcribing…’ mode-line status.  On
+     success the manifest opens automatically in eve-mode.
 
    • ‘M-x eve-dired-transcribe’ runs from Dired using the marked files
      (or the file at point when nothing is marked).
@@ -1534,96 +1535,19 @@ File: eve.info,  Node: Development,  Next: Appendix A TJM v11 Specification,  Pr
 14 Development
 **************
 
-* Menu:
+This manual focuses on using Eve.
 
-* devenv commands::
-* Running tests::
-* Project layout::
-* Dependencies::
+   For contributor setup, local commands, CI parity, and documentation
+generation, see CONTRIBUTING.md (../CONTRIBUTING.md).
 
-
-File: eve.info,  Node: devenv commands,  Next: Running tests,  Up: Development
+   The combined local test command is:
 
-14.1 devenv commands
-====================
+     devenv shell -- test-all
 
-The project uses devenv (https://devenv.sh) at the repository root.
+   If you are editing this manual itself, regenerate the Info output
+with:
 
-     # Emacs
-     devenv shell -- format-elisp   # Format .el files
-     devenv shell -- parse           # Check Emacs Lisp syntax
-     devenv shell -- checkdoc        # Lint docstrings
-     devenv shell -- load-check      # Verify the package loads
-     devenv shell -- compile         # Byte-compile
-     devenv shell -- test-elisp      # Run ERT tests
-
-     # Python CLI
-     devenv shell -- sync-py         # Install Python deps
-     devenv shell -- format-py       # Format Python code
-     devenv shell -- lint-py         # Run ruff / mypy
-     devenv shell -- test-py         # Run pytest
-     devenv shell -- build-py        # Build the wheel
-     devenv shell -- run-cli -- --help
-
-     # Combined
-     devenv shell -- format          # Format all
-     devenv shell -- lint            # Lint all
-     devenv shell -- test            # Test all
-     devenv shell -- ci              # Full CI pipeline
-
-     # Documentation
-     devenv shell -- docs            # Generate eve.texi and eve.info
-
-
-File: eve.info,  Node: Running tests,  Next: Project layout,  Prev: devenv commands,  Up: Development
-
-14.2 Running tests
-==================
-
-     # ERT (Emacs Lisp)
-     devenv shell -- test-elisp
-     # or directly:
-     emacs --batch -Q -L . -l ert -l test/eve-test.el -f ert-run-tests-batch-and-exit
-
-     # Pytest (Python CLI)
-     devenv shell -- test-py
-     # or directly:
-     PYTHONPATH=cli/src python3 -m pytest cli/tests/
-
-
-File: eve.info,  Node: Project layout,  Next: Dependencies,  Prev: Running tests,  Up: Development
-
-14.3 Project layout
-===================
-
-     eve.el            Main Emacs library
-     test/             ERT test suite
-     docs/             User documentation
-       eve.org           This manual (source)
-       eve.texi          Texinfo export (generated)
-       eve.info          Info file (generated)
-       tjm-spec.md       TJM v1.1 format specification
-       internal/         Working documents and migration notes
-     cli/              Python package
-       src/eve_cli/      CLI source
-       tests/            Pytest suite
-     scripts/          Build helpers
-
-
-File: eve.info,  Node: Dependencies,  Prev: Project layout,  Up: Development
-
-14.4 Dependencies
-=================
-
-Hard requirements:
-
-   • Emacs 29.1+
-   • mpv (playback)
-   • ‘eve’ CLI (transcription and rendering)
-
-   Optional:
-
-   • ‘hydra’ — enables the ‘?’ graphical cheatsheet popup
+     devenv shell -- docs
 
 
 File: eve.info,  Node: Appendix A TJM v11 Specification,  Prev: Development,  Up: Top
@@ -1647,89 +1571,85 @@ or visit the repository at <https://github.com/behaghel/eve.el>.
 
 Tag Table:
 Node: Top205
-Node: Introduction3342
-Node: The Big Idea3648
-Node: The Core Workflow4420
-Node: About This Manual5521
-Node: Getting Started5920
-Node: Installation6098
-Node: Requirements6331
-Node: Installing the CLI6656
-Node: Installing the Emacs package7311
-Node: straightel7569
-Node: Manual7787
-Node: Accessing the manual in Emacs8123
-Node: Quick Start8576
-Node: The TJM Manifest9881
-Node: Structure10113
-Node: How eve-mode renders a manifest11235
-Node: The raw JSON companion buffer11867
-Node: Transcription12301
-Node: Starting transcription from Emacs12537
-Node: Backends13169
-Node: Configuration14142
-Node: Installing optional backends14945
-Node: Editing15403
-Node: Navigation15696
-Node: Deletion and restoration16073
-Node: Splitting and merging16712
-Node: Reordering17204
-Node: Markers and sections17538
-Node: Inline editing18040
-Node: Metadata18371
-Node: Undo and redo18945
-Node: Validation19272
-Node: Filler Words19598
-Node: Concept19810
-Node: Configuration (1)20212
-Node: Commands20805
-Node: Auto-tagging on file open21745
-Node: B-Roll22094
-Node: Concept (1)22400
-Node: Editing b-roll metadata23056
-Node: Compositing modes in detail24825
-Node: Replace mode25050
-Node: Pip mode25498
-Node: Audio policy26417
-Node: JSON templates26896
-Node: Overlay fields28189
-Node: Concrete example lower-third title card29592
-Node: Placeholders without templates31477
-Node: Continuation chains31900
-Node: Compilation and Rendering32923
-Node: Two modes draft and final33275
-Node: Under the hood33753
-Node: Pre-flight validation34856
-Node: Dry-run analysis35593
-Node: Checkpoint and resume36119
-Node: Progressive output36600
-Node: Configuration reference37002
-Node: CLI reference38346
-Node: Playback39475
-Node: Source playback39722
-Node: Rendered playback40183
-Node: Playback tracking and segment highlighting40681
-Node: Controls41108
-Node: Video layout42089
-Node: Display43625
-Node: Timestamp ruler43811
-Node: Hiding deleted segments44408
-Node: Word-level display44842
-Node: Key Bindings45656
-Node: Single-key bindings45897
-Node: C-c prefix bindings47615
-Node: Playback-mode overrides48530
-Node: The hydra cheatsheet49131
-Node: Configuration Reference49533
-Node: Architecture53708
-Node: Two-layer boundary53895
-Node: Shared contract54699
-Node: Development55171
-Node: devenv commands55396
-Node: Running tests56592
-Node: Project layout57029
-Node: Dependencies57707
-Node: Appendix A TJM v11 Specification58022
+Node: Introduction3254
+Node: The Big Idea3560
+Node: The Core Workflow4332
+Node: About This Manual5508
+Node: Getting Started5907
+Node: Installation6085
+Node: Requirements6318
+Node: Installing the CLI6643
+Node: Installing the Emacs package7591
+Node: straightel7849
+Node: Manual8067
+Node: Accessing the manual in Emacs8403
+Node: Quick Start8856
+Node: The TJM Manifest10250
+Node: Structure10482
+Node: How eve-mode renders a manifest11604
+Node: The raw JSON companion buffer12236
+Node: Transcription12670
+Node: Starting transcription from Emacs12906
+Node: Backends13624
+Node: Configuration14597
+Node: Installing optional backends15400
+Node: Editing15858
+Node: Navigation16151
+Node: Deletion and restoration16528
+Node: Splitting and merging17167
+Node: Reordering17659
+Node: Markers and sections17993
+Node: Inline editing18495
+Node: Metadata18826
+Node: Undo and redo19400
+Node: Validation19727
+Node: Filler Words20053
+Node: Concept20265
+Node: Configuration (1)20667
+Node: Commands21260
+Node: Auto-tagging on file open22200
+Node: B-Roll22549
+Node: Concept (1)22855
+Node: Editing b-roll metadata23511
+Node: Compositing modes in detail25280
+Node: Replace mode25505
+Node: Pip mode25953
+Node: Audio policy26872
+Node: JSON templates27351
+Node: Overlay fields28644
+Node: Concrete example lower-third title card30047
+Node: Placeholders without templates31932
+Node: Continuation chains32355
+Node: Compilation and Rendering33378
+Node: Two modes draft and final33730
+Node: Under the hood34208
+Node: Pre-flight validation35311
+Node: Dry-run analysis36048
+Node: Checkpoint and resume36574
+Node: Progressive output37055
+Node: Configuration reference37457
+Node: CLI reference38801
+Node: Playback39930
+Node: Source playback40177
+Node: Rendered playback40638
+Node: Playback tracking and segment highlighting41136
+Node: Controls41563
+Node: Video layout42544
+Node: Display44080
+Node: Timestamp ruler44266
+Node: Hiding deleted segments44863
+Node: Word-level display45297
+Node: Key Bindings46111
+Node: Single-key bindings46352
+Node: C-c prefix bindings48070
+Node: Playback-mode overrides48985
+Node: The hydra cheatsheet49586
+Node: Configuration Reference49988
+Node: Architecture54163
+Node: Two-layer boundary54350
+Node: Shared contract55154
+Node: Development55626
+Node: Appendix A TJM v11 Specification56102
 
 End Tag Table
 
