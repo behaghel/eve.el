@@ -376,6 +376,13 @@
     (should (equal (eve--filter-media-files files)
 		   '("/tmp/INTRO.MP4" "/tmp/voice.M4A")))))
 
+(ert-deftest eve-mode-uses-buffer-local-window-size-hook-for-wrap ()
+  "Eve visual wrapping should not pollute global window-configuration hooks."
+  (eve-test-with-buffer
+   (should (memq #'eve--apply-visual-wrap window-size-change-functions))
+   (should-not (memq #'eve--apply-visual-wrap
+                     (default-value 'window-configuration-change-hook)))))
+
 (ert-deftest eve-ruler-mode-enable-creates-overlays ()
   "Enabling eve-ruler-mode creates overlays."
   (eve-test-with-buffer

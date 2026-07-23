@@ -1595,13 +1595,6 @@ This is a buffer-local mode for `eve-mode' buffers."
   (when (and (derived-mode-p 'eve-mode) eve--data)
     (eve--render t)))
 
-(defun eve--ruler-reapply-margins ()
-  "Reapply right-margin width for the ruler when window configuration changes."
-  (when eve-ruler-mode
-    (set-window-margins (selected-window)
-                        (car (window-margins (selected-window)))
-                        right-margin-width)))
-
 (define-minor-mode eve-ruler-mode
   "Show a right-margin timestamp ruler in `eve-mode' buffers.
 When active, a `[hh:mm:ss]' marker is placed in the right margin next
@@ -1612,15 +1605,10 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (if eve-ruler-mode
       (progn
         (when (and (derived-mode-p 'eve-mode) eve--data)
-          (eve--update-ruler))
-        (add-hook 'window-configuration-change-hook
-                  #'eve--ruler-reapply-margins nil t))
+          (eve--update-ruler)))
     (eve--ruler-clear-overlays)
     (setq-local right-margin-width 0)
-    (dolist (win (get-buffer-window-list nil nil t))
-      (set-window-margins win (car (window-margins win)) 0))
-    (remove-hook 'window-configuration-change-hook
-                 #'eve--ruler-reapply-margins t)))
+    (eve--apply-visual-wrap)))
 
 ;;;###autoload
 (define-derived-mode eve-mode special-mode "EVE"
@@ -1640,7 +1628,10 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (when (boundp 'auto-save-visited-predicate)
     (setq-local auto-save-visited-predicate #'eve--auto-save-blocker))
   (add-hook 'post-command-hook #'eve--post-command nil t)
-  (add-hook 'window-configuration-change-hook #'eve--apply-visual-wrap nil t)
+  ;; `window-size-change-functions' is buffer-local-aware and runs only for
+  ;; windows showing this buffer when it is displayed or resized.  This keeps
+  ;; Eve's visual wrapping out of users' global window-change hooks.
+  (add-hook 'window-size-change-functions #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--ipc-teardown nil t)
   (add-hook 'kill-buffer-hook #'eve--auto-render-teardown nil t)
@@ -2297,23 +2288,32 @@ Returns non-nil when a summary was inserted."
 	 (right (or (cdr margins) 0)))
     (+ (window-width window) left right)))
 
-(defun eve--apply-visual-wrap (&rest _ignore)
-  (when (derived-mode-p 'eve-mode)
-    (let ((fill (or fill-column (default-value 'fill-column))))
-      (dolist (window (get-buffer-window-list (current-buffer) nil t))
-	(let* ((margins (window-margins window))
-	       (left (or (car margins) 0))
-	       (right (or (cdr margins) 0))
-	       (total (eve--window-total-width window))
-	       (desired (if (> total fill) (- total fill) 0))
-	       (current-right right))
-	  (unless (= desired current-right)
-	    (unless (window-parameter window 'eve--saved-margins)
-	      (set-window-parameter window 'eve--saved-margins
-				    (cons left right)))
-	    (set-window-margins window left desired)
-	    (set-window-parameter window 'eve--wrapped t)))
-	(eve--apply-fringe-width window 0 0)))))
+(defun eve--apply-visual-wrap (&optional changed-window)
+  "Apply Eve wrapping to visible windows showing the current buffer.
+When CHANGED-WINDOW is non-nil, update only that window.  This matches the
+calling convention of `window-size-change-functions'."
+  (dolist (window (if (window-live-p changed-window)
+                      (list changed-window)
+                    (get-buffer-window-list (current-buffer) nil t)))
+    (when (window-live-p window)
+      (with-current-buffer (window-buffer window)
+        (when (derived-mode-p 'eve-mode)
+          (let ((fill (or fill-column (default-value 'fill-column)))
+                (minimum-right-margin (or right-margin-width 0)))
+            (let* ((margins (window-margins window))
+                   (left (or (car margins) 0))
+                   (right (or (cdr margins) 0))
+                   (total (eve--window-total-width window))
+                   (wrap-margin (if (> total fill) (- total fill) 0))
+                   (desired (max minimum-right-margin wrap-margin))
+                   (current-right right))
+              (unless (= desired current-right)
+                (unless (window-parameter window 'eve--saved-margins)
+                  (set-window-parameter window 'eve--saved-margins
+                                        (cons left right)))
+                (set-window-margins window left desired)
+                (set-window-parameter window 'eve--wrapped t)))
+            (eve--apply-fringe-width window 0 0)))))))
 
 (defun eve--apply-fringe-width (window left right)
   "Adjust WINDOW fringes, saving the original values when first changed."
@@ -2335,16 +2335,6 @@ Returns non-nil when a summary was inserted."
   (set-window-parameter window 'eve--saved-margins nil)
   (set-window-parameter window 'eve--saved-fringes nil)
   (set-window-parameter window 'eve--wrapped nil))
-
-(defun eve--cleanup-wrap ()
-  (dolist (window (window-list))
-    (unless (with-current-buffer (window-buffer window)
-	      (derived-mode-p 'eve-mode))
-      (when (or (window-parameter window 'eve--saved-margins)
-		(window-parameter window 'eve--saved-fringes))
-	(eve--restore-wrap window)))))
-
-(add-hook 'window-configuration-change-hook #'eve--cleanup-wrap)
 
 (defun eve--segment-index (segment-id segments)
   "Return the index of SEGMENT-ID within SEGMENTS."
@@ -3770,8 +3760,7 @@ joined into a single annotation."
     (force-mode-line-update)
     (when milestones
       (setq-local right-margin-width 12)
-      (dolist (win (get-buffer-window-list nil nil t))
-        (set-window-margins win (car (window-margins win)) 12))
+      (eve--apply-visual-wrap)
       (eve--ruler-create-overlays milestones))))
 
 (defun eve--ruler-mode-line-string ()
