@@ -1,5 +1,17 @@
-{ pkgs, config, ... }:
+{ pkgs, config, inputs, ... }:
 {
+  git-hooks = {
+    enable = true;
+    hooks.eve-fast-checks = {
+      enable = true;
+      name = "Eve fast checks";
+      entry = "parse && checkdoc && load-check";
+      language = "system";
+      pass_filenames = false;
+      stages = [ "pre-commit" ];
+    };
+  };
+
   packages = [
     pkgs.git
     pkgs.python312
