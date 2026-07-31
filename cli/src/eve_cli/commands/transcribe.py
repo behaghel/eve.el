@@ -73,7 +73,12 @@ def ffmpeg_extract(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
         "-vn",
         str(output_path),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except FileNotFoundError as exc:
+        raise MissingBackendDependencyError(
+            "ffmpeg executable not found; install ffmpeg or run from the devenv shell"
+        ) from exc
 
 
 def split_segment(

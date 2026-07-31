@@ -403,9 +403,18 @@ ignored for normal segment rendering.
 Markers MAY still contribute structure to downstream consumers, such as section
 labels or subtitle annotations.
 
-If a marker includes renderable `segment.edit.broll` metadata, a renderer MAY
-treat it as a timeline unit only when enough information exists to derive
-duration.
+If a marker includes renderable `segment.edit.broll` metadata, a renderer MUST
+treat it as a timeline unit when enough information exists to derive duration.
+This is the normative way to express source-less timeline media such as intro
+cards, outro cards, interstitial title cards, and other non-transcript clips.
+Because renderers MUST walk `segments` in file order, a renderable marker at the
+start of `segments` plays before the first media segment; a renderable marker at
+the end plays after the final media segment.
+
+A marker's renderable b-roll duration is derived from `segment.edit.broll.duration`
+when present; otherwise consumers MAY use marker `duration`. If neither yields a
+positive duration and no other implementation-defined duration can be derived,
+the marker MUST be treated as non-renderable structural metadata.
 
 ## 12. B-roll Object
 
@@ -525,6 +534,11 @@ For a normal media segment, the renderer renders the interval from
 `start_tick` to `end_tick` from the referenced source, optionally modified by
 `segment.edit.broll` and `render.filler_policy`.
 
+For a renderable marker segment, the renderer renders the marker's
+`segment.edit.broll` as its own timeline unit at that exact position in the
+`segments` array. The marker does not need a `source`, `start_tick`, or
+`end_tick` when its b-roll metadata provides enough duration information.
+
 If `segment.edit.deleted` is `true`, the renderer MUST omit that segment from
 rendered output while leaving the manifest entry itself intact.
 
@@ -581,6 +595,8 @@ For consumers that derive subtitles from TJM:
 
 - subtitle time starts at `0` in rendered timeline space, not source-media time;
 - marker segments do not emit normal subtitle cues;
+- renderable marker segments still occupy subtitle time, so later cues MUST be
+  shifted by the rendered marker duration;
 - preserved short gaps advance subtitle time;
 - segment cue text MUST be determined as follows:
   1. use non-empty `display_text` when present;

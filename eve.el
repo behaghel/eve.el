@@ -262,6 +262,36 @@ which is typically blue or grey in most themes."
   (file-name-directory (or load-file-name (locate-library "eve") ""))
   "Directory from which `eve' was loaded.")
 
+(defun eve--info-directory ()
+  "Return Eve's Info documentation directory, when available."
+  (let ((docs-dir (expand-file-name "docs" eve--source-directory)))
+    (when (file-readable-p (expand-file-name "eve.info" docs-dir))
+      docs-dir)))
+
+(defun eve--register-info-directory ()
+  "Add Eve's bundled manual to Emacs Info search paths."
+  (when-let* ((docs-dir (eve--info-directory)))
+    ;; `Info-directory-list' is used to build the top-level Info menu from dir
+    ;; files, while `Info-additional-directory-list' supports direct lookup.
+    (when (boundp 'Info-directory-list)
+      (add-to-list 'Info-directory-list docs-dir))
+    (when (boundp 'Info-additional-directory-list)
+      (add-to-list 'Info-additional-directory-list docs-dir))
+    ;; If Info has already built its directory menu, force it to notice Eve.
+    (when (boundp 'Info-dir-contents)
+      (setq Info-dir-contents nil))))
+
+(with-eval-after-load 'info
+  (eve--register-info-directory))
+
+;;;###autoload
+(defun eve-info ()
+  "Open the Eve manual in Info."
+  (interactive)
+  (require 'info)
+  (eve--register-info-directory)
+  (info "(eve)"))
+
 (defun eve--resolve-cli ()
   "Find the eve CLI executable.
 Try `executable-find' on `eve-cli-program' first; fall back to
@@ -633,14 +663,16 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
       (unless (bolp) (insert "\n")))))
 
 (defun eve--section-segments (marker)
-  "Return segments following MARKER until the next marker."
+  "Return MARKER and following segments until the next marker.
+Including MARKER is harmless for plain structural markers (the renderer skips
+non-renderable markers) and required for markers that carry intro/outro b-roll."
   (let* ((segments (eve--segments))
 	 (start (cl-position marker segments :test #'eq)))
     (when start
       (let (result)
-	(cl-loop for idx from (1+ start) below (length segments)
+	(cl-loop for idx from start below (length segments)
 		 for seg = (nth idx segments)
-		 until (eve--marker-p seg)
+		 until (and (> idx start) (eve--marker-p seg))
 		 do (push seg result))
 	(nreverse result)))))
 

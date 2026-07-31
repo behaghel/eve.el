@@ -313,14 +313,8 @@ Opening any @samp{*.tjm.json} file then activates @samp{eve-mode} automatically.
 @node Accessing the manual in Emacs
 @subsection Accessing the manual in Emacs
 
-After installing the package, add the @samp{docs/} directory to Emacs's Info path:
-
-@lisp
-(add-to-list 'Info-directory-list
-             (expand-file-name "docs" (file-name-directory (locate-library "eve"))))
-@end lisp
-
-Then browse the manual with @samp{C-h i m eve RET}.
+Eve registers its bundled Info manual automatically when the package is loaded.
+Browse it with @samp{M-x eve-info} or @samp{C-h i m eve RET}.
 
 @node Quick Start
 @section Quick Start
@@ -626,9 +620,11 @@ Press @samp{o} (@samp{eve-insert-marker}) to insert a marker above the current s
 Markers act as named section headings.  They appear in the buffer as bold
 titles.
 
-When you compile with @samp{C-c C-c} while point is on a marker, only the segments
-in that section are compiled.  This is useful for working on one chapter of a
-longer video.
+When you compile with @samp{C-c C-c} while point is on a marker, the marker and the
+segments in that section are compiled.  Plain markers are structural headings and
+render no media, but a marker with @samp{edit.broll} is included as a timeline unit.
+This is useful for intro cards, outro cards, interstitial title cards, and for
+working on one chapter of a longer video.
 
 @node Inline editing
 @section Inline editing

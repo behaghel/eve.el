@@ -376,6 +376,35 @@
     (should (equal (eve--filter-media-files files)
 		   '("/tmp/INTRO.MP4" "/tmp/voice.M4A")))))
 
+(ert-deftest eve-register-info-directory-adds-bundled-manual ()
+  "Eve's bundled Info manual should be discoverable after package load."
+  (let* ((root (file-name-as-directory (make-temp-file "eve-info" t)))
+         (docs (expand-file-name "docs" root))
+         (old-source-directory eve--source-directory)
+         (old-info-directory-list (and (boundp 'Info-directory-list)
+                                       (symbol-value 'Info-directory-list)))
+         (old-info-additional-directory-list
+          (and (boundp 'Info-additional-directory-list)
+               (symbol-value 'Info-additional-directory-list)))
+         (old-info-dir-contents (and (boundp 'Info-dir-contents)
+                                     (symbol-value 'Info-dir-contents))))
+    (unwind-protect
+        (progn
+          (setq eve--source-directory root)
+          (setq Info-directory-list nil)
+          (setq Info-additional-directory-list nil)
+          (setq Info-dir-contents "stale")
+          (make-directory docs)
+          (write-region "dummy info" nil (expand-file-name "eve.info" docs))
+          (eve--register-info-directory)
+          (should (member docs Info-directory-list))
+          (should (member docs Info-additional-directory-list))
+          (should-not Info-dir-contents))
+      (setq eve--source-directory old-source-directory)
+      (setq Info-directory-list old-info-directory-list)
+      (setq Info-additional-directory-list old-info-additional-directory-list)
+      (setq Info-dir-contents old-info-dir-contents))))
+
 (ert-deftest eve-mode-uses-buffer-local-window-size-hook-for-wrap ()
   "Eve visual wrapping should not pollute global window-configuration hooks."
   (eve-test-with-buffer
@@ -525,7 +554,9 @@
         (should (equal captured-output output))
         (should (equal captured-temp temp))
         (should (equal captured-data-path temp))
-       (should (= (length (alist-get 'segments captured-data)) 1))))))
+       (should (equal (mapcar (lambda (item) (alist-get 'id item))
+                              (alist-get 'segments captured-data))
+                      '("marker-001" "seg-1")))))))
 
 (ert-deftest eve-pre-flight-validate-handles-null-eta ()
   "Pre-flight must not crash when dry-run returns null estimated_seconds."

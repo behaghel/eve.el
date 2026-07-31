@@ -217,6 +217,21 @@ def test_ffmpeg_extract_invokes_expected_command(
     assert capture_output is True
 
 
+def test_ffmpeg_extract_reports_missing_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("ffmpeg")
+
+    monkeypatch.setattr("eve_cli.commands.transcribe.subprocess.run", fake_run)
+
+    with pytest.raises(transcribe.MissingBackendDependencyError) as excinfo:
+        transcribe.ffmpeg_extract(tmp_path / "input.mp4", tmp_path / "audio.wav")
+
+    assert "ffmpeg executable not found" in str(excinfo.value)
+
+
 def test_transcribe_run_uses_model_and_emits_manifest(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -17,6 +17,7 @@
     pkgs.python312
     pkgs.uv
     pkgs.texinfo
+    pkgs.ffmpeg
   ];
 
   env = {

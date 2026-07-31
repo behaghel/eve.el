@@ -17,6 +17,7 @@ from .common import add_json_flag
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
+AUDIO_EDGE_FADE_SECONDS = 0.01
 
 QUALITY_DRAFT = "draft"
 QUALITY_FINAL = "final"
@@ -51,6 +52,21 @@ def _make_scale_vf(scale: float) -> str | None:
     if scale >= 1.0:
         return None
     return f"scale=trunc(iw*{scale}/2)*2:trunc(ih*{scale}/2)*2"
+
+
+def audio_edge_fade_filter(duration: float) -> str | None:
+    """Return a tiny edge fade filter to suppress clicks at edit boundaries."""
+    if duration <= 0:
+        return None
+    fade = min(AUDIO_EDGE_FADE_SECONDS, duration / 4)
+    if fade <= 0:
+        return None
+    fade_start = max(0.0, duration - fade)
+    return (
+        f"afade=t=in:st=0:d={fade:.6f},"
+        f"afade=t=out:st={fade_start:.6f}:d={fade:.6f},"
+        "aresample=async=1:first_pts=0"
+    )
 
 
 def _file_identity(path: pathlib.Path) -> str:
@@ -728,6 +744,8 @@ def build_subtitle_cues(
     previous_source_segment: dict[str, Any] | None = None
     for segment in manifest.get("segments", []):
         if segment_kind(segment) == "marker":
+            if not edit_deleted(segment) and canonical_broll_key(segment):
+                timeline += segment_duration(segment)
             continue
         if preserve_gap_threshold is not None and previous_source_segment is not None:
             gap = compute_gap(previous_source_segment, segment)
@@ -820,9 +838,12 @@ def build_trim_command(
     raw_pix_fmt = str(info.get("pix_fmt") or "yuv420p")
     out_pix_fmt = effective_pix_fmt(raw_pix_fmt, codec, quality)
     _svf = _make_scale_vf(scale)
+    duration = max(0.0, end - start)
     cmd = [FFMPEG, "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(source)]
     if _svf:
         cmd.extend(["-vf", _svf])
+    if audio_filter := audio_edge_fade_filter(duration):
+        cmd.extend(["-af", audio_filter])
     cmd.extend(encoding_args(quality, codec))
     cmd.extend(["-pix_fmt", out_pix_fmt, "-c:a", "aac", str(dest)])
     return cmd
@@ -995,6 +1016,8 @@ def build_broll_command(
         cmd.extend(
             ["-filter_complex", filter_complex, "-map", "[outv]", "-map", audio_ch]
         )
+        if audio_filter := audio_edge_fade_filter(duration):
+            cmd.extend(["-af", audio_filter])
         cmd.extend(_enc_args)
         cmd.extend(["-pix_fmt", pix_fmt, "-c:a", "aac", str(dest)])
         return cmd
@@ -1029,6 +1052,8 @@ def build_broll_command(
     cmd.extend(["-map", "1:v:0", "-map", audio_map])
     if _svf:
         cmd.extend(["-vf", _svf])
+    if audio_filter := audio_edge_fade_filter(duration):
+        cmd.extend(["-af", audio_filter])
     cmd.extend(_enc_args)
     cmd.extend(
         [
@@ -1454,6 +1479,9 @@ def render_segments(
                 ]
                 if _svf:
                     trim_cmd.extend(["-vf", _svf])
+                if audio_policy == "broll":
+                    if audio_filter := audio_edge_fade_filter(overlay_duration):
+                        trim_cmd.extend(["-af", audio_filter])
                 trim_cmd.extend(encoding_args(quality, codec))
                 trim_cmd.extend(["-pix_fmt", prepared_pix_fmt])
                 if audio_policy == "broll":
@@ -1577,8 +1605,14 @@ def concat_segments(segments: list[pathlib.Path], destination: pathlib.Path) -> 
         "0",
         "-i",
         str(list_file),
-        "-c",
+        "-c:v",
         "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-af",
+        "aresample=async=1:first_pts=0",
         str(destination),
     ]
     run_ffmpeg(cmd, context="concatenating rendered segments")
@@ -1617,6 +1651,8 @@ def collect_markers(
                 or str(segment.get("id") or "marker")
             )
             markers.append((title, timeline))
+            if canonical_broll_key(segment):
+                timeline += segment_duration(segment)
             continue
 
         duration = segment_duration(segment)

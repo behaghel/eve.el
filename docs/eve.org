@@ -116,14 +116,8 @@ Opening any =*.tjm.json= file then activates =eve-mode= automatically.
 
 *** Accessing the manual in Emacs
 
-After installing the package, add the =docs/= directory to Emacs's Info path:
-
-#+begin_src emacs-lisp
-(add-to-list 'Info-directory-list
-             (expand-file-name "docs" (file-name-directory (locate-library "eve"))))
-#+end_src
-
-Then browse the manual with =C-h i m eve RET=.
+Eve registers its bundled Info manual automatically when the package is loaded.
+Browse it with =M-x eve-info= or =C-h i m eve RET=.
 
 ** Quick Start
 
@@ -337,9 +331,11 @@ Press =o= (=eve-insert-marker=) to insert a marker above the current segment.
 Markers act as named section headings.  They appear in the buffer as bold
 titles.
 
-When you compile with =C-c C-c= while point is on a marker, only the segments
-in that section are compiled.  This is useful for working on one chapter of a
-longer video.
+When you compile with =C-c C-c= while point is on a marker, the marker and the
+segments in that section are compiled.  Plain markers are structural headings and
+render no media, but a marker with =edit.broll= is included as a timeline unit.
+This is useful for intro cards, outro cards, interstitial title cards, and for
+working on one chapter of a longer video.
 
 ** Inline editing
 
