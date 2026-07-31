@@ -1139,9 +1139,9 @@
   "Segment with timed words for duration tests.")
 
 (ert-deftest eve-ruler-duration-single-segment-all-present ()
-  "Rendered segment duration uses first/last visible word bounds."
+  "Rendered segment duration uses segment bounds when no words are deleted."
   (let ((eve-preserve-gaps-max 2.0))
-    (should (= 2.5 (eve--rendered-segment-duration (copy-tree eve-test--seg-timed t) t)))))
+    (should (= 5.0 (eve--rendered-segment-duration (copy-tree eve-test--seg-timed t) t)))))
 
 (ert-deftest eve-ruler-duration-deleted-word-excluded ()
   "Deleted words are excluded when hide-deleted is enabled."
@@ -1157,7 +1157,7 @@
          (segment (copy-tree eve-test--seg-timed t))
          (words (alist-get 'words segment)))
     (setf (alist-get 'edit (car words)) '((deleted . t)))
-    (should (= 2.5 (eve--rendered-segment-duration segment nil)))))
+    (should (= 5.0 (eve--rendered-segment-duration segment nil)))))
 
 (ert-deftest eve-ruler-duration-all-words-deleted ()
   "Segment duration is zero when all words are deleted and hidden."
@@ -1173,12 +1173,33 @@
     (should (= 0.0 (eve--rendered-segment-duration segment t)))))
 
 (ert-deftest eve-ruler-duration-no-words-key ()
-  "Segments without words render with zero duration."
+  "Segments without words still render using segment bounds."
   (let ((segment '((id . "seg-empty")
                    (source . "clip")
                    (start . 0.0) (end . 5.0)
                    (text . "hello world"))))
-    (should (= 0.0 (eve--rendered-segment-duration segment t)))))
+    (should (= 5.0 (eve--rendered-segment-duration segment t)))))
+
+(ert-deftest eve-ruler-duration-renderable-marker-broll ()
+  "Renderable marker b-roll contributes to rendered timeline duration."
+  (let ((marker '((id . "intro")
+                  (kind . "marker")
+                  (title . "Intro")
+                  (edit . ((broll . ((file . "intro.mp4")
+                                     (duration . 10.0))))))))
+    (should (= 10.0 (eve--rendered-segment-duration marker t)))))
+
+(ert-deftest eve-playback-rendered-cumulative-times-shift-after-marker-broll ()
+  "Rendered playback maps account for source-less intro marker b-roll."
+  (let* ((marker '((id . "intro")
+                   (kind . "marker")
+                   (edit . ((broll . ((file . "intro.mp4")
+                                      (duration . 10.0)))))))
+         (segment (copy-tree eve-test--seg-timed t))
+         (times (eve--rendered-cumulative-times (list marker segment) t)))
+    (should (equal times '(("intro" . 10.0) ("seg-t1" . 15.0))))
+    (should (equal "intro" (eve--playback-rendered-segment-at-time 5.0 times)))
+    (should (equal "seg-t1" (eve--playback-rendered-segment-at-time 10.1 times)))))
 
 (ert-deftest eve-ruler-duration-cumulative-monotonic ()
   "Cumulative times increase with positive-duration segments."
@@ -1193,15 +1214,29 @@
     (should (= 2 (length times)))
     (should (< (cdr (nth 0 times)) (cdr (nth 1 times))))))
 
+(ert-deftest eve-rendered-cumulative-times-include-preserved-short-gaps ()
+  "Rendered playback maps include preserved source gaps between segments."
+  (let* ((eve-preserve-gaps-max 1.0)
+         (seg1 '((id . "a") (source . "clip")
+                 (start . 0.0) (end . 1.0)
+                 (words . (((start . 0.0) (end . 1.0) (token . "a"))))))
+         (seg2 '((id . "b") (source . "clip")
+                 (start . 1.5) (end . 2.5)
+                 (words . (((start . 1.5) (end . 2.5) (token . "b"))))))
+         (times (eve--rendered-cumulative-times (list seg1 seg2) t)))
+    (should (equal times '(("a" . 1.0) ("b" . 2.5))))
+    (should (equal "b" (eve--playback-rendered-segment-at-time 1.25 times)))
+    (should (equal "b" (eve--playback-rendered-segment-at-time 1.6 times)))))
+
 (ert-deftest eve-ruler-duration-leading-trailing-gap-trimmed ()
-  "Excessive leading/trailing gaps are trimmed from rendered duration."
+  "Leading/trailing silence inside a retained segment remains rendered media."
   (let* ((eve-preserve-gaps-max 2.0)
          (segment '((id . "seg-gap")
                     (source . "clip")
                     (start . 0.0) (end . 10.0)
                     (text . "hello")
                     (words . (((start . 4.0) (end . 5.0) (token . "hello")))))))
-    (should (= 0.0 (eve--rendered-segment-duration segment t)))))
+    (should (= 10.0 (eve--rendered-segment-duration segment t)))))
 
 (ert-deftest eve-ruler-format-time-zero ()
   (should (equal "[00:00:00]" (eve--format-ruler-time 0))))

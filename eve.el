@@ -1850,49 +1850,97 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
                   "")
           :word-spans (nreverse word-spans))))
 
+(defun eve--rendered-marker-duration (segment)
+  "Return rendered duration in seconds for marker SEGMENT, or 0.0."
+  (let* ((broll (eve--segment-broll segment))
+         (broll-duration (and broll (eve--aget 'duration broll)))
+         (duration (or (eve--time->seconds broll-duration)
+                       (eve--time->seconds (alist-get 'duration segment))
+                       0.0)))
+    (if (and broll (eve--aget 'file broll) (> duration 0.0))
+        duration
+      0.0)))
+
+(defun eve--segment-has-deleted-words-p (segment)
+  "Return non-nil if SEGMENT has any deleted words."
+  (seq-some #'eve--edit-deleted-p (or (alist-get 'words segment) '())))
+
+(defun eve--rendered-word-ranges (segment hide-deleted)
+  "Return rendered word ranges for SEGMENT."
+  (let ((words (or (alist-get 'words segment) '())))
+    (delq nil
+          (mapcar (lambda (word)
+                    (unless (and hide-deleted (eve--edit-deleted-p word))
+                      (let ((start (alist-get 'start word))
+                            (end (alist-get 'end word)))
+                        (when (and (numberp start) (numberp end) (> end start))
+                          (cons start end)))))
+                  words))))
+
+(defun eve--rendered-segment-gap-bounds (segment hide-deleted)
+  "Return rendered source-media bounds for gap calculations."
+  (if (and hide-deleted (eve--segment-has-deleted-words-p segment))
+      (when-let* ((ranges (eve--rendered-word-ranges segment hide-deleted)))
+        (cons (caar ranges) (cdar (last ranges))))
+    (let ((start (alist-get 'start segment))
+          (end (alist-get 'end segment)))
+      (when (and (numberp start) (numberp end) (> end start))
+        (cons start end)))))
+
+(defun eve--rendered-preserved-gap-duration (previous current hide-deleted)
+  "Return rendered preserved-gap duration between PREVIOUS and CURRENT."
+  (let ((previous-source (alist-get 'source previous))
+        (current-source (alist-get 'source current)))
+    (if (not (and previous-source current-source
+                  (equal previous-source current-source)))
+        0.0
+      (let ((previous-bounds (eve--rendered-segment-gap-bounds previous hide-deleted))
+            (current-bounds (eve--rendered-segment-gap-bounds current hide-deleted)))
+        (if (not (and previous-bounds current-bounds))
+            0.0
+          (let* ((gap (- (car current-bounds) (cdr previous-bounds)))
+                 (threshold (or eve-preserve-gaps-max 0.0)))
+            (if (and (> gap 0.0) (<= gap threshold)) gap 0.0)))))))
+
 (defun eve--rendered-segment-duration (segment hide-deleted)
   "Return rendered duration in seconds for SEGMENT."
-  (if (or (eve--marker-p segment)
-          (and hide-deleted (eve--edit-deleted-p segment)))
-      0.0
-    (let* ((words (or (alist-get 'words segment) '()))
-           (visible-words (if hide-deleted
-                              (seq-remove #'eve--edit-deleted-p words)
-                            words)))
-      (if (null visible-words)
-          0.0
-        (let* ((first-word (car visible-words))
-               (last-word (car (last visible-words)))
-               (first-start (or (alist-get 'start first-word) 0.0))
-               (last-end (or (alist-get 'end last-word) 0.0))
-               (raw-duration (max 0.0 (- last-end first-start)))
-               (max-gap (or eve-preserve-gaps-max 0.0))
-               (seg-start (or (alist-get 'start segment) first-start))
-               (leading-gap (- first-start seg-start))
-               (seg-end (or (alist-get 'end segment) last-end))
-               (trailing-gap (- seg-end last-end)))
-          (when (> leading-gap max-gap)
-            (setq raw-duration (- raw-duration (- leading-gap max-gap))))
-          (when (> trailing-gap max-gap)
-            (setq raw-duration (- raw-duration (- trailing-gap max-gap))))
-          (max 0.0 raw-duration))))))
+  (cond
+   ((and hide-deleted (eve--edit-deleted-p segment)) 0.0)
+   ((eve--marker-p segment) (eve--rendered-marker-duration segment))
+   ((and hide-deleted (eve--segment-has-deleted-words-p segment))
+    (cl-reduce #'+ (mapcar (lambda (range) (- (cdr range) (car range)))
+                           (eve--rendered-word-ranges segment hide-deleted))
+               :initial-value 0.0))
+   (t
+    (let ((start (alist-get 'start segment))
+          (end (alist-get 'end segment)))
+      (if (and (numberp start) (numberp end) (> end start))
+          (- end start)
+        0.0)))))
 
 (defun eve--rendered-total-duration (segments hide-deleted)
   "Return total rendered duration in seconds for SEGMENTS."
-  (cl-reduce #'+ (mapcar (lambda (seg)
-                           (eve--rendered-segment-duration seg hide-deleted))
-                         segments)
-             :initial-value 0.0))
+  (or (cdr (car (last (eve--rendered-cumulative-times segments hide-deleted))))
+      0.0))
 
 (defun eve--rendered-cumulative-times (segments hide-deleted)
   "Return alist of (ID . cumulative-end-time) for each segment."
   (let ((cumulative 0.0)
+        (previous-source-segment nil)
         result)
     (dolist (segment segments)
-      (let ((id (alist-get 'id segment)))
+      (unless (eve--marker-p segment)
         (setq cumulative (+ cumulative
-                            (eve--rendered-segment-duration segment hide-deleted)))
-        (push (cons id cumulative) result)))
+                            (if previous-source-segment
+                                (eve--rendered-preserved-gap-duration
+                                 previous-source-segment segment hide-deleted)
+                              0.0))))
+      (let ((id (alist-get 'id segment))
+            (duration (eve--rendered-segment-duration segment hide-deleted)))
+        (setq cumulative (+ cumulative duration))
+        (push (cons id cumulative) result)
+        (when (and (not (eve--marker-p segment)) (> duration 0.0))
+          (setq previous-source-segment segment))))
     (nreverse result)))
 
 (defun eve--format-ruler-time (seconds)
