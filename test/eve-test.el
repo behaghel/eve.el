@@ -261,6 +261,41 @@
      (should (equal eve--visual-separators (list (alist-get 'id second)))))
    (should (looking-at "gamma"))))
 
+(ert-deftest eve-copy-paste-segment-preserves-broll-and-uses-fresh-id ()
+  "Copy/paste duplicates segment edit metadata without reusing ids."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (broll '((file . "intro.mp4") (mode . "replace") (audio . "broll"))))
+     (eve--set-segment-broll segment broll)
+     (eve--render)
+     (should (eve--goto-segment "seg-1"))
+     (eve-copy-segment)
+     (eve-paste-segment)
+     (let* ((segments (eve--segments))
+            (pasted (nth 1 segments)))
+       (should (= 2 (length segments)))
+       (should (equal "seg-1-copy-1" (alist-get 'id pasted)))
+       (should (equal broll (eve--segment-broll pasted)))))))
+
+(ert-deftest eve-copy-paste-segment-imports-source-into-another-buffer ()
+  "Pasting across TJM buffers carries the referenced source descriptor."
+  (eve-test-with-buffer
+   (should (eve--goto-segment "seg-1"))
+   (eve-copy-segment))
+  (with-temp-buffer
+    (let ((buffer-file-name nil))
+      (insert "{}")
+      (goto-char (point-min))
+      (eve-mode)
+      (setq-local eve--data '((version . 1) (sources . nil) (segments . nil)))
+      (eve--render)
+      (eve-paste-segment)
+      (should (equal '(((id . "clip") (file . "clip.mp4")))
+                     (alist-get 'sources eve--data)))
+      (let ((segment (car (eve--segments))))
+        (should (equal "clip" (alist-get 'source segment)))
+        (should (equal "seg-1" (alist-get 'id segment)))))))
+
 (ert-deftest eve-insert-marker-before-current ()
   "Inserting a marker yields a dedicated marker segment ahead of point."
   (eve-test-with-buffer
@@ -1620,6 +1655,8 @@
   (should (eq (lookup-key eve-mode-map ")") #'eve-merge-with-next))
   (should (eq (lookup-key eve-mode-map "u") #'eve-undo))
   (should (eq (lookup-key eve-mode-map (kbd "C-r")) #'eve-redo))
+  (should (eq (lookup-key eve-mode-map "y") #'eve-copy-segment))
+  (should (eq (lookup-key eve-mode-map (kbd "C-y")) #'eve-paste-segment))
   (should (eq (lookup-key eve-mode-map "e") #'eve-dwim-edit))
   (should (eq (lookup-key eve-mode-map "o") #'eve-insert-marker))
   (should (eq (lookup-key eve-mode-map "t") #'eve-toggle-tag))

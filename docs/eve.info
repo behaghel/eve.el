@@ -593,6 +593,11 @@ File: eve.info,  Node: Reordering,  Next: Markers and sections,  Prev: Splitting
      position down.
    • ‘K’ (‘eve-move-segment-up’) — move the current segment one position
      up.
+   • ‘y’ (‘eve-copy-segment’) — copy the current segment or marker,
+     including edit metadata such as b-roll.
+   • ‘C-y’ (‘eve-paste-segment’) — paste the copied segment after point.
+     Pasting into another TJM buffer also copies the referenced source
+     descriptor when needed.
 
 
 File: eve.info,  Node: Markers and sections,  Next: Inline editing,  Prev: Reordering,  Up: Editing
@@ -1367,6 +1372,8 @@ Key           Command
 ‘t’           ‘eve-toggle-tag’
 ‘o’           ‘eve-insert-marker’
 ‘e’           ‘eve-dwim-edit’
+‘C-y’         ‘eve-paste-segment’
+‘y’           ‘eve-copy-segment’
 ‘C-r’         ‘eve-redo’
 ‘u’           ‘eve-undo’
 ‘)’           ‘eve-merge-with-next’
@@ -1596,58 +1603,58 @@ Node: Navigation16025
 Node: Deletion and restoration16402
 Node: Splitting and merging17041
 Node: Reordering17533
-Node: Markers and sections17867
-Node: Inline editing18566
-Node: Metadata18897
-Node: Undo and redo19471
-Node: Validation19798
-Node: Filler Words20124
-Node: Concept20336
-Node: Configuration (1)20738
-Node: Commands21331
-Node: Auto-tagging on file open22271
-Node: B-Roll22620
-Node: Concept (1)22926
-Node: Editing b-roll metadata23582
-Node: Compositing modes in detail25351
-Node: Replace mode25576
-Node: Pip mode26024
-Node: Audio policy26943
-Node: JSON templates27422
-Node: Overlay fields28715
-Node: Concrete example lower-third title card30118
-Node: Placeholders without templates32003
-Node: Continuation chains32426
-Node: Compilation and Rendering33449
-Node: Two modes draft and final33801
-Node: Under the hood34279
-Node: Pre-flight validation35382
-Node: Dry-run analysis36119
-Node: Checkpoint and resume36645
-Node: Progressive output37126
-Node: Configuration reference37528
-Node: CLI reference38872
-Node: Playback40001
-Node: Source playback40248
-Node: Rendered playback40709
-Node: Playback tracking and segment highlighting41207
-Node: Controls41634
-Node: Video layout42615
-Node: Display44151
-Node: Timestamp ruler44337
-Node: Hiding deleted segments44934
-Node: Word-level display45368
-Node: Key Bindings46182
-Node: Single-key bindings46423
-Node: C-c prefix bindings48141
-Node: Playback-mode overrides49056
-Node: The hydra cheatsheet49657
-Node: Configuration Reference50059
-Node: Architecture54234
-Node: Two-layer boundary54421
-Node: Shared contract55225
-Node: Development55697
-Node: Appendix A TJM v11 Specification56173
+Node: Markers and sections18177
+Node: Inline editing18876
+Node: Metadata19207
+Node: Undo and redo19781
+Node: Validation20108
+Node: Filler Words20434
+Node: Concept20646
+Node: Configuration (1)21048
+Node: Commands21641
+Node: Auto-tagging on file open22581
+Node: B-Roll22930
+Node: Concept (1)23236
+Node: Editing b-roll metadata23892
+Node: Compositing modes in detail25661
+Node: Replace mode25886
+Node: Pip mode26334
+Node: Audio policy27253
+Node: JSON templates27732
+Node: Overlay fields29025
+Node: Concrete example lower-third title card30428
+Node: Placeholders without templates32313
+Node: Continuation chains32736
+Node: Compilation and Rendering33759
+Node: Two modes draft and final34111
+Node: Under the hood34589
+Node: Pre-flight validation35692
+Node: Dry-run analysis36429
+Node: Checkpoint and resume36955
+Node: Progressive output37436
+Node: Configuration reference37838
+Node: CLI reference39182
+Node: Playback40311
+Node: Source playback40558
+Node: Rendered playback41019
+Node: Playback tracking and segment highlighting41517
+Node: Controls41944
+Node: Video layout42925
+Node: Display44461
+Node: Timestamp ruler44647
+Node: Hiding deleted segments45244
+Node: Word-level display45678
+Node: Key Bindings46492
+Node: Single-key bindings46733
+Node: C-c prefix bindings48534
+Node: Playback-mode overrides49449
+Node: The hydra cheatsheet50050
+Node: Configuration Reference50452
+Node: Architecture54627
+Node: Two-layer boundary54814
+Node: Shared contract55618
+Node: Development56090
+Node: Appendix A TJM v11 Specification56566
 
 End Tag Table
 

@@ -349,6 +349,8 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     (define-key map ")" #'eve-merge-with-next)
     (define-key map "u" #'eve-undo)
     (define-key map (kbd "C-r") #'eve-redo)
+    (define-key map "y" #'eve-copy-segment)
+    (define-key map (kbd "C-y") #'eve-paste-segment)
     (define-key map "e" #'eve-dwim-edit)
     (define-key map "o" #'eve-insert-marker)
     ;; Metadata
@@ -497,6 +499,9 @@ Forward-declared for the byte-compiler.")
 
 (defvar eve--transcribe-process-count 0
   "Number of active Eve transcription processes.")
+
+(defvar eve--segment-clipboard nil
+  "Last Eve segment copied for `eve-paste-segment'.")
 
 (defconst eve--transcribe-mode-line-entry
   'eve--transcribe-mode-line-string
@@ -1743,10 +1748,18 @@ The milestone interval is controlled by `eve-ruler-interval'."
       (let ((segments '()))
 	(setf (alist-get 'segments eve--data) segments))))
 
-(defun eve--source-by-id (source-id)
+(defun eve--sources ()
+  "Return the manifest source list, initializing it when absent."
+  (or (alist-get 'sources eve--data)
+      (let ((sources '()))
+        (setf (alist-get 'sources eve--data) sources))))
+
+(defun eve--source-by-id (source-id &optional sources)
+  "Return the source descriptor with SOURCE-ID from SOURCES or current data."
   (seq-find (lambda (item)
-	      (string= (alist-get 'id item) source-id))
-	    (alist-get 'sources eve--data)))
+	      (string= (eve--stringify (eve--aget 'id item))
+                       (eve--stringify source-id)))
+	    (or sources (eve--sources))))
 
 (defun eve--format-time (seconds)
   (let* ((tot (or (eve--coerce-number seconds) 0.0))
@@ -2423,6 +2436,94 @@ calling convention of `window-size-change-functions'."
 		 :test #'equal
 		 :key (lambda (segment)
 			(alist-get 'id segment)))))
+
+(defun eve--segment-id-list (&optional segments)
+  "Return all segment ids in SEGMENTS or current data."
+  (delq nil (mapcar (lambda (segment)
+                      (eve--aget 'id segment))
+                    (or segments (eve--segments)))))
+
+(defun eve--unique-id (base existing-ids)
+  "Return a unique id based on BASE not present in EXISTING-IDS."
+  (let* ((root (if (and base (not (string-empty-p (eve--stringify base))))
+                   (eve--stringify base)
+                 "segment"))
+         (candidate root)
+         (n 1))
+    (while (member candidate existing-ids)
+      (setq candidate (format "%s-copy-%d" root n))
+      (setq n (1+ n)))
+    candidate))
+
+(defun eve--source-equal-p (a b)
+  "Return non-nil when source descriptors A and B point at the same source."
+  (and a b
+       (equal (eve--stringify (eve--aget 'file a))
+              (eve--stringify (eve--aget 'file b)))))
+
+(defun eve--import-source-for-segment (segment source)
+  "Import SOURCE for SEGMENT if needed, rewriting SEGMENT's source id on conflict."
+  (when source
+    (let* ((sources (eve--sources))
+           (source-id (eve--aget 'id source))
+           (existing (eve--source-by-id source-id sources)))
+      (cond
+       ((null existing)
+        (setf (alist-get 'sources eve--data)
+              (append sources (list (copy-tree source t)))))
+       ((eve--source-equal-p existing source) nil)
+       (t
+        (let* ((new-source (copy-tree source t))
+               (new-id (eve--unique-id source-id
+                                       (delq nil
+                                             (mapcar (lambda (item)
+                                                       (eve--aget 'id item))
+                                                     sources)))))
+          (setf (alist-get 'id new-source) new-id)
+          (setf (alist-get 'source segment) new-id)
+          (setf (alist-get 'sources eve--data)
+                (append sources (list new-source)))))))))
+
+(defun eve-copy-segment ()
+  "Copy the segment or marker at point for later `eve-paste-segment'.
+The copied data includes edit metadata such as b-roll.  When pasted into another
+TJM buffer, the referenced source descriptor is copied when needed."
+  (interactive)
+  (let* ((segment (or (eve--segment-at-point)
+                      (user-error "No segment at point")))
+         (source-id (eve--aget 'source segment))
+         (source (and source-id (eve--source-by-id source-id))))
+    (setq eve--segment-clipboard
+          (list :segment (copy-tree segment t)
+                :source (and source (copy-tree source t))))
+    (message "Copied %s" (or (eve--aget 'id segment) "segment"))))
+
+(defun eve-paste-segment ()
+  "Paste the last copied Eve segment or marker after the segment at point.
+The pasted segment receives a fresh id when needed.  Source descriptors are
+copied across TJM buffers when required, and b-roll metadata is preserved."
+  (interactive)
+  (unless eve--segment-clipboard
+    (user-error "No copied Eve segment"))
+  (let* ((segment (copy-tree (plist-get eve--segment-clipboard :segment) t))
+         (source (copy-tree (plist-get eve--segment-clipboard :source) t))
+         (segments (eve--segments))
+         (current (eve--segment-at-point))
+         (current-index (and current (cl-position current segments :test #'eq)))
+         (insert-index (if current-index (1+ current-index) (length segments)))
+         (new-id (eve--unique-id (eve--aget 'id segment) (eve--segment-id-list segments))))
+    (eve--record-state)
+    (setf (alist-get 'id segment) new-id)
+    (eve--import-source-for-segment segment source)
+    (setf (alist-get 'segments eve--data)
+          (append (cl-subseq segments 0 insert-index)
+                  (list segment)
+                  (nthcdr insert-index segments)))
+    (eve--mark-dirty)
+    (eve--render t)
+    (eve--goto-segment new-id)
+    (eve--update-focus-overlay)
+    (message "Pasted %s" new-id)))
 
 (defun eve--move-by-segments (delta)
   "Move point DELTA segments forward (or backward when negative)."

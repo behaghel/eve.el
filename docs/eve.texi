@@ -611,6 +611,13 @@ one below, combining text and adjusting the end time.
 @samp{J} (@samp{eve-move-segment-down}) — move the current segment one position down.
 @item
 @samp{K} (@samp{eve-move-segment-up}) — move the current segment one position up.
+@item
+@samp{y} (@samp{eve-copy-segment}) — copy the current segment or marker, including edit
+metadata such as b-roll.
+@item
+@samp{C-y} (@samp{eve-paste-segment}) — paste the copied segment after point.  Pasting
+into another TJM buffer also copies the referenced source descriptor when
+needed.
 @end itemize
 
 @node Markers and sections
@@ -1458,6 +1465,10 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-insert-marker}
 @item @samp{e}
 @tab @samp{eve-dwim-edit}
+@item @samp{C-y}
+@tab @samp{eve-paste-segment}
+@item @samp{y}
+@tab @samp{eve-copy-segment}
 @item @samp{C-r}
 @tab @samp{eve-redo}
 @item @samp{u}

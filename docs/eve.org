@@ -324,6 +324,11 @@ Deleted content is shown or hidden with =C-c C-h= (=eve-hide-deleted-mode=).
 
 - =J= (=eve-move-segment-down=) — move the current segment one position down.
 - =K= (=eve-move-segment-up=) — move the current segment one position up.
+- =y= (=eve-copy-segment=) — copy the current segment or marker, including edit
+  metadata such as b-roll.
+- =C-y= (=eve-paste-segment=) — paste the copied segment after point.  Pasting
+  into another TJM buffer also copies the referenced source descriptor when
+  needed.
 
 ** Markers and sections
 
