@@ -1625,9 +1625,15 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-auto-render}
 @tab @samp{t}
 @tab Whether to speculatively pre-render changed segments on save.
+@item @samp{eve-auto-render-all-segments}
+@tab @samp{nil}
+@tab Whether speculative renders should warm every segment cache entry.
 @item @samp{eve-auto-render-idle-seconds}
 @tab @samp{2.0}
 @tab Idle time in seconds before a background speculative render fires after save.
+@item @samp{eve-auto-render-low-priority}
+@tab @samp{t}
+@tab Whether speculative render processes should run at low CPU priority.
 @item @samp{eve-cli-program}
 @tab @samp{"eve"}
 @tab Executable used for `eve` CLI commands.

@@ -1495,7 +1495,9 @@ with ‘M-x customize-group RET eve RET’.
 Variable                           Default                     Description
 -----------------------------------------------------------------------------------------------------------------------------------------------
 ‘eve-auto-render’                  ‘t’                         Whether to speculatively pre-render changed segments on save.
+‘eve-auto-render-all-segments’     ‘nil’                       Whether speculative renders should warm every segment cache entry.
 ‘eve-auto-render-idle-seconds’     ‘2.0’                       Idle time in seconds before a background speculative render fires after save.
+‘eve-auto-render-low-priority’     ‘t’                         Whether speculative render processes should run at low CPU priority.
 ‘eve-cli-program’                  ‘"eve"’                     Executable used for 'eve' CLI commands.
 ‘eve-compile-cache’                ‘t’                         Whether to use the persistent segment cache during compilation.
 ‘eve-compile-confirm-threshold’    ‘30’                        Seconds above which 'eve-compile' asks before starting.
@@ -1689,11 +1691,11 @@ Node: C-c prefix bindings50396
 Node: Playback-mode overrides51324
 Node: The hydra cheatsheet51925
 Node: Configuration Reference52327
-Node: Architecture56897
-Node: Two-layer boundary57084
-Node: Shared contract57888
-Node: Development58360
-Node: Appendix A TJM v11 Specification58836
+Node: Architecture57175
+Node: Two-layer boundary57362
+Node: Shared contract58166
+Node: Development58638
+Node: Appendix A TJM v11 Specification59114
 
 End Tag Table
 

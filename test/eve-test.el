@@ -332,16 +332,96 @@
      (eve--render)
      (should (null (eve-validate t))))))
 
+(ert-deftest eve-normalize-time-input-accepts-formatted-defaults ()
+  "B-roll time prompts accept defaults produced by `eve--format-time'."
+  (should (equal "00:10.000" (eve--normalize-time-input "00:10.000"))))
+
 (ert-deftest eve-broll-prevents-still-with-broll-audio ()
   "Still-image overlays cannot request b-roll audio."
   (eve-test-with-buffer
    (let ((segment (car (eve--segments)))
-	 (responses '("broll/banner.png" "overlay" "broll" "" "" "y")))
+	 (string-responses '("broll/banner.png" "" ""))
+	 (choice-responses '("overlay" "broll" "y")))
      (cl-letf (((symbol-function 'read-string)
 		(lambda (_prompt &optional _default)
-		  (or (pop responses) "")))
+		  (or (pop string-responses) "")))
+	       ((symbol-function 'completing-read)
+		(lambda (_prompt _collection &optional _predicate _require-match
+				 _initial-input _hist def _inherit-input-method)
+		  (or (pop choice-responses) def)))
 	       ((symbol-function 'image-file-name-p) (lambda (_file) t)))
        (should-error (eve-edit-broll segment) :type 'user-error)))))
+
+(ert-deftest eve-edit-broll-accepts-existing-formatted-duration ()
+  "Accepting an existing numeric duration does not reject its formatted default."
+  (eve-test-with-buffer
+   (let ((segment (car (eve--segments))))
+     (eve--set-segment-broll
+      segment '((file . "intro.mp4")
+                (mode . "replace")
+                (audio . "source")
+                (duration . 10.0)))
+     (let ((string-responses '("intro.mp4" nil nil))
+           (choice-responses '("replace" "source" "n" "n")))
+       (cl-letf (((symbol-function 'read-string)
+                  (lambda (_prompt &optional default)
+                    (or (prog1 (car string-responses)
+                          (setq string-responses (cdr string-responses)))
+                        default)))
+                 ((symbol-function 'completing-read)
+                  (lambda (_prompt _collection &optional _predicate _require-match
+                                   _initial-input _hist def _inherit-input-method)
+                    (or (prog1 (car choice-responses)
+                          (setq choice-responses (cdr choice-responses)))
+                        def))))
+         (eve-edit-broll segment)))
+     (should (equal "00:10.000"
+                    (alist-get 'duration (eve--segment-broll segment)))))))
+
+(ert-deftest eve-auto-render-command-uses-nice-when-enabled ()
+  "Speculative renders can be launched at low CPU priority."
+  (let ((eve-auto-render-low-priority t))
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (program)
+                 (and (equal program "nice") "/usr/bin/nice"))))
+      (should (equal '("/usr/bin/nice" "-n" "19" "eve" "text-edit")
+                     (eve--auto-render-command '("eve" "text-edit")))))))
+
+(ert-deftest eve-auto-render-segment-ids-includes-markers ()
+  "Whole-manifest speculative renders include marker ids too."
+  (eve-test-with-buffer
+   (let ((marker '((id . "marker-001") (kind . "marker") (title . "Intro"))))
+     (setf (alist-get 'segments eve--data)
+           (cons marker (alist-get 'segments eve--data)))
+     (should (equal '("marker-001" "seg-1")
+                    (eve--auto-render-segment-ids))))))
+
+(ert-deftest eve-play-marker-plays-broll-directly ()
+  "Playing a marker with media b-roll starts mpv without compiling its section."
+  (eve-test-with-buffer
+   (let* ((media (make-temp-file "eve-marker-broll" nil ".mp4"))
+          (marker (list (cons 'id "marker-001")
+                        (cons 'kind "marker")
+                        (cons 'title "Intro"))))
+     (unwind-protect
+         (progn
+           (eve--set-segment-broll
+            marker `((file . ,media)
+                     (start_offset . 2.0)
+                     (duration . 10.0)
+                     (mode . "replace")
+                     (audio . "broll")))
+           (let (played compiled)
+             (cl-letf (((symbol-function 'eve--play-with-mpv)
+                        (lambda (file start end &optional _socket)
+                          (setq played (list file start end))))
+                       ((symbol-function 'eve-compile)
+                        (lambda (&rest _args) (setq compiled t))))
+               (eve--play-marker marker))
+             (should (equal (list media 2.0 12.0) played))
+             (should-not compiled)))
+       (when (file-exists-p media)
+         (delete-file media))))))
 
 (ert-deftest eve-marker-supports-broll ()
   "Markers accept b-roll metadata and render a summary line."
@@ -354,12 +434,19 @@
      (setf (alist-get 'segments eve--data) (cons marker segments))
      (eve--render)
      (should (eve--goto-segment "marker-001"))
-    (let ((responses '("intro.mp4" "overlay" "mute" "" "" "n" "n")))
+    (let ((string-responses '("intro.mp4" "" ""))
+          (choice-responses '("overlay" "mute" "n" "n")))
       (cl-letf (((symbol-function 'read-string)
 		  (lambda (_prompt &optional default)
-		    (or (prog1 (car responses)
-			  (setq responses (cdr responses)))
-			default))))
+		    (or (prog1 (car string-responses)
+			  (setq string-responses (cdr string-responses)))
+			default)))
+                ((symbol-function 'completing-read)
+		  (lambda (_prompt _collection &optional _predicate _require-match
+				   _initial-input _hist def _inherit-input-method)
+		    (or (prog1 (car choice-responses)
+			  (setq choice-responses (cdr choice-responses)))
+			def))))
 	 (call-interactively #'eve-edit-broll)))
      (eve--render)
      (should (eve--goto-segment "marker-001"))

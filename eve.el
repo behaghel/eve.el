@@ -1049,6 +1049,29 @@ When non-nil (the default), saving a TJM manifest triggers a background
   :type 'float
   :group 'eve)
 
+(defcustom eve-auto-render-all-segments nil
+  "Whether speculative renders should warm every segment cache entry.
+When nil, only segments reported as changed by the dry run are warmed.  When
+non-nil, every segment id is requested with `eve text-edit --segments', relying
+on the CLI cache to skip entries that are already warm."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-auto-render-low-priority t
+  "Whether speculative render processes should run at low CPU priority.
+When non-nil and the `nice' executable is available, background cache warming is
+launched as `nice -n 19 eve text-edit ...'."
+  :type 'boolean
+  :group 'eve)
+
+(defun eve--auto-render-segment-ids ()
+  "Return segment IDs in the current manifest."
+  (delq nil
+        (mapcar (lambda (segment)
+                  (let ((id (alist-get 'id segment)))
+                    (and id (eve--stringify id))))
+                (eve--segments))))
+
 (defun eve--auto-render-changed-segment-ids ()
   "Return a list of segment IDs that differ from the cache, or nil."
   (when (and buffer-file-name (file-exists-p buffer-file-name))
@@ -1057,6 +1080,12 @@ When non-nil (the default), saving a TJM manifest triggers a background
         (let ((ids (plist-get analysis :changed_ids)))
           (when (and (arrayp ids) (> (length ids) 0))
             (append ids nil)))))))
+
+(defun eve--auto-render-command (command)
+  "Return low-priority wrapper for COMMAND when configured."
+  (if (and eve-auto-render-low-priority (executable-find "nice"))
+      (append (list (executable-find "nice") "-n" "19") command)
+    command))
 
 (defun eve--auto-render-fire ()
   "Launch the speculative background render for the current buffer."
@@ -1068,7 +1097,9 @@ When non-nil (the default), saving a TJM manifest triggers a background
                (process-live-p eve--auto-render-process))
       (delete-process eve--auto-render-process)
       (setq eve--auto-render-process nil))
-    (let ((seg-ids (eve--auto-render-changed-segment-ids))
+    (let ((seg-ids (if eve-auto-render-all-segments
+                       (eve--auto-render-segment-ids)
+                     (eve--auto-render-changed-segment-ids)))
           (buf (current-buffer)))
       (if (null seg-ids)
           (progn
@@ -1083,7 +1114,8 @@ When non-nil (the default), saving a TJM manifest triggers a background
                (seg-args (apply #'append
                                 (mapcar (lambda (id) (list "--segments" id))
                                         seg-ids)))
-               (full-cmd (append base-cmd seg-args)))
+               (full-cmd (eve--auto-render-command
+                          (append base-cmd seg-args))))
           (setq eve--auto-render-process
                 (make-process :name "eve-auto-render"
                               :buffer nil
@@ -1116,16 +1148,37 @@ When non-nil (the default), saving a TJM manifest triggers a background
     (delete-process eve--auto-render-process)
     (setq eve--auto-render-process nil)))
 
+(defun eve--play-marker-broll (segment)
+  "Play marker SEGMENT's b-roll directly when it references media."
+  (let* ((broll (eve--segment-broll segment))
+         (file (and broll (eve--stringify (alist-get 'file broll))))
+         (abs-file (and file (not (string-empty-p file))
+                        (not (string-match-p "\\.json\\'" file))
+                        (eve--resolve-relative-path file))))
+    (when (and abs-file (file-exists-p abs-file))
+      (let* ((start (or (eve--time->seconds (alist-get 'start_offset broll)) 0.0))
+             (duration (eve--time->seconds (alist-get 'duration broll)))
+             (end (and duration (+ start duration)))
+             (socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
+        (eve--play-with-mpv abs-file start end socket-path)
+        (setq eve--playback-source-segments (list segment))
+        (setq eve--playback-mode 'source)
+        (eve-playback-mode 1)
+        (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
+        (message "Playing marker b-roll %s" file)
+        t))))
+
 (defun eve--play-marker (segment)
-  "Play the compiled video associated with marker SEGMENT, compiling if needed."
+  "Play marker SEGMENT b-roll or its compiled section."
   (let* ((title (eve--stringify (alist-get 'title segment)))
 	 (slug (eve--slugify title))
 	 (output (eve--output-path slug)))
-    (if (and output (file-exists-p output))
-	(eve--play-file output)
-      (progn
-	(message "No compiled output for '%s'; compiling section..." (or title slug))
-	(eve-compile)))))
+    (or (eve--play-marker-broll segment)
+        (if (and output (file-exists-p output))
+	    (eve--play-file output)
+          (progn
+	    (message "No compiled output for '%s'; compiling section..." (or title slug))
+	    (eve-compile))))))
 
 (when (featurep 'hydra)
   (defhydra eve-hydra (:hint nil :color teal)
@@ -1456,7 +1509,7 @@ or record undo state."
      ((string-empty-p trim) nil)
      ((string-match-p "\\`[+-]?[0-9]*\\.?[0-9]+\\'" trim)
       (string-to-number trim))
-     ((string-match-p "\\`[0-9]+:\(?:[0-9]+:\)?[0-9]+\\(?:\\.[0-9]+\\)?\\'" trim)
+     ((string-match-p "\\`[0-9]+:\\(?:[0-9]+:\\)?[0-9]+\\(?:\\.[0-9]+\\)?\\'" trim)
       trim)
      (t (user-error "Invalid time format: %s" input)))))
 
@@ -3205,6 +3258,24 @@ that starts at the word under point."
     (eve--mark-dirty)
     (eve--render t)))
 
+(defun eve--read-choice (prompt choices default)
+  "Read one of CHOICES with PROMPT, using DEFAULT as the initial choice."
+  (let* ((default-string (eve--stringify default))
+         (choice (completing-read prompt choices nil t nil nil default-string)))
+    (if (string-empty-p choice) default-string choice)))
+
+(defun eve--read-yes-no-choice (prompt default)
+  "Read a y/n answer with PROMPT and boolean DEFAULT."
+  (let* ((default-string (if default "y" "n"))
+         (choice (completing-read
+                  (format "%s [%s]: " prompt default-string)
+                  '("y" "n" "yes" "no") nil t nil nil default-string)))
+    (cond
+     ((member choice '("y" "yes")) t)
+     ((member choice '("n" "no")) nil)
+     ((string-empty-p choice) default)
+     (t (user-error "Enter y or n")))))
+
 (defun eve-edit-broll (segment)
   "Edit b-roll metadata for SEGMENT."
   (interactive (list (or (eve--segment-at-point)
@@ -3213,11 +3284,14 @@ that starts at the word under point."
   (let* ((broll (copy-alist (eve--segment-broll segment)))
 	 (file (read-string "B-roll file (blank to clear): "
 			    (eve--stringify (alist-get 'file broll))))
-	 (mode (read-string "Mode (overlay/replace/pip): "
-			    (alist-get 'mode broll)))
+	 (mode (eve--read-choice "Mode: "
+				 '("overlay" "replace" "pip")
+				 (or (alist-get 'mode broll) "overlay")))
 	 (audio-default (or (eve--stringify (alist-get 'audio broll))
 			    "source"))
-	 (audio (read-string "Audio (source/mute/broll): " audio-default))
+	 (audio (eve--read-choice "Audio: "
+				  '("source" "mute" "broll")
+				  audio-default))
 	 (offset-existing (alist-get 'start_offset broll))
 	 (offset-default (cond
 			  ((stringp offset-existing) offset-existing)
@@ -3240,34 +3314,13 @@ that starts at the word under point."
 			 ((and file (not (string-empty-p file))
 			       (image-file-name-p file)))
 			 (t nil)))
-	 (still-input (if (string-empty-p file)
-			  nil
-			(string-trim (downcase
-				      (read-string
-				       (format "Treat as still image? (y/n) [%s]: "
-					       (if still-default "y" "n"))
-				       (if still-default "y" "n"))))))
-	 (still (cond
-		 ((null still-input) still-default)
-		 ((member still-input '("y" "yes")) t)
-		 ((member still-input '("n" "no")) nil)
-		 ((string-empty-p still-input) still-default)
-		 (t (user-error "Enter y or n for still image"))))
+	 (still (and (not (string-empty-p file))
+		     (eve--read-yes-no-choice "Treat as still image?" still-default)))
 	 (continue-existing (alist-get 'continue broll))
 	 (continue-default (and continue-existing t))
-	 (continue-input (if (string-empty-p file)
-			     nil
-			   (string-trim (downcase
-					 (read-string
-					  (format "Continue from previous segment? (y/n) [%s]: "
-						  (if continue-default "y" "n"))
-					  (if continue-default "y" "n"))))))
-	 (continue (cond
-		    ((null continue-input) continue-default)
-		    ((member continue-input '("y" "yes")) t)
-		    ((member continue-input '("n" "no")) nil)
-		    ((string-empty-p continue-input) continue-default)
-		    (t (user-error "Enter y or n for continue flag"))))
+	 (continue (and (not (string-empty-p file))
+			(eve--read-yes-no-choice
+			 "Continue from previous segment?" continue-default)))
 	 (template (unless (string-empty-p file)
 		     (eve--broll-template-data (list (cons 'file file))))))
     (when (and still (string= (downcase audio) "broll"))
