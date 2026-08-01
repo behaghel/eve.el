@@ -491,8 +491,10 @@ output.
 @end multitable
 
 The @samp{--verbatim} flag (on by default in Emacs) biases @samp{faster-whisper} toward
-preserving disfluencies and filler words.  For @samp{transformers} and @samp{nemo},
-choose a verbatim-friendly model instead.
+preserving disfluencies and filler words.  In verbatim mode, faster-whisper also
+receives default filler hotwords such as @samp{um}, @samp{uh}, @samp{like}, and @samp{you know};
+set @samp{eve-transcribe-hotwords} or pass @samp{--hotwords} to override them.  For
+@samp{transformers} and @samp{nemo}, choose a verbatim-friendly model instead.
 
 Good starting points:
 @itemize
@@ -505,7 +507,7 @@ Good starting points:
 @node Configuration
 @section Configuration
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
@@ -518,6 +520,9 @@ Good starting points:
 @item @samp{eve-transcribe-verbatim}
 @tab @samp{t}
 @tab Pass @samp{--verbatim} to the backend.
+@item @samp{eve-transcribe-hotwords}
+@tab @samp{nil}
+@tab Optional hotwords override; nil uses CLI defaults.
 @item @samp{eve-transcribe-tag-fillers}
 @tab @samp{t}
 @tab Tag filler words during transcription.
@@ -1686,6 +1691,9 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-transcribe-backend}
 @tab @samp{"faster-whisper"}
 @tab Backend passed to `eve transcribe'.
+@item @samp{eve-transcribe-hotwords}
+@tab @samp{nil}
+@tab Optional hotwords string passed to `eve transcribe'.
 @item @samp{eve-transcribe-model}
 @tab @samp{"medium.en"}
 @tab Model passed to `eve transcribe'.

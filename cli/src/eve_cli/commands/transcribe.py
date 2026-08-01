@@ -23,6 +23,7 @@ VERBATIM_INITIAL_PROMPT = (
     "um, uh, ah, hmm... I, I mean, like, you know, so, uh, we were, um, "
     "talking and then-- and then I..."
 )
+DEFAULT_FILLER_HOTWORDS = "um uh ah hmm like you know I mean"
 BackendRunner = Callable[[Namespace, list[pathlib.Path]], list[dict[str, Any]]]
 
 
@@ -454,6 +455,11 @@ def transcribe_faster_whisper(
                 "vad_filter": getattr(args, "vad", False) or args.verbatim,
                 "word_timestamps": True,
             }
+            hotwords = args.hotwords
+            if args.verbatim and hotwords is None:
+                hotwords = DEFAULT_FILLER_HOTWORDS
+            if hotwords:
+                transcribe_kwargs["hotwords"] = hotwords
             if args.verbatim:
                 transcribe_kwargs.update(
                     initial_prompt=VERBATIM_INITIAL_PROMPT,
@@ -634,6 +640,14 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Bias decoding toward verbatim disfluencies on supported backends",
+    )
+    parser.add_argument(
+        "--hotwords",
+        default=None,
+        help=(
+            "Hotwords passed to supported backends. In verbatim faster-whisper mode, "
+            "defaults to common filler/disfluency words."
+        ),
     )
     parser.add_argument(
         "--vad",

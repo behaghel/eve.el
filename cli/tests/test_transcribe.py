@@ -51,6 +51,7 @@ def make_run_args(media: Path, output: Path, **overrides: object) -> Namespace:
         "max_segment_words": 0,
         "tag_fillers": False,
         "verbatim": False,
+        "hotwords": None,
         "vad": False,
         "stub": False,
         "json": False,
@@ -76,6 +77,7 @@ def test_transcribe_parser_matches_legacy_defaults() -> None:
     assert args.max_segment_words == 8
     assert args.tag_fillers is False
     assert args.verbatim is True
+    assert args.hotwords is None
     assert args.pretty is False
     assert args.stub is False
 
@@ -362,6 +364,22 @@ def test_transcribe_run_dispatches_default_backend_to_faster_whisper(
     }
 
 
+def test_transcribe_parser_accepts_hotwords_override() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "transcribe",
+            "input.mp4",
+            "--output",
+            "manifest.json",
+            "--hotwords",
+            "um uh custom",
+        ]
+    )
+
+    assert args.hotwords == "um uh custom"
+
+
 def test_transcribe_run_verbatim_passes_prompt_controls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -399,11 +417,45 @@ def test_transcribe_run_verbatim_passes_prompt_controls(
             "language": "en",
             "vad_filter": True,
             "word_timestamps": True,
+            "hotwords": transcribe.DEFAULT_FILLER_HOTWORDS,
             "initial_prompt": transcribe.VERBATIM_INITIAL_PROMPT,
             "condition_on_previous_text": False,
             "temperature": 0.0,
         }
     ]
+
+
+def test_transcribe_run_hotwords_override_replaces_default_verbatim_hotwords(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModel:
+        def __init__(self, model: str, *, device: str, compute_type: str) -> None:
+            pass
+
+        def transcribe(
+            self,
+            wav_path: str,
+            **kwargs: object,
+        ) -> tuple[list[FakeSegment], None]:
+            calls.append(kwargs)
+            return ([], None)
+
+    monkeypatch.setattr(transcribe, "_load_whisper_model", lambda: FakeModel)
+    monkeypatch.setattr(transcribe, "ffmpeg_extract", lambda _input, _wav: None)
+
+    media = tmp_path / "clip.mp4"
+    media.touch()
+    output = tmp_path / "manifest.json"
+
+    exit_code = transcribe.run(
+        make_run_args(media, output, verbatim=True, hotwords="um uh custom")
+    )
+
+    assert exit_code == 0
+    assert calls[0]["hotwords"] == "um uh custom"
 
 
 def test_transcribe_run_tags_fillers_in_manifest_when_enabled(

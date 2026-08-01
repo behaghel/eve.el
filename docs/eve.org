@@ -254,8 +254,10 @@ output.
 | =nemo= | =--backend nemo= | NVIDIA NeMo.  Needs optional deps. |
 
 The =--verbatim= flag (on by default in Emacs) biases =faster-whisper= toward
-preserving disfluencies and filler words.  For =transformers= and =nemo=,
-choose a verbatim-friendly model instead.
+preserving disfluencies and filler words.  In verbatim mode, faster-whisper also
+receives default filler hotwords such as =um=, =uh=, =like=, and =you know=;
+set =eve-transcribe-hotwords= or pass =--hotwords= to override them.  For
+=transformers= and =nemo=, choose a verbatim-friendly model instead.
 
 Good starting points:
 - =transformers=: =nyrahealth/CrisperWhisper=
@@ -268,6 +270,7 @@ Good starting points:
 | =eve-transcribe-backend= | ="faster-whisper"= | Backend name passed to =eve transcribe=. |
 | =eve-transcribe-model= | ="medium.en"= | Model identifier. |
 | =eve-transcribe-verbatim= | =t= | Pass =--verbatim= to the backend. |
+| =eve-transcribe-hotwords= | =nil= | Optional hotwords override; nil uses CLI defaults. |
 | =eve-transcribe-tag-fillers= | =t= | Tag filler words during transcription. |
 | =eve-media-extensions= | =("mp4" "mov" ...)= | File types scanned by =eve-transcribe=. |
 

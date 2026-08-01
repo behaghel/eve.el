@@ -486,8 +486,11 @@ Backend            Flag                         Notes
 ‘nemo’             ‘--backend nemo’             NVIDIA NeMo.  Needs optional deps.
 
    The ‘--verbatim’ flag (on by default in Emacs) biases
-‘faster-whisper’ toward preserving disfluencies and filler words.  For
-‘transformers’ and ‘nemo’, choose a verbatim-friendly model instead.
+‘faster-whisper’ toward preserving disfluencies and filler words.  In
+verbatim mode, faster-whisper also receives default filler hotwords such
+as ‘um’, ‘uh’, ‘like’, and ‘you know’; set ‘eve-transcribe-hotwords’ or
+pass ‘--hotwords’ to override them.  For ‘transformers’ and ‘nemo’,
+choose a verbatim-friendly model instead.
 
    Good starting points:
    • ‘transformers’: ‘nyrahealth/CrisperWhisper’
@@ -500,10 +503,11 @@ File: eve.info,  Node: Configuration,  Next: Installing optional backends,  Prev
 =================
 
 Variable                       Default               Description
-------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------
 ‘eve-transcribe-backend’       ‘"faster-whisper"’    Backend name passed to ‘eve transcribe’.
 ‘eve-transcribe-model’         ‘"medium.en"’         Model identifier.
 ‘eve-transcribe-verbatim’      ‘t’                   Pass ‘--verbatim’ to the backend.
+‘eve-transcribe-hotwords’      ‘nil’                 Optional hotwords override; nil uses CLI defaults.
 ‘eve-transcribe-tag-fillers’   ‘t’                   Tag filler words during transcription.
 ‘eve-media-extensions’         ‘("mp4" "mov" ...)’   File types scanned by ‘eve-transcribe’.
 
@@ -1513,6 +1517,7 @@ Variable                           Default                     Description
 ‘eve-seek-short-seconds’           ‘5’                         Seconds used by short seek commands.
 ‘eve-show-words-by-default’        ‘nil’                       If non-nil, show per-word timings when rendering segments.
 ‘eve-transcribe-backend’           ‘"faster-whisper"’          Backend passed to 'eve transcribe'.
+‘eve-transcribe-hotwords’          ‘nil’                       Optional hotwords string passed to 'eve transcribe'.
 ‘eve-transcribe-model’             ‘"medium.en"’               Model passed to 'eve transcribe'.
 ‘eve-transcribe-tag-fillers’       ‘t’                         Whether 'eve transcribe' should tag filler words.
 ‘eve-transcribe-verbatim’          ‘t’                         Whether 'eve transcribe' should preserve verbatim output.
@@ -1629,66 +1634,66 @@ Node: The raw JSON companion buffer12129
 Node: Transcription12563
 Node: Starting transcription from Emacs12799
 Node: Backends13517
-Node: Configuration14490
-Node: Installing optional backends15293
-Node: Editing15751
-Node: Navigation16044
-Node: Deletion and restoration16421
-Node: Splitting and merging17060
-Node: Reordering17552
-Node: Markers and sections18196
-Node: Inline editing18895
-Node: Metadata19226
-Node: Undo and redo19800
-Node: Validation20127
-Node: Filler Words20453
-Node: Concept20665
-Node: Configuration (1)21067
-Node: Commands21660
-Node: Auto-tagging on file open22600
-Node: B-Roll22949
-Node: Concept (1)23255
-Node: Editing b-roll metadata23911
-Node: Compositing modes in detail25680
-Node: Replace mode25905
-Node: Pip mode26353
-Node: Audio policy27272
-Node: JSON templates27751
-Node: Overlay fields29044
-Node: Concrete example lower-third title card30447
-Node: Placeholders without templates32332
-Node: Continuation chains32755
-Node: Compilation and Rendering33778
-Node: Two modes draft and final34130
-Node: Under the hood34608
-Node: Pre-flight validation35711
-Node: Dry-run analysis36448
-Node: Checkpoint and resume36974
-Node: Progressive output37455
-Node: Configuration reference37857
-Node: CLI reference39201
-Node: Playback40330
-Node: Source playback40577
-Node: Rendered playback41038
-Node: Playback tracking and segment highlighting41536
-Node: Controls41963
-Node: Video layout42944
-Node: Display44480
-Node: Timestamp ruler44685
-Node: Context panels45273
-Node: Hiding deleted segments46571
-Node: Word-level display47004
-Node: Key Bindings48023
-Node: Single-key bindings48264
-Node: C-c prefix bindings50065
-Node: Playback-mode overrides50993
-Node: The hydra cheatsheet51594
-Node: Configuration Reference51996
-Node: Architecture56442
-Node: Two-layer boundary56629
-Node: Shared contract57433
-Node: Development57905
-Node: Appendix A TJM v11 Specification58381
+Node: Configuration14699
+Node: Installing optional backends15624
+Node: Editing16082
+Node: Navigation16375
+Node: Deletion and restoration16752
+Node: Splitting and merging17391
+Node: Reordering17883
+Node: Markers and sections18527
+Node: Inline editing19226
+Node: Metadata19557
+Node: Undo and redo20131
+Node: Validation20458
+Node: Filler Words20784
+Node: Concept20996
+Node: Configuration (1)21398
+Node: Commands21991
+Node: Auto-tagging on file open22931
+Node: B-Roll23280
+Node: Concept (1)23586
+Node: Editing b-roll metadata24242
+Node: Compositing modes in detail26011
+Node: Replace mode26236
+Node: Pip mode26684
+Node: Audio policy27603
+Node: JSON templates28082
+Node: Overlay fields29375
+Node: Concrete example lower-third title card30778
+Node: Placeholders without templates32663
+Node: Continuation chains33086
+Node: Compilation and Rendering34109
+Node: Two modes draft and final34461
+Node: Under the hood34939
+Node: Pre-flight validation36042
+Node: Dry-run analysis36779
+Node: Checkpoint and resume37305
+Node: Progressive output37786
+Node: Configuration reference38188
+Node: CLI reference39532
+Node: Playback40661
+Node: Source playback40908
+Node: Rendered playback41369
+Node: Playback tracking and segment highlighting41867
+Node: Controls42294
+Node: Video layout43275
+Node: Display44811
+Node: Timestamp ruler45016
+Node: Context panels45604
+Node: Hiding deleted segments46902
+Node: Word-level display47335
+Node: Key Bindings48354
+Node: Single-key bindings48595
+Node: C-c prefix bindings50396
+Node: Playback-mode overrides51324
+Node: The hydra cheatsheet51925
+Node: Configuration Reference52327
+Node: Architecture56897
+Node: Two-layer boundary57084
+Node: Shared contract57888
+Node: Development58360
+Node: Appendix A TJM v11 Specification58836
 
 End Tag Table
 

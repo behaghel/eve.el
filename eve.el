@@ -136,6 +136,12 @@ meaningful timing inconsistencies."
   :type 'boolean
   :group 'eve)
 
+(defcustom eve-transcribe-hotwords nil
+  "Optional hotwords string passed to `eve transcribe'.
+When nil, the CLI supplies backend-specific defaults for verbatim mode."
+  :type '(choice (const :tag "Use CLI default" nil) string)
+  :group 'eve)
+
 (defcustom eve-transcribe-tag-fillers t
   "Whether `eve transcribe' should tag filler words."
   :type 'boolean
@@ -796,6 +802,8 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
                                  "--model" eve-transcribe-model)
                            (when eve-transcribe-verbatim
                              '("--verbatim"))
+                           (when eve-transcribe-hotwords
+                             (list "--hotwords" eve-transcribe-hotwords))
                            (when eve-transcribe-tag-fillers
                              '("--tag-fillers")))))
     (with-current-buffer buffer

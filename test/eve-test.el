@@ -675,6 +675,7 @@
          (eve-transcribe-backend "mlx-whisper")
          (eve-transcribe-model "large-v3")
          (eve-transcribe-verbatim t)
+         (eve-transcribe-hotwords "um uh custom")
          (eve-transcribe-tag-fillers t)
          (eve--transcribe-process-count 0)
          (eve--transcribe-mode-line-string nil)
@@ -708,6 +709,7 @@
                             "--backend" "mlx-whisper"
                             "--model" "large-v3"
                             "--verbatim"
+                            "--hotwords" "um uh custom"
                             "--tag-fillers")))
           (should (plist-get captured-plist :noquery))
           (should (functionp (plist-get captured-plist :sentinel)))
