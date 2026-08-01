@@ -47,6 +47,7 @@
 
 (declare-function context-panels-mode "context-panels" (&optional arg))
 (declare-function context-panels-open "context-panels" (&optional source-buffer))
+(declare-function context-panels-refresh "context-panels" ())
 (declare-function context-panels-register-provider "context-panels" (provider))
 (declare-function dired-get-marked-files "dired"
                   (&optional localp arg filter distinguish-one-marked
@@ -447,6 +448,21 @@ Nil when no layout is active.")
 
 (defvar-local eve--context-tick-overlays nil
   "List of source tick overlays shown while the context panel is open.")
+
+(defvar-local eve--context-thumbnail-queue nil
+  "Pending context thumbnail jobs for the current Eve buffer.")
+
+(defvar-local eve--context-thumbnail-active 0
+  "Number of active context thumbnail jobs for the current Eve buffer.")
+
+(defvar-local eve--context-thumbnail-pending nil
+  "Hash table of thumbnail cache keys already queued or running.")
+
+(defvar-local eve--context-thumbnail-failed nil
+  "Hash table of thumbnail cache keys that failed this session.")
+
+(defvar-local eve--context-thumbnail-refresh-timer nil
+  "Debounced timer for refreshing context panels after thumbnail generation.")
 
 (defvar-local eve--ruler-total-duration 0.0
   "Cached total rendered duration in seconds, updated by `eve--update-ruler'.")
@@ -1036,9 +1052,9 @@ With a prefix argument (\\[universal-argument]), use the opposite quality to
 (defvar-local eve--auto-render-timer nil
   "Idle timer for debouncing speculative renders in the current buffer.")
 
-(defcustom eve-auto-render t
-  "Whether to speculatively pre-render changed segments on save.
-When non-nil (the default), saving a TJM manifest triggers a background
+(defcustom eve-auto-render-default-enabled t
+  "Whether `eve-auto-render-mode' is enabled in new Eve buffers.
+When enabled, saving a TJM manifest triggers a background
 `eve text-edit --segments <changed-ids>' to warm the cache.  The next
 `eve-compile' (\\`C-c C-c') then only needs the final concat."
   :type 'boolean
@@ -1064,6 +1080,39 @@ launched as `nice -n 19 eve text-edit ...'."
   :type 'boolean
   :group 'eve)
 
+(defcustom eve-context-thumbnails-enabled t
+  "Whether Eve context-panel timestamp rows show video thumbnails."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-width 96
+  "Width in pixels for context-panel timestamp thumbnails."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-height 54
+  "Height in pixels for context-panel timestamp thumbnails."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-source 'best
+  "Preferred source for context-panel timestamp thumbnails.
+`best' uses rendered output when it already exists and is fresh, falling back to
+source media.  `source' uses source media only.  `rendered' uses rendered output
+only and shows text until it is available."
+  :type '(choice (const :tag "Rendered when available, else source" best)
+                 (const :tag "Source media only" source)
+                 (const :tag "Rendered output only" rendered))
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-jobs 1
+  "Maximum concurrent ffmpeg thumbnail extraction jobs per Eve buffer."
+  :type 'integer
+  :group 'eve)
+
+(defvar-local eve-auto-render-mode nil
+  "Non-nil when automatic Eve render-cache warming is enabled.")
+
 (defun eve--auto-render-segment-ids ()
   "Return segment IDs in the current manifest."
   (delq nil
@@ -1087,17 +1136,18 @@ launched as `nice -n 19 eve text-edit ...'."
       (append (list (executable-find "nice") "-n" "19") command)
     command))
 
-(defun eve--auto-render-fire ()
-  "Launch the speculative background render for the current buffer."
+(defun eve--auto-render-fire (&optional all-segments)
+  "Launch a speculative background render for the current buffer.
+When ALL-SEGMENTS is non-nil, ask the CLI to warm every segment id, relying on
+the segment cache to skip already-warm entries."
   (when (and (derived-mode-p 'eve-mode)
-             eve-auto-render
              buffer-file-name
              (file-exists-p buffer-file-name))
     (when (and eve--auto-render-process
                (process-live-p eve--auto-render-process))
       (delete-process eve--auto-render-process)
       (setq eve--auto-render-process nil))
-    (let ((seg-ids (if eve-auto-render-all-segments
+    (let ((seg-ids (if (or all-segments eve-auto-render-all-segments)
                        (eve--auto-render-segment-ids)
                      (eve--auto-render-changed-segment-ids)))
           (buf (current-buffer)))
@@ -1132,11 +1182,39 @@ launched as `nice -n 19 eve text-edit ...'."
 
 (defun eve--auto-render-after-save ()
   "Schedule a speculative render after the buffer is saved."
-  (when eve--auto-render-timer
-    (cancel-timer eve--auto-render-timer))
-  (setq eve--auto-render-timer
-        (run-with-idle-timer eve-auto-render-idle-seconds nil
-                             #'eve--auto-render-fire)))
+  (when eve-auto-render-mode
+    (when eve--auto-render-timer
+      (cancel-timer eve--auto-render-timer))
+    (setq eve--auto-render-timer
+          (run-with-idle-timer eve-auto-render-idle-seconds nil
+                               #'eve--auto-render-fire))))
+
+;;;###autoload
+(define-minor-mode eve-auto-render-mode
+  "Automatically warm Eve's segment render cache after saves.
+The mode is buffer-local.  Automatic renders run in the background and use low
+CPU priority when `eve-auto-render-low-priority' is non-nil."
+  :lighter " EveRender"
+  (if eve-auto-render-mode
+      (add-hook 'after-save-hook #'eve--auto-render-after-save nil t)
+    (remove-hook 'after-save-hook #'eve--auto-render-after-save t)
+    (when eve--auto-render-timer
+      (cancel-timer eve--auto-render-timer)
+      (setq eve--auto-render-timer nil))))
+
+(defun eve-render-cache-changed ()
+  "Warm render cache entries for changed segments now."
+  (interactive)
+  (when (buffer-modified-p)
+    (save-buffer))
+  (eve--auto-render-fire nil))
+
+(defun eve-render-cache-all ()
+  "Warm render cache entries for all segments now at low priority."
+  (interactive)
+  (when (buffer-modified-p)
+    (save-buffer))
+  (eve--auto-render-fire t))
 
 (defun eve--auto-render-teardown ()
   "Clean up speculative render state for the current buffer."
@@ -1146,7 +1224,10 @@ launched as `nice -n 19 eve text-edit ...'."
   (when (and eve--auto-render-process
              (process-live-p eve--auto-render-process))
     (delete-process eve--auto-render-process)
-    (setq eve--auto-render-process nil)))
+    (setq eve--auto-render-process nil))
+  (when eve--context-thumbnail-refresh-timer
+    (cancel-timer eve--context-thumbnail-refresh-timer)
+    (setq eve--context-thumbnail-refresh-timer nil)))
 
 (defun eve--play-marker-broll (segment)
   "Play marker SEGMENT's b-roll directly when it references media."
@@ -1790,17 +1871,222 @@ The milestone interval is controlled by `eve-ruler-interval'."
                                  (unless (string-empty-p glyphs) glyphs)))
                  " ")))
 
+(defun eve--context-thumbnail-cache-dir ()
+  "Return the thumbnail cache directory for the current TJM buffer."
+  (let* ((base (file-name-directory (or buffer-file-name default-directory)))
+         (dir (expand-file-name ".eve-cache/thumbnails" base)))
+    (make-directory dir t)
+    dir))
+
+(defun eve--context-thumbnail-time-from-label (label)
+  "Return seconds represented by timestamp LABEL like [HH:MM:SS]."
+  (when (and (stringp label)
+             (string-match "\\`\\[\\([0-9]+\\):\\([0-9]+\\):\\([0-9]+\\)\\]\\'" label))
+    (+ (* 3600.0 (string-to-number (match-string 1 label)))
+       (* 60.0 (string-to-number (match-string 2 label)))
+       (string-to-number (match-string 3 label)))))
+
+(defun eve--context-thumbnail-rendered-output-fresh-p (output)
+  "Return non-nil when rendered OUTPUT exists and is fresh for this TJM file."
+  (and output buffer-file-name
+       (file-exists-p output)
+       (not (time-less-p (nth 5 (file-attributes output))
+                         (nth 5 (file-attributes buffer-file-name))))))
+
+(defun eve--context-thumbnail-segment-render-starts (cumulative-times)
+  "Return alist of segment id to rendered start time from CUMULATIVE-TIMES."
+  (let ((prev 0.0)
+        starts)
+    (dolist (entry cumulative-times)
+      (push (cons (car entry) prev) starts)
+      (setq prev (cdr entry)))
+    (nreverse starts)))
+
+(defun eve--context-thumbnail-source-candidate (segment rendered-time rendered-start)
+  "Return source thumbnail candidate for SEGMENT at RENDERED-TIME.
+RENDERED-START is SEGMENT's start time in the rendered timeline."
+  (let ((delta (max 0.0 (- rendered-time rendered-start))))
+    (if (eve--marker-p segment)
+        (let* ((broll (eve--segment-broll segment))
+               (file (and broll (eve--stringify (alist-get 'file broll)))))
+          (when (and file (not (string-empty-p file))
+                     (not (string-match-p "\\.json\\'" file)))
+            (list :kind 'source
+                  :file (eve--resolve-relative-path file)
+                  :time (+ (or (eve--time->seconds
+                                (alist-get 'start_offset broll))
+                               0.0)
+                           delta))))
+      (when-let* ((source-id (alist-get 'source segment))
+                  (source (eve--source-by-id source-id))
+                  (file (alist-get 'file source)))
+        (list :kind 'source
+              :file (eve--resolve-relative-path file)
+              :time (+ (or (alist-get 'start segment) 0.0) delta))))))
+
+(defun eve--context-thumbnail-candidates (item)
+  "Return thumbnail candidates for timestamp ITEM in preferred order."
+  (let* ((rendered-time (plist-get item :rendered-time))
+         (rendered-output (eve--default-output-file))
+         (rendered-fresh (eve--context-thumbnail-rendered-output-fresh-p
+                          rendered-output))
+         (segments (eve--segments))
+         (segment-id (plist-get item :segment-id))
+         (segment (seq-find (lambda (candidate)
+                              (equal (eve--stringify (alist-get 'id candidate))
+                                     (eve--stringify segment-id)))
+                            segments))
+         (cumulative (eve--rendered-cumulative-times
+                      segments eve-hide-deleted-mode))
+         (starts (eve--context-thumbnail-segment-render-starts cumulative))
+         (rendered-start (or (alist-get segment-id starts nil nil #'equal) 0.0))
+         (source-candidate (and segment
+                                rendered-time
+                                (eve--context-thumbnail-source-candidate
+                                 segment rendered-time rendered-start)))
+         (rendered-candidate (and rendered-fresh rendered-time
+                                  (list :kind 'rendered
+                                        :file rendered-output
+                                        :time rendered-time))))
+    (pcase eve-context-thumbnail-source
+      ('source (delq nil (list source-candidate)))
+      ('rendered (delq nil (list rendered-candidate)))
+      (_ (delq nil (list rendered-candidate source-candidate))))))
+
+(defun eve--context-thumbnail-cache-path (candidate)
+  "Return cache path for thumbnail CANDIDATE."
+  (let* ((file (plist-get candidate :file))
+         (time (plist-get candidate :time))
+         (kind (plist-get candidate :kind))
+         (signature (format "%s|%s|%.3f|%dx%d|%s"
+                            kind file time
+                            eve-context-thumbnail-width
+                            eve-context-thumbnail-height
+                            (nth 5 (file-attributes file))))
+         (name (concat (secure-hash 'sha1 signature) ".jpg")))
+    (expand-file-name name (eve--context-thumbnail-cache-dir))))
+
+(defun eve--context-thumbnail-fresh-p (candidate path)
+  "Return non-nil when thumbnail PATH is fresh for CANDIDATE."
+  (and path (file-exists-p path)
+       (not (time-less-p (nth 5 (file-attributes path))
+                         (nth 5 (file-attributes
+                                 (plist-get candidate :file)))))))
+
+(defun eve--context-thumbnail-state (item)
+  "Return (:path PATH) for ITEM, enqueueing generation when needed."
+  (when (and eve-context-thumbnails-enabled
+             (display-images-p)
+             (executable-find "ffmpeg"))
+    (catch 'found
+      (dolist (candidate (eve--context-thumbnail-candidates item))
+        (let* ((file (plist-get candidate :file))
+               (path (and file (file-exists-p file)
+                          (eve--context-thumbnail-cache-path candidate))))
+          (when path
+            (if (eve--context-thumbnail-fresh-p candidate path)
+                (throw 'found (list :path path))
+              (eve--context-thumbnail-enqueue candidate path))))))))
+
+(defun eve--context-thumbnail-ensure-tables ()
+  "Initialise thumbnail bookkeeping tables for the current buffer."
+  (unless (hash-table-p eve--context-thumbnail-pending)
+    (setq eve--context-thumbnail-pending (make-hash-table :test #'equal)))
+  (unless (hash-table-p eve--context-thumbnail-failed)
+    (setq eve--context-thumbnail-failed (make-hash-table :test #'equal))))
+
+(defun eve--context-thumbnail-enqueue (candidate path)
+  "Queue thumbnail generation for CANDIDATE into PATH."
+  (eve--context-thumbnail-ensure-tables)
+  (let ((key path))
+    (unless (or (gethash key eve--context-thumbnail-pending)
+                (gethash key eve--context-thumbnail-failed))
+      (puthash key t eve--context-thumbnail-pending)
+      (setq eve--context-thumbnail-queue
+            (append eve--context-thumbnail-queue
+                    (list (list :candidate candidate :path path))))
+      (eve--context-thumbnail-pump))))
+
+(defun eve--context-thumbnail-command (candidate path)
+  "Return ffmpeg command to write thumbnail CANDIDATE to PATH."
+  (let* ((cmd (list (executable-find "ffmpeg") "-y"
+                    "-ss" (format "%.3f" (plist-get candidate :time))
+                    "-i" (plist-get candidate :file)
+                    "-frames:v" "1"
+                    "-vf" (format "scale=%d:%d:force_original_aspect_ratio=decrease"
+                                   eve-context-thumbnail-width
+                                   eve-context-thumbnail-height)
+                    path)))
+    (if (and eve-auto-render-low-priority (executable-find "nice"))
+        (append (list (executable-find "nice") "-n" "19") cmd)
+      cmd)))
+
+(defun eve--context-thumbnail-pump ()
+  "Start queued thumbnail jobs up to `eve-context-thumbnail-jobs'."
+  (eve--context-thumbnail-ensure-tables)
+  (while (and eve--context-thumbnail-queue
+              (< eve--context-thumbnail-active
+                 (max 1 eve-context-thumbnail-jobs)))
+    (let* ((job (pop eve--context-thumbnail-queue))
+           (candidate (plist-get job :candidate))
+           (path (plist-get job :path))
+           (source-buffer (current-buffer)))
+      (setq eve--context-thumbnail-active (1+ eve--context-thumbnail-active))
+      (make-process
+       :name "eve-thumbnail"
+       :buffer nil
+       :command (eve--context-thumbnail-command candidate path)
+       :noquery t
+       :sentinel
+       (lambda (proc _event)
+         (when (memq (process-status proc) '(exit signal))
+           (when (buffer-live-p source-buffer)
+             (with-current-buffer source-buffer
+               (setq eve--context-thumbnail-active
+                     (max 0 (1- eve--context-thumbnail-active)))
+               (remhash path eve--context-thumbnail-pending)
+               (unless (and (eq (process-status proc) 'exit)
+                            (= (process-exit-status proc) 0)
+                            (file-exists-p path))
+                 (puthash path t eve--context-thumbnail-failed)
+                 (message "eve thumbnail failed: %s @ %.3fs"
+                          (file-name-nondirectory
+                           (plist-get candidate :file))
+                          (plist-get candidate :time)))
+               (eve--context-thumbnail-schedule-refresh)
+               (eve--context-thumbnail-pump)))))))))
+
+(defun eve--context-thumbnail-schedule-refresh ()
+  "Debounce context-panel refresh after a thumbnail finishes."
+  (when eve--context-thumbnail-refresh-timer
+    (cancel-timer eve--context-thumbnail-refresh-timer))
+  (let ((source-buffer (current-buffer)))
+    (setq eve--context-thumbnail-refresh-timer
+          (run-with-idle-timer
+           0.1 nil
+           (lambda ()
+             (when (buffer-live-p source-buffer)
+               (with-current-buffer source-buffer
+                 (setq eve--context-thumbnail-refresh-timer nil)
+                 (when (and (eve--context-panels-available-p)
+                            (buffer-live-p context-panels-side-panel-buffer)
+                            (get-buffer-window context-panels-side-panel-buffer t))
+                   (context-panels-refresh)))))))))
+
 (defun eve--context-panel-timestamp-items (milestones)
   "Return context-panel timestamp items from MILESTONES."
   (delq nil
         (mapcar (lambda (milestone)
                   (let* ((segment-id (car milestone))
                          (label (cdr milestone))
-                         (anchor (eve--segment-position segment-id)))
+                         (anchor (eve--segment-position segment-id))
+                         (rendered-time
+                          (eve--context-thumbnail-time-from-label label)))
                     (when anchor
                       (list :id (format "timestamp:%s:%s" segment-id label)
                             :kind 'timestamp
                             :label label
+                            :rendered-time rendered-time
                             :segment-id segment-id
                             :anchor-pos anchor
                             :source-start anchor))))
@@ -1831,12 +2117,21 @@ The milestone interval is controlled by `eve-ruler-interval'."
       (append (eve--context-panel-timestamp-items milestones)
               (eve--context-panel-broll-items segments)))))
 
-(defun eve--context-panel-render-side-item (_source-buffer item)
+(defun eve--context-panel-render-side-item (source-buffer item)
   "Render Eve side-panel ITEM."
   (let ((label (or (plist-get item :label) "")))
-    (when (eq (plist-get item :kind) 'timestamp)
-      (setq label (propertize label 'face 'eve-ruler-face)))
-    (insert label "\n")))
+    (if (eq (plist-get item :kind) 'timestamp)
+        (let ((thumb (with-current-buffer source-buffer
+                       (eve--context-thumbnail-state item))))
+          (when-let* ((path (plist-get thumb :path))
+                      (image (create-image
+                              path 'jpeg nil
+                              :width eve-context-thumbnail-width
+                              :height eve-context-thumbnail-height)))
+            (insert-image image)
+            (insert " "))
+          (insert (propertize label 'face 'eve-ruler-face) "\n"))
+      (insert label "\n"))))
 
 (defun eve--context-panel-jump-side-item (source-buffer item)
   "Jump from an Eve side-panel ITEM to SOURCE-BUFFER."
@@ -1945,7 +2240,8 @@ This command requires the optional `context-panels' package."
   (add-hook 'kill-buffer-hook #'eve--context-tick-clear-overlays nil t)
   (add-hook 'kill-buffer-hook #'eve--ipc-teardown nil t)
   (add-hook 'kill-buffer-hook #'eve--auto-render-teardown nil t)
-  (add-hook 'after-save-hook #'eve--auto-render-after-save nil t)
+  (when eve-auto-render-default-enabled
+    (eve-auto-render-mode 1))
   (eve-hide-deleted-mode 1)
   (eve-ruler-mode 1)
   (setq-local mode-line-format
@@ -3559,30 +3855,28 @@ that starts at the word under point."
 (defun eve-play-segment (&optional segment)
   "Play SEGMENT using `eve-play-program', or the rendered section when on a marker."
   (interactive)
-  (let* ((seg (or segment (eve--segment-at-point)
-		  (user-error "No segment at point")))
-	 (marker? (eve--marker-p seg)))
-    (when marker?
-      (eve--play-marker seg)
-      (cl-return-from eve-play-segment nil))
-    (let* ((source (alist-get 'source seg))
-	   (start (alist-get 'start seg))
-	   (end (alist-get 'end seg))
-	   (source-entry (eve--source-by-id source)))
-      (unless source-entry
-	(user-error "Unknown source id: %s" source))
-      (let* ((file (alist-get 'file source-entry))
-	     (abs-file (expand-file-name file (file-name-directory buffer-file-name))))
-	(unless (file-exists-p abs-file)
-	  (user-error "Source file not found: %s" abs-file))
-	(let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
-	  (eve--play-with-mpv abs-file start end socket-path)
-	  ;; Set state AFTER eve--play-with-mpv (teardown clears these)
-	  (setq eve--playback-source-segments (list seg))
-	  (setq eve--playback-mode 'source)
-	  (eve-playback-mode 1)
-	  (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
-	  (message "Playing %s [%s-%s]" file start end))))))
+  (let ((seg (or segment (eve--segment-at-point)
+                 (user-error "No segment at point"))))
+    (if (eve--marker-p seg)
+        (eve--play-marker seg)
+      (let* ((source (alist-get 'source seg))
+             (start (alist-get 'start seg))
+             (end (alist-get 'end seg))
+             (source-entry (eve--source-by-id source)))
+        (unless source-entry
+          (user-error "Unknown source id: %s" source))
+        (let* ((file (alist-get 'file source-entry))
+               (abs-file (expand-file-name file (file-name-directory buffer-file-name))))
+          (unless (file-exists-p abs-file)
+            (user-error "Source file not found: %s" abs-file))
+          (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
+            (eve--play-with-mpv abs-file start end socket-path)
+            ;; Set state AFTER eve--play-with-mpv (teardown clears these)
+            (setq eve--playback-source-segments (list seg))
+            (setq eve--playback-mode 'source)
+            (eve-playback-mode 1)
+            (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
+            (message "Playing %s [%s-%s]" file start end)))))))
 
 (defun eve-play (&optional rendered)
   "Play source media, or with prefix arg play the rendered output.

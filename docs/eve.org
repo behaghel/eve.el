@@ -671,10 +671,17 @@ Eve's rendering pipeline is designed to be fast after the first run:
   manifest, keyed by a SHA-256 hash of the segment's content and encoding
   settings.  Unchanged segments are reused; only changed ones re-encode.
 
-- *Speculative pre-rendering* — after each save, an idle timer
-  (=eve-auto-render-idle-seconds=) fires a background render of the segments
-  that changed.  When you press =C-c C-c=, the cache is already warm and
-  compilation reduces to a concat step.
+- *Speculative pre-rendering* — when =eve-auto-render-mode= is enabled, after
+  each save an idle timer (=eve-auto-render-idle-seconds=) fires a low-priority
+  background render of the segments that changed.  When you press =C-c C-c=,
+  the cache is already warm and compilation reduces to a concat step.  Use
+  =M-x eve-render-cache-changed= to warm changed segments immediately, or
+  =M-x eve-render-cache-all= to proactively warm every segment cache entry.
+
+- *Context thumbnails* — timestamp rows in the optional context side panel can
+  show cached thumbnails from the rendered output when it already exists and is
+  fresh, falling back to source media frames.  Thumbnail extraction is lazy,
+  visible-row-driven, low-priority, and never triggers a full render.
 
 ** Pre-flight validation
 
@@ -727,8 +734,15 @@ partial file, which Emacs can use to update a live preview.
 | =eve-compile-scale= | =1.0= | Resolution scale for draft (e.g. =0.5= = half res). |
 | =eve-compile-cache= | =t= | Use the =.eve-cache/= segment cache. |
 | =eve-compile-confirm-threshold= | =30= | Estimated seconds above which a confirmation prompt appears. |
-| =eve-auto-render= | =t= | Speculatively pre-render changed segments after each save. |
+| =eve-auto-render-default-enabled= | =t= | Enable =eve-auto-render-mode= in new Eve buffers. |
 | =eve-auto-render-idle-seconds= | =2.0= | Idle delay before the speculative render fires. |
+| =eve-auto-render-low-priority= | =t= | Run speculative renders via =nice -n 19= when available. |
+| =eve-auto-render-all-segments= | =nil= | Auto-render all segment ids after save instead of only changed ones. |
+| =eve-context-thumbnails-enabled= | =t= | Show thumbnails on context-panel timestamp rows. |
+| =eve-context-thumbnail-source= | =best= | Use rendered thumbnails when available, falling back to source media. |
+| =eve-context-thumbnail-width= | =96= | Context thumbnail width in pixels. |
+| =eve-context-thumbnail-height= | =54= | Context thumbnail height in pixels. |
+| =eve-context-thumbnail-jobs= | =1= | Maximum concurrent thumbnail extraction jobs. |
 | =eve-play-after-compile= | =nil= | When non-nil, play the output automatically after compilation. |
 | =eve-preserve-gaps-max= | =2.0= | Maximum gap (seconds) that is preserved between segments. |
 

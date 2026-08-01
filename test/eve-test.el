@@ -396,6 +396,23 @@
      (should (equal '("marker-001" "seg-1")
                     (eve--auto-render-segment-ids))))))
 
+(ert-deftest eve-auto-render-mode-manages-after-save-hook ()
+  "The auto-render minor mode owns the after-save hook."
+  (with-temp-buffer
+    (eve-auto-render-mode 1)
+    (should (memq #'eve--auto-render-after-save after-save-hook))
+    (eve-auto-render-mode -1)
+    (should-not (memq #'eve--auto-render-after-save after-save-hook))))
+
+(ert-deftest eve-render-cache-all-requests-all-segments ()
+  "Manual all-cache warming passes the all-segments flag."
+  (let (requested)
+    (cl-letf (((symbol-function 'eve--auto-render-fire)
+               (lambda (&optional all-segments)
+                 (setq requested all-segments))))
+      (eve-render-cache-all))
+    (should requested)))
+
 (ert-deftest eve-play-marker-plays-broll-directly ()
   "Playing a marker with media b-roll starts mpv without compiling its section."
   (eve-test-with-buffer

@@ -1128,10 +1128,18 @@ manifest, keyed by a SHA-256 hash of the segment's content and encoding
 settings.  Unchanged segments are reused; only changed ones re-encode.
 
 @item
-@strong{Speculative pre-rendering} — after each save, an idle timer
-(@samp{eve-auto-render-idle-seconds}) fires a background render of the segments
-that changed.  When you press @samp{C-c C-c}, the cache is already warm and
-compilation reduces to a concat step.
+@strong{Speculative pre-rendering} — when @samp{eve-auto-render-mode} is enabled, after
+each save an idle timer (@samp{eve-auto-render-idle-seconds}) fires a low-priority
+background render of the segments that changed.  When you press @samp{C-c C-c},
+the cache is already warm and compilation reduces to a concat step.  Use
+@samp{M-x eve-render-cache-changed} to warm changed segments immediately, or
+@samp{M-x eve-render-cache-all} to proactively warm every segment cache entry.
+
+@item
+@strong{Context thumbnails} — timestamp rows in the optional context side panel can
+show cached thumbnails from the rendered output when it already exists and is
+fresh, falling back to source media frames.  Thumbnail extraction is lazy,
+visible-row-driven, low-priority, and never triggers a full render.
 @end itemize
 
 @node Pre-flight validation
@@ -1189,7 +1197,7 @@ partial file, which Emacs can use to update a live preview.
 @node Configuration reference
 @section Configuration reference
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
@@ -1208,12 +1216,33 @@ partial file, which Emacs can use to update a live preview.
 @item @samp{eve-compile-confirm-threshold}
 @tab @samp{30}
 @tab Estimated seconds above which a confirmation prompt appears.
-@item @samp{eve-auto-render}
+@item @samp{eve-auto-render-default-enabled}
 @tab @samp{t}
-@tab Speculatively pre-render changed segments after each save.
+@tab Enable @samp{eve-auto-render-mode} in new Eve buffers.
 @item @samp{eve-auto-render-idle-seconds}
 @tab @samp{2.0}
 @tab Idle delay before the speculative render fires.
+@item @samp{eve-auto-render-low-priority}
+@tab @samp{t}
+@tab Run speculative renders via @samp{nice -n 19} when available.
+@item @samp{eve-auto-render-all-segments}
+@tab @samp{nil}
+@tab Auto-render all segment ids after save instead of only changed ones.
+@item @samp{eve-context-thumbnails-enabled}
+@tab @samp{t}
+@tab Show thumbnails on context-panel timestamp rows.
+@item @samp{eve-context-thumbnail-source}
+@tab @samp{best}
+@tab Use rendered thumbnails when available, falling back to source media.
+@item @samp{eve-context-thumbnail-width}
+@tab @samp{96}
+@tab Context thumbnail width in pixels.
+@item @samp{eve-context-thumbnail-height}
+@tab @samp{54}
+@tab Context thumbnail height in pixels.
+@item @samp{eve-context-thumbnail-jobs}
+@tab @samp{1}
+@tab Maximum concurrent thumbnail extraction jobs.
 @item @samp{eve-play-after-compile}
 @tab @samp{nil}
 @tab When non-nil, play the output automatically after compilation.
@@ -1618,16 +1647,16 @@ All eve variables belong to the @samp{eve} customization group.  Access it with
 The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @samp{scripts/gen-docs}.
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
-@item @samp{eve-auto-render}
-@tab @samp{t}
-@tab Whether to speculatively pre-render changed segments on save.
 @item @samp{eve-auto-render-all-segments}
 @tab @samp{nil}
 @tab Whether speculative renders should warm every segment cache entry.
+@item @samp{eve-auto-render-default-enabled}
+@tab @samp{t}
+@tab Whether `eve-auto-render-mode' is enabled in new Eve buffers.
 @item @samp{eve-auto-render-idle-seconds}
 @tab @samp{2.0}
 @tab Idle time in seconds before a background speculative render fires after save.
@@ -1655,6 +1684,21 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-context-panels-auto-open}
 @tab @samp{nil}
 @tab When non-nil, open Eve context panels automatically in `eve-mode'.
+@item @samp{eve-context-thumbnail-height}
+@tab @samp{54}
+@tab Height in pixels for context-panel timestamp thumbnails.
+@item @samp{eve-context-thumbnail-jobs}
+@tab @samp{1}
+@tab Maximum concurrent ffmpeg thumbnail extraction jobs per Eve buffer.
+@item @samp{eve-context-thumbnail-source}
+@tab @samp{(...)}
+@tab Preferred source for context-panel timestamp thumbnails.
+@item @samp{eve-context-thumbnail-width}
+@tab @samp{96}
+@tab Width in pixels for context-panel timestamp thumbnails.
+@item @samp{eve-context-thumbnails-enabled}
+@tab @samp{t}
+@tab Whether Eve context-panel timestamp rows show video thumbnails.
 @item @samp{eve-filler-phrases}
 @tab @samp{("um" "uh")}
 @tab Filler words/phrases to tag in transcripts.
