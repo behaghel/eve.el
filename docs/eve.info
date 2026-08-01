@@ -128,6 +128,7 @@ Playback
 Display
 
 * Timestamp ruler::
+* Context panels::
 * Hiding deleted segments::
 * Word-level display::
 
@@ -1204,7 +1205,7 @@ File: eve.info,  Node: Rendered playback,  Next: Playback tracking and segment h
 9.2 Rendered playback
 =====================
 
-‘C-u C-c SPC’ (‘eve-play’ with prefix) or ‘C-c C-p’
+‘C-u C-c SPC’ (‘eve-play’ with prefix) or ‘C-c C-r’
 (‘eve-play-rendered’) plays the compiled output file.  If the output is
 missing or older than the manifest, eve compiles it first.
 
@@ -1279,11 +1280,12 @@ File: eve.info,  Node: Display,  Next: Key Bindings,  Prev: Playback,  Up: Top
 * Menu:
 
 * Timestamp ruler::
+* Context panels::
 * Hiding deleted segments::
 * Word-level display::
 
 
-File: eve.info,  Node: Timestamp ruler,  Next: Hiding deleted segments,  Up: Display
+File: eve.info,  Node: Timestamp ruler,  Next: Context panels,  Up: Display
 
 10.1 Timestamp ruler
 ====================
@@ -1301,9 +1303,36 @@ excluded from the running total.
    Toggle the ruler with ‘C-c C-l’ (‘eve-ruler-mode’).
 
 
-File: eve.info,  Node: Hiding deleted segments,  Next: Word-level display,  Prev: Timestamp ruler,  Up: Display
+File: eve.info,  Node: Context panels,  Next: Hiding deleted segments,  Prev: Timestamp ruler,  Up: Display
 
-10.2 Hiding deleted segments
+10.2 Context panels
+===================
+
+‘C-c C-p’ (‘eve-context-panels-open’) opens or refreshes the optional
+Eve context side panel when the ‘context-panels’ package is available.
+During the optional-first migration, Eve continues to work without that
+package.
+
+   Opening the side panel disables the legacy right-margin
+‘eve-ruler-mode’ while the panel is active.  The side panel shows fixed
+rendered-timeline timestamp landmarks using the same interval, anchored
+to the corresponding visible transcript row when possible.  Internal
+segment ids are intentionally hidden.  Segments and markers with b-roll
+also get compact ‘🎞’ rows showing file basename, duration, and
+configuration glyphs such as ‘▣’ replace, ‘⊕’ overlay, ‘◱’
+picture-in-picture, ‘🎙’ source audio, ‘♪’ b-roll audio, ‘🔇’ mute, ‘→’
+continue, ‘▧’ still, ‘{…}’ placeholders, and ‘▭’ overlays.
+
+     ;; Enable local development integration outside eve.el itself.
+     (add-to-list 'load-path "~/ws/context-panels")
+
+   Set ‘eve-context-panels-auto-open’ to non-nil to open context panels
+automatically when entering ‘eve-mode’.
+
+
+File: eve.info,  Node: Hiding deleted segments,  Next: Word-level display,  Prev: Context panels,  Up: Display
+
+10.3 Hiding deleted segments
 ============================
 
 ‘C-c C-h’ (‘eve-hide-deleted-mode’) toggles visibility of deleted words
@@ -1314,7 +1343,7 @@ appears with a strikethrough face.
 
 File: eve.info,  Node: Word-level display,  Prev: Hiding deleted segments,  Up: Display
 
-10.3 Word-level display
+10.4 Word-level display
 =======================
 
 ‘C-c C-w’ (‘eve-toggle-words’) shows or hides per-word timing
@@ -1323,6 +1352,7 @@ precise cut points.
 
 Variable                          Default   Description
 --------------------------------------------------------------------------------------------------
+‘eve-context-panels-auto-open’    ‘nil’     Open context panels automatically when available.
 ‘eve-ruler-interval’              ‘30.0’    Seconds between ruler markers.
 ‘eve-show-words-by-default’       ‘nil’     Show word timings on buffer open.
 ‘eve-validation-on-save’          ‘t’       Validate manifest on every save.
@@ -1401,13 +1431,13 @@ Key         Command
 ‘C-c C-b’   ‘eve-edit-broll-placeholders’
 ‘C-c SPC’   ‘eve-play’
 ‘C-c C-s’   ‘eve-play-source’
-‘C-c C-p’   ‘eve-play-rendered’
 ‘C-c C-t’   ‘eve-transcribe’
 ‘C-c C-l’   ‘eve-ruler-mode’
 ‘C-c C-w’   ‘eve-toggle-words’
 ‘C-c C-h’   ‘eve-hide-deleted-mode’
 ‘C-c C-o’   ‘eve-open-raw-json’
-‘C-c C-r’   ‘eve-reload’
+‘C-c C-p’   ‘eve-context-panels-open’
+‘C-c C-r’   ‘eve-play-rendered’
 ‘C-c C-v’   ‘eve-validate’
 ‘C-c C-c’   ‘eve-compile’
 
@@ -1467,6 +1497,7 @@ Variable                           Default                     Description
 ‘eve-compile-jobs’                 ‘0’                         Number of segments to encode in parallel, passed to 'eve text-edit -jobs'.
 ‘eve-compile-quality’              ‘"draft"’                   Default encoding quality passed to 'eve text-edit -quality'.
 ‘eve-compile-scale’                ‘1.0’                       Resolution scale factor passed to 'eve text-edit -scale'.
+‘eve-context-panels-auto-open’     ‘nil’                       When non-nil, open Eve context panels automatically in 'eve-mode'.
 ‘eve-filler-phrases’               ‘("um" "uh")’               Filler words/phrases to tag in transcripts.
 ‘eve-filler-regex’                 ‘("\\`um\\'" "\\`uh\\'")’   Regexps matched against word text when tagging filler words.
 ‘eve-media-extensions’             ‘(...)’                     Supported media extensions for transcription inputs.
@@ -1576,85 +1607,86 @@ or visit the repository at <https://github.com/behaghel/eve.el>.
 
 Tag Table:
 Node: Top205
-Node: Introduction3254
-Node: The Big Idea3560
-Node: The Core Workflow4332
-Node: About This Manual5508
-Node: Getting Started5907
-Node: Installation6085
-Node: Requirements6318
-Node: Installing the CLI6643
-Node: Installing the Emacs package7591
-Node: straightel7849
-Node: Manual8067
-Node: Accessing the manual in Emacs8403
-Node: Quick Start8730
-Node: The TJM Manifest10124
-Node: Structure10356
-Node: How eve-mode renders a manifest11478
-Node: The raw JSON companion buffer12110
-Node: Transcription12544
-Node: Starting transcription from Emacs12780
-Node: Backends13498
-Node: Configuration14471
-Node: Installing optional backends15274
-Node: Editing15732
-Node: Navigation16025
-Node: Deletion and restoration16402
-Node: Splitting and merging17041
-Node: Reordering17533
-Node: Markers and sections18177
-Node: Inline editing18876
-Node: Metadata19207
-Node: Undo and redo19781
-Node: Validation20108
-Node: Filler Words20434
-Node: Concept20646
-Node: Configuration (1)21048
-Node: Commands21641
-Node: Auto-tagging on file open22581
-Node: B-Roll22930
-Node: Concept (1)23236
-Node: Editing b-roll metadata23892
-Node: Compositing modes in detail25661
-Node: Replace mode25886
-Node: Pip mode26334
-Node: Audio policy27253
-Node: JSON templates27732
-Node: Overlay fields29025
-Node: Concrete example lower-third title card30428
-Node: Placeholders without templates32313
-Node: Continuation chains32736
-Node: Compilation and Rendering33759
-Node: Two modes draft and final34111
-Node: Under the hood34589
-Node: Pre-flight validation35692
-Node: Dry-run analysis36429
-Node: Checkpoint and resume36955
-Node: Progressive output37436
-Node: Configuration reference37838
-Node: CLI reference39182
-Node: Playback40311
-Node: Source playback40558
-Node: Rendered playback41019
-Node: Playback tracking and segment highlighting41517
-Node: Controls41944
-Node: Video layout42925
-Node: Display44461
-Node: Timestamp ruler44647
-Node: Hiding deleted segments45244
-Node: Word-level display45678
-Node: Key Bindings46492
-Node: Single-key bindings46733
-Node: C-c prefix bindings48534
-Node: Playback-mode overrides49449
-Node: The hydra cheatsheet50050
-Node: Configuration Reference50452
-Node: Architecture54627
-Node: Two-layer boundary54814
-Node: Shared contract55618
-Node: Development56090
-Node: Appendix A TJM v11 Specification56566
+Node: Introduction3273
+Node: The Big Idea3579
+Node: The Core Workflow4351
+Node: About This Manual5527
+Node: Getting Started5926
+Node: Installation6104
+Node: Requirements6337
+Node: Installing the CLI6662
+Node: Installing the Emacs package7610
+Node: straightel7868
+Node: Manual8086
+Node: Accessing the manual in Emacs8422
+Node: Quick Start8749
+Node: The TJM Manifest10143
+Node: Structure10375
+Node: How eve-mode renders a manifest11497
+Node: The raw JSON companion buffer12129
+Node: Transcription12563
+Node: Starting transcription from Emacs12799
+Node: Backends13517
+Node: Configuration14490
+Node: Installing optional backends15293
+Node: Editing15751
+Node: Navigation16044
+Node: Deletion and restoration16421
+Node: Splitting and merging17060
+Node: Reordering17552
+Node: Markers and sections18196
+Node: Inline editing18895
+Node: Metadata19226
+Node: Undo and redo19800
+Node: Validation20127
+Node: Filler Words20453
+Node: Concept20665
+Node: Configuration (1)21067
+Node: Commands21660
+Node: Auto-tagging on file open22600
+Node: B-Roll22949
+Node: Concept (1)23255
+Node: Editing b-roll metadata23911
+Node: Compositing modes in detail25680
+Node: Replace mode25905
+Node: Pip mode26353
+Node: Audio policy27272
+Node: JSON templates27751
+Node: Overlay fields29044
+Node: Concrete example lower-third title card30447
+Node: Placeholders without templates32332
+Node: Continuation chains32755
+Node: Compilation and Rendering33778
+Node: Two modes draft and final34130
+Node: Under the hood34608
+Node: Pre-flight validation35711
+Node: Dry-run analysis36448
+Node: Checkpoint and resume36974
+Node: Progressive output37455
+Node: Configuration reference37857
+Node: CLI reference39201
+Node: Playback40330
+Node: Source playback40577
+Node: Rendered playback41038
+Node: Playback tracking and segment highlighting41536
+Node: Controls41963
+Node: Video layout42944
+Node: Display44480
+Node: Timestamp ruler44685
+Node: Context panels45273
+Node: Hiding deleted segments46571
+Node: Word-level display47004
+Node: Key Bindings47920
+Node: Single-key bindings48161
+Node: C-c prefix bindings49962
+Node: Playback-mode overrides50890
+Node: The hydra cheatsheet51491
+Node: Configuration Reference51893
+Node: Architecture56206
+Node: Two-layer boundary56393
+Node: Shared contract57197
+Node: Development57669
+Node: Appendix A TJM v11 Specification58145
 
 End Tag Table
 

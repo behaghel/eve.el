@@ -8,6 +8,11 @@
 (require 'ert)
 (require 'cl-lib)
 
+(defvar context-panels-side-panel-buffer)
+
+(declare-function context-panels-open "context-panels" (&optional source-buffer))
+(declare-function context-panels-registered-provider "context-panels" (name))
+
 (defconst eve-test--root
   (file-name-directory
    (directory-file-name
@@ -22,6 +27,8 @@
   (provide 'hydra))
 
 (add-to-list 'load-path eve-test--root)
+(when (file-directory-p "/Users/hubertbehaghel/ws/context-panels")
+  (add-to-list 'load-path "/Users/hubertbehaghel/ws/context-panels"))
 (require 'eve)
 
 (defconst eve-test--sample-data
@@ -1687,17 +1694,154 @@
   (should (eq (lookup-key eve-playback-mode-map (kbd "S-<right>")) #'eve-seek-long-forward))
   (should (eq (lookup-key eve-playback-mode-map "q") #'eve-stop-playback)))
 
+(ert-deftest eve-context-panels-registers-provider-when-available ()
+  "Eve registers its context provider when context-panels is available."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (should (bound-and-true-p context-panels-mode))
+   (let ((provider (context-panels-registered-provider 'eve)))
+     (should provider)
+     (should (eq 'eve (plist-get provider :name)))
+     (should (functionp (plist-get provider :collect-side-items)))
+     (should (functionp (plist-get provider :render-side-item)))
+     (should (functionp (plist-get provider :jump-side-item)))
+     (should (equal 42 (plist-get provider :side-panel-width)))
+     (should (functionp (plist-get provider :side-panel-buffer-name))))))
+
+(ert-deftest eve-context-panels-side-items-include-ruler-milestones ()
+  "Eve context-panel side items expose rendered timestamp milestones."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((eve-ruler-interval 2.0)
+          (provider (context-panels-registered-provider 'eve))
+          (items (funcall (plist-get provider :collect-side-items) (current-buffer))))
+     (should (equal '("[00:00:00]" "[00:00:02]")
+                    (mapcar (lambda (item) (plist-get item :label)) items)))
+     (should (cl-every (lambda (item)
+                         (and (eq 'timestamp (plist-get item :kind))
+                              (equal "seg-1" (plist-get item :segment-id))
+                              (integer-or-marker-p (plist-get item :anchor-pos))))
+                       items)))))
+
+(ert-deftest eve-context-panels-renders-timestamp-item ()
+  "Eve context-panel side item renderer writes compact timestamp rows."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((source (current-buffer))
+          (provider (context-panels-registered-provider 'eve))
+          (item (car (funcall (plist-get provider :collect-side-items) source))))
+     (with-temp-buffer
+       (funcall (plist-get provider :render-side-item) source item)
+       (should (equal "[00:00:00]\n" (substring-no-properties (buffer-string))))
+       (should (eq 'eve-ruler-face (get-text-property (point-min) 'face)))))))
+
+(ert-deftest eve-context-panels-side-items-include-broll-flags ()
+  "Eve context-panel side items include compact b-roll flags."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (broll '((file . "/tmp/assets/intro-card.mp4")
+                   (duration . 10.0)
+                   (mode . "replace")
+                   (audio . "broll")
+                   (continue . t)
+                   (still . t)
+                   (placeholders . (("name" . "Eve")))
+                   (overlays . (((type . "text")))))))
+     (eve--set-segment-broll segment broll)
+     (eve--render)
+     (let* ((provider (context-panels-registered-provider 'eve))
+            (items (funcall (plist-get provider :collect-side-items) (current-buffer)))
+            (broll-item (seq-find (lambda (item)
+                                    (eq 'broll (plist-get item :kind)))
+                                  items)))
+       (should broll-item)
+       (should (equal "seg-1" (plist-get broll-item :segment-id)))
+       (should (equal "🎞 intro-card.mp4 10s ▣ ♪ → ▧ {…} ▭"
+                      (plist-get broll-item :label)))))))
+
+(ert-deftest eve-context-panels-renders-broll-item ()
+  "Eve context-panel renderer writes compact b-roll rows."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((source (current-buffer))
+          (segment (car (eve--segments))))
+     (eve--set-segment-broll segment '((file . "intro.mp4")
+                                       (duration . 3.5)
+                                       (mode . "overlay")
+                                       (audio . "source")))
+     (eve--render)
+     (let* ((provider (context-panels-registered-provider 'eve))
+            (items (funcall (plist-get provider :collect-side-items) source))
+            (item (seq-find (lambda (candidate)
+                              (eq 'broll (plist-get candidate :kind)))
+                            items)))
+       (with-temp-buffer
+         (funcall (plist-get provider :render-side-item) source item)
+         (should (equal "🎞 intro.mp4 3.5s ⊕ 🎙\n"
+                        (buffer-string))))))))
+
+(ert-deftest eve-context-panels-jump-side-item-goes-to-source-segment ()
+  "Jumping from a context-panel item moves point to its Eve source segment."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((source (current-buffer))
+          (provider (context-panels-registered-provider 'eve))
+          (item (car (funcall (plist-get provider :collect-side-items) source)))
+          (jump (plist-get provider :jump-side-item)))
+     (goto-char (point-max))
+     (cl-letf (((symbol-function 'pop-to-buffer)
+                (lambda (buffer-or-name &rest _args)
+                  (switch-to-buffer buffer-or-name))))
+       (funcall jump source item))
+     (should (equal "seg-1" (eve--segment-id-at-point))))))
+
+(ert-deftest eve-context-panels-open-disables-ruler-mode ()
+  "Opening the context side panel drops the legacy right-margin ruler."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (setq-local eve-ruler-interval 2.0)
+   (eve-ruler-mode 1)
+   (should eve-ruler-mode)
+   (should (> (length eve--ruler-overlays) 0))
+   (let ((panel-buffer (eve-context-panels-open)))
+     (should (buffer-live-p panel-buffer))
+     (should (eq panel-buffer context-panels-side-panel-buffer))
+     (should-not eve-ruler-mode)
+     (should (= 0 (length eve--ruler-overlays)))
+     (should (= 1 (length eve--context-tick-overlays)))
+     (let* ((overlay (car eve--context-tick-overlays))
+            (tick (overlay-get overlay 'before-string)))
+       (should (< (overlay-start overlay) (overlay-end overlay)))
+       (should-not (overlay-get overlay 'evaporate))
+       (should (equal "▸ " (substring-no-properties tick)))
+       (should (eq 'eve-ruler-face (get-text-property 0 'face tick)))))))
+
+(ert-deftest eve-context-panels-open-errors-when-unavailable ()
+  "The context-panel command fails cleanly when optional support is absent."
+  (eve-test-with-buffer
+   (let ((eve--context-panels-available nil))
+     (cl-letf (((symbol-function 'require)
+                (lambda (&rest _args) nil)))
+       (should-error (eve-context-panels-open) :type 'user-error)))))
+
+(ert-deftest eve-context-panels-available-p-lazily-requires-package ()
+  "Context-panel support can become available after Eve was loaded."
+  (skip-unless (featurep 'context-panels))
+  (let ((eve--context-panels-available nil))
+    (should (eve--context-panels-available-p))))
+
 (ert-deftest eve-cc-prefix-bindings ()
   "Verify C-c prefix bindings in eve-mode-map."
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-c")) #'eve-compile))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-v")) #'eve-validate))
-  (should (eq (lookup-key eve-mode-map (kbd "C-c C-r")) #'eve-reload))
+  (should (eq (lookup-key eve-mode-map (kbd "C-c C-r")) #'eve-play-rendered))
+  (should (eq (lookup-key eve-mode-map (kbd "C-c C-p")) #'eve-context-panels-open))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-o")) #'eve-open-raw-json))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-h")) #'eve-hide-deleted-mode))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-w")) #'eve-toggle-words))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-l")) #'eve-ruler-mode))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-t")) #'eve-transcribe))
-  (should (eq (lookup-key eve-mode-map (kbd "C-c C-p")) #'eve-play-rendered))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-s")) #'eve-play-source))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-b")) #'eve-edit-broll-placeholders))
   (should (eq (lookup-key eve-mode-map (kbd "C-c C-n")) #'eve-edit-notes)))

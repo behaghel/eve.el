@@ -767,7 +767,7 @@ Playback position maps directly to the original recording timestamps.
 
 ** Rendered playback
 
-=C-u C-c SPC= (=eve-play= with prefix) or =C-c C-p= (=eve-play-rendered=)
+=C-u C-c SPC= (=eve-play= with prefix) or =C-c C-r= (=eve-play-rendered=)
 plays the compiled output file.  If the output is missing or older than the
 manifest, eve compiles it first.
 
@@ -844,6 +844,30 @@ The total rendered duration appears in the mode line.
 
 Toggle the ruler with =C-c C-l= (=eve-ruler-mode=).
 
+** Context panels
+
+=C-c C-p= (=eve-context-panels-open=) opens or refreshes the optional Eve
+context side panel when the =context-panels= package is available.  During the
+optional-first migration, Eve continues to work without that package.
+
+Opening the side panel disables the legacy right-margin =eve-ruler-mode= while
+the panel is active.  The side panel shows fixed rendered-timeline timestamp
+landmarks using the same interval, anchored to the corresponding visible
+transcript row when possible.  Internal segment ids are intentionally hidden.
+Segments and markers with b-roll also get compact =🎞= rows showing file
+basename, duration, and configuration glyphs such as =▣=
+replace, =⊕= overlay, =◱= picture-in-picture, =🎙= source audio, =♪= b-roll
+audio, =🔇= mute, =→= continue, =▧= still, ={…}= placeholders, and =▭=
+overlays.
+
+#+begin_src emacs-lisp
+;; Enable local development integration outside eve.el itself.
+(add-to-list 'load-path "~/ws/context-panels")
+#+end_src
+
+Set =eve-context-panels-auto-open= to non-nil to open context panels
+automatically when entering =eve-mode=.
+
 ** Hiding deleted segments
 
 =C-c C-h= (=eve-hide-deleted-mode=) toggles visibility of deleted words and
@@ -858,6 +882,7 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 
 | Variable | Default | Description |
 |----------+---------+-------------|
+| =eve-context-panels-auto-open= | =nil= | Open context panels automatically when available. |
 | =eve-ruler-interval= | =30.0= | Seconds between ruler markers. |
 | =eve-show-words-by-default= | =nil= | Show word timings on buffer open. |
 | =eve-validation-on-save= | =t= | Validate manifest on every save. |

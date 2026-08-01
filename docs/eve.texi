@@ -141,6 +141,7 @@ Playback
 Display
 
 * Timestamp ruler::
+* Context panels::
 * Hiding deleted segments::
 * Word-level display::
 
@@ -1263,7 +1264,7 @@ Playback position maps directly to the original recording timestamps.
 @node Rendered playback
 @section Rendered playback
 
-@samp{C-u C-c SPC} (@samp{eve-play} with prefix) or @samp{C-c C-p} (@samp{eve-play-rendered})
+@samp{C-u C-c SPC} (@samp{eve-play} with prefix) or @samp{C-c C-r} (@samp{eve-play-rendered})
 plays the compiled output file.  If the output is missing or older than the
 manifest, eve compiles it first.
 
@@ -1353,6 +1354,7 @@ Configuration:
 
 @menu
 * Timestamp ruler::
+* Context panels::
 * Hiding deleted segments::
 * Word-level display::
 @end menu
@@ -1374,6 +1376,31 @@ The total rendered duration appears in the mode line.
 
 Toggle the ruler with @samp{C-c C-l} (@samp{eve-ruler-mode}).
 
+@node Context panels
+@section Context panels
+
+@samp{C-c C-p} (@samp{eve-context-panels-open}) opens or refreshes the optional Eve
+context side panel when the @samp{context-panels} package is available.  During the
+optional-first migration, Eve continues to work without that package.
+
+Opening the side panel disables the legacy right-margin @samp{eve-ruler-mode} while
+the panel is active.  The side panel shows fixed rendered-timeline timestamp
+landmarks using the same interval, anchored to the corresponding visible
+transcript row when possible.  Internal segment ids are intentionally hidden.
+Segments and markers with b-roll also get compact @samp{🎞} rows showing file
+basename, duration, and configuration glyphs such as @samp{▣}
+replace, @samp{⊕} overlay, @samp{◱} picture-in-picture, @samp{🎙} source audio, @samp{♪} b-roll
+audio, @samp{🔇} mute, @samp{→} continue, @samp{▧} still, @samp{@{…@}} placeholders, and @samp{▭}
+overlays.
+
+@lisp
+;; Enable local development integration outside eve.el itself.
+(add-to-list 'load-path "~/ws/context-panels")
+@end lisp
+
+Set @samp{eve-context-panels-auto-open} to non-nil to open context panels
+automatically when entering @samp{eve-mode}.
+
 @node Hiding deleted segments
 @section Hiding deleted segments
 
@@ -1392,6 +1419,9 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 @headitem Variable
 @tab Default
 @tab Description
+@item @samp{eve-context-panels-auto-open}
+@tab @samp{nil}
+@tab Open context panels automatically when available.
 @item @samp{eve-ruler-interval}
 @tab @samp{30.0}
 @tab Seconds between ruler markers.
@@ -1513,8 +1543,6 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-play}
 @item @samp{C-c C-s}
 @tab @samp{eve-play-source}
-@item @samp{C-c C-p}
-@tab @samp{eve-play-rendered}
 @item @samp{C-c C-t}
 @tab @samp{eve-transcribe}
 @item @samp{C-c C-l}
@@ -1525,8 +1553,10 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-hide-deleted-mode}
 @item @samp{C-c C-o}
 @tab @samp{eve-open-raw-json}
+@item @samp{C-c C-p}
+@tab @samp{eve-context-panels-open}
 @item @samp{C-c C-r}
-@tab @samp{eve-reload}
+@tab @samp{eve-play-rendered}
 @item @samp{C-c C-v}
 @tab @samp{eve-validate}
 @item @samp{C-c C-c}
@@ -1608,6 +1638,9 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-compile-scale}
 @tab @samp{1.0}
 @tab Resolution scale factor passed to `eve text-edit --scale'.
+@item @samp{eve-context-panels-auto-open}
+@tab @samp{nil}
+@tab When non-nil, open Eve context panels automatically in `eve-mode'.
 @item @samp{eve-filler-phrases}
 @tab @samp{("um" "uh")}
 @tab Filler words/phrases to tag in transcripts.

@@ -39,7 +39,15 @@
 (require 'image)
 (require 'outline)
 
+(defvar eve--context-panels-available (require 'context-panels nil t)
+  "Non-nil when optional context-panels support is available.")
+
 (declare-function image-file-name-p "image-mode" (filename))
+(defvar context-panels-side-panel-buffer)
+
+(declare-function context-panels-mode "context-panels" (&optional arg))
+(declare-function context-panels-open "context-panels" (&optional source-buffer))
+(declare-function context-panels-register-provider "context-panels" (provider))
 (declare-function dired-get-marked-files "dired"
                   (&optional localp arg filter distinguish-one-marked
                              error-if-none-p))
@@ -166,6 +174,12 @@ present."
 (defcustom eve-ruler-interval 30.0
   "Interval in seconds between right-margin timestamp ruler markers."
   :type 'float
+  :group 'eve)
+
+(defcustom eve-context-panels-auto-open nil
+  "When non-nil, open Eve context panels automatically in `eve-mode'.
+Context panels require the optional `context-panels' package."
+  :type 'boolean
   :group 'eve)
 
 (defcustom eve-compile-quality "draft"
@@ -379,13 +393,13 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     ;; Global C-c C-x (convention-compliant)
     (define-key map (kbd "C-c C-c") #'eve-compile)
     (define-key map (kbd "C-c C-v") #'eve-validate)
-    (define-key map (kbd "C-c C-r") #'eve-reload)
+    (define-key map (kbd "C-c C-r") #'eve-play-rendered)
+    (define-key map (kbd "C-c C-p") #'eve-context-panels-open)
     (define-key map (kbd "C-c C-o") #'eve-open-raw-json)
     (define-key map (kbd "C-c C-h") #'eve-hide-deleted-mode)
     (define-key map (kbd "C-c C-w") #'eve-toggle-words)
     (define-key map (kbd "C-c C-l") #'eve-ruler-mode)
     (define-key map (kbd "C-c C-t") #'eve-transcribe)
-    (define-key map (kbd "C-c C-p") #'eve-play-rendered)
     (define-key map (kbd "C-c C-s") #'eve-play-source)
     (define-key map (kbd "C-c SPC") #'eve-play)
     (define-key map (kbd "C-c C-b") #'eve-edit-broll-placeholders)
@@ -420,6 +434,9 @@ Nil when no layout is active.")
 (defvar-local eve--ruler-overlays nil
   "List of right-margin ruler overlays for the current buffer.")
 
+(defvar-local eve--context-tick-overlays nil
+  "List of source tick overlays shown while the context panel is open.")
+
 (defvar-local eve--ruler-total-duration 0.0
   "Cached total rendered duration in seconds, updated by `eve--update-ruler'.")
 
@@ -443,6 +460,9 @@ Nil when no layout is active.")
 
 (defvar-local eve--playback-source-segments nil
   "Source-mode: ordered list of segments from the active source file.")
+
+(defvar-local eve--context-panels-disabled-ruler nil
+  "Non-nil when Eve disabled `eve-ruler-mode' while a context panel is open.")
 
 (defvar-local eve--last-echo-id nil
   "Segment id that was last echoed in the minibuffer.")
@@ -1111,9 +1131,9 @@ _B_ b-roll cont   Global C-c C-x
 _i_ speaker       ──────────────
 _r_ timestamps    _C-c C-c_ compile    _C-c C-w_ word timings
                   _C-c C-v_ validate   _C-c C-l_ ruler mode
-_g_ reload        _C-c C-r_ reload     _C-c C-h_ hide deleted
+_g_ reload        _C-c C-r_ play rendered  _C-c C-h_ hide deleted
 _q_ quit          _C-c C-o_ raw JSON   _C-c C-t_ transcribe
-_?_ this help     _C-c C-p_ play rendered  _C-c C-s_ play source
+_?_ this help     _C-c C-p_ panels     _C-c C-s_ play source
                   _C-c C-b_ b-roll placeholders
                   _C-c C-n_ edit notes
 "
@@ -1151,13 +1171,13 @@ _?_ this help     _C-c C-p_ play rendered  _C-c C-s_ play source
     ("g" eve-reload)
     ("C-c C-c" eve-compile)
     ("C-c C-v" eve-validate)
-    ("C-c C-r" eve-reload)
+    ("C-c C-r" eve-play-rendered)
+    ("C-c C-p" eve-context-panels-open)
     ("C-c C-o" eve-open-raw-json)
     ("C-c C-h" eve-hide-deleted-mode)
     ("C-c C-w" eve-toggle-words)
     ("C-c C-l" eve-ruler-mode)
     ("C-c C-t" eve-transcribe)
-    ("C-c C-p" eve-play-rendered)
     ("C-c C-s" eve-play-source)
     ("C-c C-b" eve-edit-broll-placeholders)
     ("C-c C-n" eve-edit-notes)
@@ -1647,6 +1667,189 @@ The milestone interval is controlled by `eve-ruler-interval'."
     (setq-local right-margin-width 0)
     (eve--apply-visual-wrap)))
 
+(defun eve--context-panels-available-p ()
+  "Return non-nil when optional context-panel support can be used."
+  (setq eve--context-panels-available
+        (or eve--context-panels-available
+            (require 'context-panels nil t)))
+  (and eve--context-panels-available
+       (fboundp 'context-panels-register-provider)
+       (fboundp 'context-panels-mode)
+       (fboundp 'context-panels-open)))
+
+(defun eve--segment-position (segment-id)
+  "Return buffer position for SEGMENT-ID, or nil."
+  (save-excursion
+    (eve--goto-segment segment-id)))
+
+(defun eve--context-panel-compact-duration (duration)
+  "Return compact text for b-roll DURATION."
+  (when-let* ((seconds (eve--time->seconds duration)))
+    (if (= seconds (floor seconds))
+        (format "%ds" (floor seconds))
+      (format "%.1fs" seconds))))
+
+(defun eve--context-panel-broll-glyphs (broll)
+  "Return compact configuration glyphs for BROLL."
+  (let (glyphs)
+    (push (pcase (downcase (eve--stringify (eve--aget 'mode broll)))
+            ("replace" "▣")
+            ("overlay" "⊕")
+            ("pip" "◱")
+            (_ nil))
+          glyphs)
+    (push (pcase (downcase (eve--stringify (eve--aget 'audio broll)))
+            ("source" "🎙")
+            ("broll" "♪")
+            ("mute" "🔇")
+            (_ nil))
+          glyphs)
+    (when (eve--aget 'continue broll) (push "→" glyphs))
+    (when (eve--aget 'still broll) (push "▧" glyphs))
+    (when (eve--aget 'placeholders broll) (push "{…}" glyphs))
+    (when (eve--aget 'overlays broll) (push "▭" glyphs))
+    (string-join (delq nil (nreverse glyphs)) " ")))
+
+(defun eve--context-panel-broll-label (broll)
+  "Return compact side-panel label for BROLL."
+  (let* ((file (eve--stringify (eve--aget 'file broll)))
+         (basename (if (string-empty-p file)
+                       "<no file>"
+                     (file-name-nondirectory file)))
+         (duration (eve--context-panel-compact-duration (eve--aget 'duration broll)))
+         (glyphs (eve--context-panel-broll-glyphs broll)))
+    (string-join (delq nil (list "🎞"
+                                 basename
+                                 duration
+                                 (unless (string-empty-p glyphs) glyphs)))
+                 " ")))
+
+(defun eve--context-panel-timestamp-items (milestones)
+  "Return context-panel timestamp items from MILESTONES."
+  (delq nil
+        (mapcar (lambda (milestone)
+                  (let* ((segment-id (car milestone))
+                         (label (cdr milestone))
+                         (anchor (eve--segment-position segment-id)))
+                    (when anchor
+                      (list :id (format "timestamp:%s:%s" segment-id label)
+                            :kind 'timestamp
+                            :label label
+                            :segment-id segment-id
+                            :anchor-pos anchor
+                            :source-start anchor))))
+                milestones)))
+
+(defun eve--context-panel-broll-items (segments)
+  "Return context-panel b-roll items for SEGMENTS."
+  (delq nil
+        (mapcar (lambda (segment)
+                  (when-let* ((broll (eve--segment-broll segment))
+                              (segment-id (eve--aget 'id segment))
+                              (anchor (eve--segment-position segment-id)))
+                    (list :id (format "broll:%s" segment-id)
+                          :kind 'broll
+                          :label (eve--context-panel-broll-label broll)
+                          :segment-id segment-id
+                          :anchor-pos anchor
+                          :source-start anchor)))
+                segments)))
+
+(defun eve--context-panel-side-items (&optional source-buffer)
+  "Return Eve side-panel items for SOURCE-BUFFER."
+  (with-current-buffer (or source-buffer (current-buffer))
+    (let* ((segments (eve--segments))
+           (cumulative-times (eve--rendered-cumulative-times
+                              segments eve-hide-deleted-mode))
+           (milestones (eve--ruler-milestones cumulative-times eve-ruler-interval)))
+      (append (eve--context-panel-timestamp-items milestones)
+              (eve--context-panel-broll-items segments)))))
+
+(defun eve--context-panel-render-side-item (_source-buffer item)
+  "Render Eve side-panel ITEM."
+  (let ((label (or (plist-get item :label) "")))
+    (when (eq (plist-get item :kind) 'timestamp)
+      (setq label (propertize label 'face 'eve-ruler-face)))
+    (insert label "\n")))
+
+(defun eve--context-panel-jump-side-item (source-buffer item)
+  "Jump from an Eve side-panel ITEM to SOURCE-BUFFER."
+  (pop-to-buffer source-buffer)
+  (eve--goto-segment (plist-get item :segment-id)))
+
+(defun eve--context-panel-buffer-name (_source-buffer)
+  "Return the Eve context side-panel buffer name."
+  "*Eve Context*")
+
+(defun eve--context-panels-provider ()
+  "Return the Eve provider descriptor for `context-panels'."
+  (list :name 'eve
+        :collect-side-items #'eve--context-panel-side-items
+        :render-side-item #'eve--context-panel-render-side-item
+        :jump-side-item #'eve--context-panel-jump-side-item
+        :side-panel-buffer-name #'eve--context-panel-buffer-name
+        :side-panel-width 42))
+
+(defun eve--context-tick-clear-overlays ()
+  "Remove source tick overlays used by the Eve context panel."
+  (mapc #'delete-overlay eve--context-tick-overlays)
+  (setq eve--context-tick-overlays nil))
+
+(defun eve--context-tick-refresh-overlays ()
+  "Render source tick overlays for context-panel timestamp targets."
+  (eve--context-tick-clear-overlays)
+  (let* ((segments (eve--segments))
+         (cumulative-times (eve--rendered-cumulative-times
+                            segments eve-hide-deleted-mode))
+         (milestones (eve--ruler-milestones cumulative-times eve-ruler-interval))
+         (seen nil))
+    (dolist (milestone milestones)
+      (let* ((segment-id (car milestone))
+             (pos (and (not (member segment-id seen))
+                       (eve--segment-position segment-id))))
+        (when pos
+          (push segment-id seen)
+          (let ((overlay (make-overlay pos (min (point-max) (1+ pos)) nil t nil)))
+            (overlay-put overlay 'before-string
+                         (propertize "▸ " 'face 'eve-ruler-face))
+            (push overlay eve--context-tick-overlays)))))))
+
+(defun eve--context-panels-after-open ()
+  "Disable legacy ruler and show source ticks while the context panel is open."
+  (when (derived-mode-p 'eve-mode)
+    (when eve-ruler-mode
+      (setq eve--context-panels-disabled-ruler t)
+      (eve-ruler-mode -1))
+    (eve--context-tick-refresh-overlays)))
+
+(defun eve--context-panels-before-close ()
+  "Clean up context ticks and restore the legacy ruler if Eve disabled it."
+  (when (derived-mode-p 'eve-mode)
+    (eve--context-tick-clear-overlays)
+    (when eve--context-panels-disabled-ruler
+      (setq eve--context-panels-disabled-ruler nil)
+      (eve-ruler-mode 1))))
+
+(defun eve--context-panels-setup ()
+  "Register Eve context-panel support for the current buffer when available."
+  (when (eve--context-panels-available-p)
+    (context-panels-mode 1)
+    (context-panels-register-provider (eve--context-panels-provider))
+    (add-hook 'context-panels-after-side-panel-open-hook
+              #'eve--context-panels-after-open nil t)
+    (add-hook 'context-panels-before-side-panel-close-hook
+              #'eve--context-panels-before-close nil t)))
+
+(defun eve-context-panels-open ()
+  "Open or refresh Eve context panels for the current buffer.
+This command requires the optional `context-panels' package."
+  (interactive)
+  (unless (eve--context-panels-available-p)
+    (user-error "Optional context-panels package is unavailable"))
+  (eve--context-panels-setup)
+  (prog1 (context-panels-open (current-buffer))
+    (message "Opened Eve context panel")))
+
 ;;;###autoload
 (define-derived-mode eve-mode special-mode "EVE"
   "Major mode for Textual Join Manifest files (.tjm.json)."
@@ -1670,6 +1873,7 @@ The milestone interval is controlled by `eve-ruler-interval'."
   ;; Eve's visual wrapping out of users' global window-change hooks.
   (add-hook 'window-size-change-functions #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
+  (add-hook 'kill-buffer-hook #'eve--context-tick-clear-overlays nil t)
   (add-hook 'kill-buffer-hook #'eve--ipc-teardown nil t)
   (add-hook 'kill-buffer-hook #'eve--auto-render-teardown nil t)
   (add-hook 'after-save-hook #'eve--auto-render-after-save nil t)
@@ -1684,6 +1888,9 @@ The milestone interval is controlled by `eve-ruler-interval'."
                     (setq fmt (append fmt (list status)))))
                 fmt))
   (eve-reload)
+  (eve--context-panels-setup)
+  (when eve-context-panels-auto-open
+    (eve-context-panels-open))
   (eve--apply-visual-wrap))
 
 ;;;###autoload
@@ -2143,6 +2350,8 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
     (eve--update-focus-overlay)
     (when eve-ruler-mode
       (eve--update-ruler))
+    (when eve--context-tick-overlays
+      (eve--context-tick-refresh-overlays))
     (eve--apply-visual-wrap))))
 
 (defun eve--format-words (words)
