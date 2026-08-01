@@ -1829,6 +1829,10 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (save-excursion
     (eve--goto-segment segment-id)))
 
+(defun eve--segment-end-position (segment-id)
+  "Return end buffer position for SEGMENT-ID, or nil."
+  (cdr (eve--segment-bounds segment-id)))
+
 (defun eve--context-panel-compact-duration (duration)
   "Return compact text for b-roll DURATION."
   (when-let* ((seconds (eve--time->seconds duration)))
@@ -2089,7 +2093,8 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
                             :rendered-time rendered-time
                             :segment-id segment-id
                             :anchor-pos anchor
-                            :source-start anchor))))
+                            :source-start anchor
+                            :source-end (eve--segment-end-position segment-id)))))
                 milestones)))
 
 (defun eve--context-panel-broll-items (segments)
@@ -2104,7 +2109,8 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
                           :label (eve--context-panel-broll-label broll)
                           :segment-id segment-id
                           :anchor-pos anchor
-                          :source-start anchor)))
+                          :source-start anchor
+                          :source-end (eve--segment-end-position segment-id))))
                 segments)))
 
 (defun eve--context-panel-side-items (&optional source-buffer)

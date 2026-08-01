@@ -1833,7 +1833,8 @@
      (should (cl-every (lambda (item)
                          (and (eq 'timestamp (plist-get item :kind))
                               (equal "seg-1" (plist-get item :segment-id))
-                              (integer-or-marker-p (plist-get item :anchor-pos))))
+                              (integer-or-marker-p (plist-get item :anchor-pos))
+                              (integer-or-marker-p (plist-get item :source-end))))
                        items)))))
 
 (ert-deftest eve-context-panels-renders-timestamp-item ()
