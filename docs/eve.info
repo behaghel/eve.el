@@ -700,8 +700,13 @@ File: eve.info,  Node: Configuration (1),  Next: Commands,  Prev: Concept,  Up: 
      (setq eve-filler-phrases '("um" "uh" "you know" "to be honest with you"))
 
    ‘eve-filler-phrases’ stores phrases as plain strings.  Matching is
-case-insensitive and ignores punctuation.  The list is persisted when
-you use the interactive add commands.
+case-insensitive, punctuation-insensitive, and prefers the longest
+phrase first.  For example, ‘"you know"’ matches adjacent words like
+‘you know,’ and tags both words as a filler phrase; it does not tag
+separated words such as ‘you ... know’.  The CLI ‘eve tag-fillers
+--filler "you know"’ follows the same adjacent phrase semantics and
+writes the canonical ‘word.edit.kind = "filler"’ metadata.  The list is
+persisted when you use the interactive add commands.
 
    The legacy ‘eve-filler-regex’ variable is still honoured for
 backwards compatibility but ‘eve-filler-phrases’ is preferred.
@@ -1193,6 +1198,14 @@ Under normal Emacs usage you never need to call ‘eve text-edit’ directly
      --no-resume             Ignore checkpoint from a prior interrupted render
      --partial-every N       Write a partial .mp4 every N segments
 
+   Filler tagging can also be run from the CLI:
+
+     eve tag-fillers manifest.tjm.json --filler "you know"
+
+   Repeated ‘--filler’ values may be single words or adjacent multi-word
+phrases.  Matches are case- and punctuation-insensitive, and
+classification is written to ‘word.edit.kind’.
+
 
 File: eve.info,  Node: Playback,  Next: Display,  Prev: Compilation and Rendering,  Up: Top
 
@@ -1673,51 +1686,51 @@ Node: Validation20458
 Node: Filler Words20784
 Node: Concept20996
 Node: Configuration (1)21398
-Node: Commands21991
-Node: Auto-tagging on file open22931
-Node: B-Roll23280
-Node: Concept (1)23586
-Node: Editing b-roll metadata24242
-Node: Compositing modes in detail26011
-Node: Replace mode26236
-Node: Pip mode26684
-Node: Audio policy27603
-Node: JSON templates28082
-Node: Overlay fields29375
-Node: Concrete example lower-third title card30778
-Node: Placeholders without templates32663
-Node: Continuation chains33086
-Node: Compilation and Rendering34109
-Node: Two modes draft and final34461
-Node: Under the hood34939
-Node: Pre-flight validation36603
-Node: Dry-run analysis37340
-Node: Checkpoint and resume37866
-Node: Progressive output38347
-Node: Configuration reference38749
-Node: CLI reference40875
-Node: Playback42004
-Node: Source playback42251
-Node: Rendered playback42712
-Node: Playback tracking and segment highlighting43210
-Node: Controls43637
-Node: Video layout44618
-Node: Display46154
-Node: Timestamp ruler46359
-Node: Context panels46947
-Node: Hiding deleted segments48245
-Node: Word-level display48678
-Node: Key Bindings49697
-Node: Single-key bindings49938
-Node: C-c prefix bindings51739
-Node: Playback-mode overrides52667
-Node: The hydra cheatsheet53268
-Node: Configuration Reference53670
-Node: Architecture59215
-Node: Two-layer boundary59402
-Node: Shared contract60206
-Node: Development60678
-Node: Appendix A TJM v11 Specification61154
+Node: Commands22366
+Node: Auto-tagging on file open23306
+Node: B-Roll23655
+Node: Concept (1)23961
+Node: Editing b-roll metadata24617
+Node: Compositing modes in detail26386
+Node: Replace mode26611
+Node: Pip mode27059
+Node: Audio policy27978
+Node: JSON templates28457
+Node: Overlay fields29750
+Node: Concrete example lower-third title card31153
+Node: Placeholders without templates33038
+Node: Continuation chains33461
+Node: Compilation and Rendering34484
+Node: Two modes draft and final34836
+Node: Under the hood35314
+Node: Pre-flight validation36978
+Node: Dry-run analysis37715
+Node: Checkpoint and resume38241
+Node: Progressive output38722
+Node: Configuration reference39124
+Node: CLI reference41250
+Node: Playback42678
+Node: Source playback42925
+Node: Rendered playback43386
+Node: Playback tracking and segment highlighting43884
+Node: Controls44311
+Node: Video layout45292
+Node: Display46828
+Node: Timestamp ruler47033
+Node: Context panels47621
+Node: Hiding deleted segments48919
+Node: Word-level display49352
+Node: Key Bindings50371
+Node: Single-key bindings50612
+Node: C-c prefix bindings52413
+Node: Playback-mode overrides53341
+Node: The hydra cheatsheet53942
+Node: Configuration Reference54344
+Node: Architecture59889
+Node: Two-layer boundary60076
+Node: Shared contract60880
+Node: Development61352
+Node: Appendix A TJM v11 Specification61828
 
 End Tag Table
 

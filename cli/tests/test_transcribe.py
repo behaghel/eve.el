@@ -502,7 +502,7 @@ def test_transcribe_run_tags_fillers_in_manifest_when_enabled(
 
     assert exit_code == 0
     assert payload["segments"][0]["words"] == [
-        {"start": 0.0, "end": 0.2, "token": "um", "kind": "filler"},
+        {"start": 0.0, "end": 0.2, "token": "um", "edit": {"kind": "filler"}},
         {"start": 0.2, "end": 0.6, "token": "hello"},
     ]
 

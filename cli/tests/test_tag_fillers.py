@@ -74,7 +74,8 @@ def test_tag_fillers_in_place_tags_matching_words(tmp_path: Path) -> None:
     assert segments[0]["start"] == 0.0
     assert segments[0]["end"] == 1.0
     assert segments[0]["text"] == "um hello"
-    assert words[0]["kind"] == "filler"
+    assert words[0]["edit"] == {"kind": "filler"}
+    assert "edit" not in words[1]
     assert "kind" not in words[1]
 
 
@@ -108,7 +109,7 @@ def test_tag_fillers_writes_to_alternate_output_path(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert read_manifest(manifest_path) == manifest
-    assert manifest_words(read_manifest(output_path))[0]["kind"] == "filler"
+    assert manifest_words(read_manifest(output_path))[0]["edit"] == {"kind": "filler"}
 
 
 def test_tag_fillers_tags_multi_word_phrase(tmp_path: Path) -> None:
@@ -144,10 +145,11 @@ def test_tag_fillers_tags_multi_word_phrase(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "kind" not in words[0]
-    assert words[1]["kind"] == "filler"
-    assert words[2]["kind"] == "filler"
+    assert words[1]["edit"] == {"kind": "filler"}
+    assert words[2]["edit"] == {"kind": "filler"}
+    assert "edit" not in words[3]
     assert "kind" not in words[3]
-    assert all("kind" not in word for word in non_phrase_words)
+    assert all("edit" not in word and "kind" not in word for word in non_phrase_words)
 
 
 def test_tag_fillers_preserves_non_filler_words_and_unknown_keys(
@@ -185,5 +187,5 @@ def test_tag_fillers_preserves_non_filler_words_and_unknown_keys(
         "start": 0.2,
         "end": 0.3,
         "confidence": 0.42,
-        "kind": "filler",
+        "edit": {"kind": "filler"},
     }

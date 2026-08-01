@@ -39,7 +39,7 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         "--filler",
         action="append",
         default=None,
-        help="Additional filler word to tag (repeatable)",
+        help="Additional filler word or phrase to tag (repeatable)",
     )
     add_json_flag(parser)
     parser.set_defaults(handler=run, command="tag-fillers", parser=parser)
@@ -69,11 +69,26 @@ def word_text(word: dict[str, Any]) -> str:
     return ""
 
 
+def _effective_word_kind(word: dict[str, Any]) -> Any:
+    edit = word.get("edit")
+    if isinstance(edit, dict) and "kind" in edit:
+        return edit["kind"]
+    return word.get("kind")
+
+
 def _mark_word_filler(word: dict[str, Any]) -> bool:
-    """Mark WORD as filler and return true if it changed."""
-    changed = word.get("kind") != "filler"
-    word["kind"] = "filler"
-    return changed
+    """Mark WORD as filler in canonical edit metadata.
+
+    Legacy top-level ``kind`` is preserved as compatibility input, but new
+    filler classification is written to ``word.edit.kind``.
+    """
+    changed = _effective_word_kind(word) != "filler"
+    edit = word.get("edit")
+    if not isinstance(edit, dict):
+        edit = {}
+        word["edit"] = edit
+    edit["kind"] = "filler"
+    return bool(changed)
 
 
 def tag_manifest_fillers(

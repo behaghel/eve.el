@@ -713,8 +713,12 @@ distinct face and excluded from compilation.  You can untag them at any time.
 @end lisp
 
 @samp{eve-filler-phrases} stores phrases as plain strings.  Matching is
-case-insensitive and ignores punctuation.  The list is persisted when you use
-the interactive add commands.
+case-insensitive, punctuation-insensitive, and prefers the longest phrase first.
+For example, @samp{"you know"} matches adjacent words like @samp{you know,} and tags both
+words as a filler phrase; it does not tag separated words such as @samp{you ...
+know}.  The CLI @samp{eve tag-fillers --filler "you know"} follows the same adjacent
+phrase semantics and writes the canonical @samp{word.edit.kind = "filler"} metadata.
+The list is persisted when you use the interactive add commands.
 
 The legacy @samp{eve-filler-regex} variable is still honoured for backwards
 compatibility but @samp{eve-filler-phrases} is preferred.
@@ -1273,6 +1277,16 @@ eve text-edit manifest.tjm.json --output out.mp4 [FLAGS]
 --no-resume             Ignore checkpoint from a prior interrupted render
 --partial-every N       Write a partial .mp4 every N segments
 @end example
+
+Filler tagging can also be run from the CLI:
+
+@example
+eve tag-fillers manifest.tjm.json --filler "you know"
+@end example
+
+Repeated @samp{--filler} values may be single words or adjacent multi-word phrases.
+Matches are case- and punctuation-insensitive, and classification is written to
+@samp{word.edit.kind}.
 
 @node Playback
 @chapter Playback

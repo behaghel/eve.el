@@ -393,8 +393,12 @@ distinct face and excluded from compilation.  You can untag them at any time.
 #+end_src
 
 =eve-filler-phrases= stores phrases as plain strings.  Matching is
-case-insensitive and ignores punctuation.  The list is persisted when you use
-the interactive add commands.
+case-insensitive, punctuation-insensitive, and prefers the longest phrase first.
+For example, ="you know"= matches adjacent words like =you know,= and tags both
+words as a filler phrase; it does not tag separated words such as =you ...
+know=.  The CLI =eve tag-fillers --filler "you know"= follows the same adjacent
+phrase semantics and writes the canonical =word.edit.kind = "filler"= metadata.
+The list is persisted when you use the interactive add commands.
 
 The legacy =eve-filler-regex= variable is still honoured for backwards
 compatibility but =eve-filler-phrases= is preferred.
@@ -767,6 +771,16 @@ eve text-edit manifest.tjm.json --output out.mp4 [FLAGS]
 --no-resume             Ignore checkpoint from a prior interrupted render
 --partial-every N       Write a partial .mp4 every N segments
 #+end_example
+
+Filler tagging can also be run from the CLI:
+
+#+begin_example
+eve tag-fillers manifest.tjm.json --filler "you know"
+#+end_example
+
+Repeated =--filler= values may be single words or adjacent multi-word phrases.
+Matches are case- and punctuation-insensitive, and classification is written to
+=word.edit.kind=.
 
 * Playback
 :PROPERTIES:
