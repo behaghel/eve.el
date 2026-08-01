@@ -454,6 +454,13 @@
    (should-not (memq #'eve--apply-visual-wrap
                      (default-value 'window-configuration-change-hook)))))
 
+(ert-deftest eve-mode-uses-buffer-local-line-spacing ()
+  "Eve buffers use consistent line spacing for overlays and transcript rows."
+  (let ((eve-line-spacing 3))
+    (eve-test-with-buffer
+     (should (local-variable-p 'line-spacing))
+     (should (= 3 line-spacing)))))
+
 (ert-deftest eve-ruler-mode-enable-creates-overlays ()
   "Enabling eve-ruler-mode creates overlays."
   (eve-test-with-buffer
@@ -1814,8 +1821,9 @@
             (tick (overlay-get overlay 'before-string)))
        (should (< (overlay-start overlay) (overlay-end overlay)))
        (should-not (overlay-get overlay 'evaporate))
-       (should (equal "▸ " (substring-no-properties tick)))
-       (should (eq 'eve-ruler-face (get-text-property 0 'face tick)))))))
+       (should (equal "| " (substring-no-properties tick)))
+       (should (eq 'eve-ruler-face (get-text-property 0 'face tick)))
+       (should (equal '(height 1.0) (get-text-property 0 'display tick)))))))
 
 (ert-deftest eve-context-panels-open-errors-when-unavailable ()
   "The context-panel command fails cleanly when optional support is absent."

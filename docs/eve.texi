@@ -1422,6 +1422,9 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 @item @samp{eve-context-panels-auto-open}
 @tab @samp{nil}
 @tab Open context panels automatically when available.
+@item @samp{eve-line-spacing}
+@tab @samp{2}
+@tab Additional pixel spacing between transcript lines.
 @item @samp{eve-ruler-interval}
 @tab @samp{30.0}
 @tab Seconds between ruler markers.
@@ -1647,6 +1650,9 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-filler-regex}
 @tab @samp{("\\`um\\'" "\\`uh\\'")}
 @tab Regexps matched against word text when tagging filler words.
+@item @samp{eve-line-spacing}
+@tab @samp{2}
+@tab Additional pixel spacing between lines in `eve-mode' buffers.
 @item @samp{eve-media-extensions}
 @tab @samp{(...)}
 @tab Supported media extensions for transcription inputs.

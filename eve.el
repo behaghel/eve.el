@@ -176,6 +176,11 @@ present."
   :type 'float
   :group 'eve)
 
+(defcustom eve-line-spacing 2
+  "Additional pixel spacing between lines in `eve-mode' buffers."
+  :type 'natnum
+  :group 'eve)
+
 (defcustom eve-context-panels-auto-open nil
   "When non-nil, open Eve context panels automatically in `eve-mode'.
 Context panels require the optional `context-panels' package."
@@ -1811,7 +1816,9 @@ The milestone interval is controlled by `eve-ruler-interval'."
           (push segment-id seen)
           (let ((overlay (make-overlay pos (min (point-max) (1+ pos)) nil t nil)))
             (overlay-put overlay 'before-string
-                         (propertize "▸ " 'face 'eve-ruler-face))
+                         (propertize "| "
+                                     'face 'eve-ruler-face
+                                     'display '(height 1.0)))
             (push overlay eve--context-tick-overlays)))))))
 
 (defun eve--context-panels-after-open ()
@@ -1858,6 +1865,7 @@ This command requires the optional `context-panels' package."
   (setq-local buffer-read-only t)
   (setq-local truncate-lines nil)
   (setq-local word-wrap t)
+  (setq-local line-spacing eve-line-spacing)
   (setq-local revert-buffer-function #'eve--revert)
   (setq-local write-contents-functions (list #'eve--write-file))
   (setq-local eve--visual-separators nil)

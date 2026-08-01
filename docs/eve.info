@@ -1353,6 +1353,7 @@ precise cut points.
 Variable                          Default   Description
 --------------------------------------------------------------------------------------------------
 ‘eve-context-panels-auto-open’    ‘nil’     Open context panels automatically when available.
+‘eve-line-spacing’                ‘2’       Additional pixel spacing between transcript lines.
 ‘eve-ruler-interval’              ‘30.0’    Seconds between ruler markers.
 ‘eve-show-words-by-default’       ‘nil’     Show word timings on buffer open.
 ‘eve-validation-on-save’          ‘t’       Validate manifest on every save.
@@ -1500,6 +1501,7 @@ Variable                           Default                     Description
 ‘eve-context-panels-auto-open’     ‘nil’                       When non-nil, open Eve context panels automatically in 'eve-mode'.
 ‘eve-filler-phrases’               ‘("um" "uh")’               Filler words/phrases to tag in transcripts.
 ‘eve-filler-regex’                 ‘("\\`um\\'" "\\`uh\\'")’   Regexps matched against word text when tagging filler words.
+‘eve-line-spacing’                 ‘2’                         Additional pixel spacing between lines in 'eve-mode' buffers.
 ‘eve-media-extensions’             ‘(...)’                     Supported media extensions for transcription inputs.
 ‘eve-play-after-compile’           ‘nil’                       Whether to play the rendered video automatically after compilation.
 ‘eve-play-args’                    ‘(...)’                     Additional arguments passed to 'eve-play-program'.
@@ -1676,17 +1678,17 @@ Node: Timestamp ruler44685
 Node: Context panels45273
 Node: Hiding deleted segments46571
 Node: Word-level display47004
-Node: Key Bindings47920
-Node: Single-key bindings48161
-Node: C-c prefix bindings49962
-Node: Playback-mode overrides50890
-Node: The hydra cheatsheet51491
-Node: Configuration Reference51893
-Node: Architecture56206
-Node: Two-layer boundary56393
-Node: Shared contract57197
-Node: Development57669
-Node: Appendix A TJM v11 Specification58145
+Node: Key Bindings48023
+Node: Single-key bindings48264
+Node: C-c prefix bindings50065
+Node: Playback-mode overrides50993
+Node: The hydra cheatsheet51594
+Node: Configuration Reference51996
+Node: Architecture56442
+Node: Two-layer boundary56629
+Node: Shared contract57433
+Node: Development57905
+Node: Appendix A TJM v11 Specification58381
 
 End Tag Table
 
