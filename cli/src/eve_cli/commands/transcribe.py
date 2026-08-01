@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Never
 
-from ..utils.fillers import build_filler_set
+from ..utils.fillers import DEFAULT_FILLERS
 from .common import add_json_flag
 from .tag_fillers import tag_manifest_fillers
 
@@ -695,7 +695,7 @@ def run(args: Namespace) -> int:
         "segments": manifest_segments,
     }
     if args.tag_fillers:
-        tag_manifest_fillers(manifest, build_filler_set())
+        tag_manifest_fillers(manifest, DEFAULT_FILLERS)
 
     output_path = pathlib.Path(args.output).expanduser()
     ensure_dir(output_path)

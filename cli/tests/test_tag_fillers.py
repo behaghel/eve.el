@@ -111,6 +111,45 @@ def test_tag_fillers_writes_to_alternate_output_path(tmp_path: Path) -> None:
     assert manifest_words(read_manifest(output_path))[0]["kind"] == "filler"
 
 
+def test_tag_fillers_tags_multi_word_phrase(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "edit.tjm.json"
+    manifest: dict[str, Any] = {
+        "version": 1,
+        "segments": [
+            {
+                "id": "seg-001",
+                "words": [
+                    {"token": "well", "start": 0.0, "end": 0.1},
+                    {"token": "you", "start": 0.1, "end": 0.2},
+                    {"token": "know,", "start": 0.2, "end": 0.3},
+                    {"token": "ship", "start": 0.3, "end": 0.4},
+                ],
+            },
+            {
+                "id": "seg-002",
+                "words": [
+                    {"token": "you", "start": 1.0, "end": 1.1},
+                    {"token": "ship", "start": 1.1, "end": 1.2},
+                    {"token": "know", "start": 1.2, "end": 1.3},
+                ],
+            },
+        ],
+    }
+    write_manifest(manifest_path, manifest)
+
+    exit_code = main(["tag-fillers", str(manifest_path), "--filler", "you know"])
+    updated = read_manifest(manifest_path)
+    words = manifest_words(updated)
+    non_phrase_words = manifest_words(updated, segment_index=1)
+
+    assert exit_code == 0
+    assert "kind" not in words[0]
+    assert words[1]["kind"] == "filler"
+    assert words[2]["kind"] == "filler"
+    assert "kind" not in words[3]
+    assert all("kind" not in word for word in non_phrase_words)
+
+
 def test_tag_fillers_preserves_non_filler_words_and_unknown_keys(
     tmp_path: Path,
 ) -> None:

@@ -5,7 +5,14 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 from pathlib import Path
 from typing import Any
 
-from ..utils.fillers import DEFAULT_FILLERS, build_filler_set, is_filler
+from ..utils.fillers import (
+    DEFAULT_FILLERS,
+    build_filler_phrases,
+    build_filler_set,
+    is_filler,
+    normalise_filler_phrase,
+    phrase_matches,
+)
 from .common import add_json_flag
 
 
@@ -62,8 +69,22 @@ def word_text(word: dict[str, Any]) -> str:
     return ""
 
 
-def tag_manifest_fillers(manifest: dict[str, Any], fillers: frozenset[str]) -> int:
+def _mark_word_filler(word: dict[str, Any]) -> bool:
+    """Mark WORD as filler and return true if it changed."""
+    changed = word.get("kind") != "filler"
+    word["kind"] = "filler"
+    return changed
+
+
+def tag_manifest_fillers(
+    manifest: dict[str, Any], fillers: list[str] | tuple[str, ...] | frozenset[str]
+) -> int:
     tagged_words = 0
+    phrases = build_filler_phrases(fillers)
+    single_fillers = build_filler_set(
+        phrase[0] for phrase in phrases if len(phrase) == 1
+    )
+    multi_phrases = tuple(phrase for phrase in phrases if len(phrase) > 1)
     segments = manifest.get("segments")
     if not isinstance(segments, list):
         return tagged_words
@@ -74,13 +95,35 @@ def tag_manifest_fillers(manifest: dict[str, Any], fillers: frozenset[str]) -> i
         words = segment.get("words")
         if not isinstance(words, list):
             continue
+        normalised_words = []
         for word in words:
+            word_phrase = (
+                normalise_filler_phrase(word_text(word))
+                if isinstance(word, dict)
+                else ()
+            )
+            normalised_words.append(word_phrase[0] if word_phrase else "")
+        index = 0
+        while index < len(words):
+            word = words[index]
             if not isinstance(word, dict):
+                index += 1
                 continue
-            if is_filler(word_text(word), fillers):
-                if word.get("kind") != "filler":
+            match_length = 0
+            for phrase in multi_phrases:
+                if phrase_matches(normalised_words, phrase, index):
+                    match_length = len(phrase)
+                    break
+            if match_length:
+                for phrase_word in words[index : index + match_length]:
+                    if isinstance(phrase_word, dict) and _mark_word_filler(phrase_word):
+                        tagged_words += 1
+                index += match_length
+                continue
+            if is_filler(word_text(word), single_fillers):
+                if _mark_word_filler(word):
                     tagged_words += 1
-                word["kind"] = "filler"
+            index += 1
     return tagged_words
 
 
@@ -94,9 +137,9 @@ def run(args: Namespace) -> int:
 
     manifest_path = Path(manifest_arg).expanduser()
     output_path = Path(args.output).expanduser() if args.output else manifest_path
-    filler_set = build_filler_set([*DEFAULT_FILLERS, *(args.filler or [])])
+    fillers = [*DEFAULT_FILLERS, *(args.filler or [])]
 
     manifest = load_manifest(manifest_path)
-    tag_manifest_fillers(manifest, filler_set)
+    tag_manifest_fillers(manifest, fillers)
     write_manifest(manifest, output_path)
     return 0
