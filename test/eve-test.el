@@ -9,8 +9,11 @@
 (require 'cl-lib)
 
 (defvar context-panels-side-panel-buffer)
+(defvar context-panels-bottom-panel-buffer)
 
 (declare-function context-panels-open "context-panels" (&optional source-buffer))
+(declare-function context-panels-open-bottom-view "context-panels" (view-id &optional source-buffer select))
+(declare-function context-panels-render-bottom-view "context-panels" (source-buffer view))
 (declare-function context-panels-registered-provider "context-panels" (name))
 
 (defconst eve-test--root
@@ -1959,6 +1962,117 @@
        (funcall jump source item))
      (should (equal "seg-1" (eve--segment-id-at-point))))))
 
+(ert-deftest eve-context-panels-provider-exposes-segment-bottom-view ()
+  "Eve's context provider exposes the segment editor bottom view."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((provider (context-panels-registered-provider 'eve))
+          (views (funcall (plist-get provider :collect-bottom-views) (current-buffer)))
+          (view (car views)))
+     (should (= 1 (length views)))
+     (should (eq (plist-get view :id) 'segment-editor))
+     (should (eq (plist-get view :mode) #'eve-segment-panel-mode))
+     (should (plist-get view :select)))))
+
+(ert-deftest eve-segment-panel-renders-current-segment-summary ()
+  "The segment bottom panel renders a compact current segment cockpit."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((source (current-buffer))
+          (provider (context-panels-registered-provider 'eve))
+          (view (car (funcall (plist-get provider :collect-bottom-views) source)))
+          (panel (get-buffer-create "*eve-test-render-panel*")))
+     (unwind-protect
+         (with-current-buffer panel
+           (eve-segment-panel-mode)
+           (setq-local context-panels-source-buffer source)
+           (context-panels-render-bottom-view source view)
+           (let ((text (buffer-string)))
+             (should (string-match-p "Segment seg-1" text))
+             (should (string-match-p "Transcript" text))
+             (should (string-match-p "alpha beta gamma delta" text))
+             (should (string-match-p "B-roll" text))
+             (should (string-match-p "Other" text))))
+       (when (buffer-live-p panel)
+         (kill-buffer panel))))))
+
+(ert-deftest eve-context-panels-open-opens-and-focuses-bottom-panel ()
+  "C-c C-p opens the side panel and segment bottom panel, focusing bottom."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (delete-other-windows)
+   (let* ((source (current-buffer))
+          (_side (eve-context-panels-open))
+          (side (buffer-local-value 'context-panels-side-panel-buffer source))
+          (bottom (buffer-local-value 'context-panels-bottom-panel-buffer source)))
+     (should (buffer-live-p side))
+     (should (buffer-live-p bottom))
+     (should (eq (window-buffer (selected-window)) bottom))
+     (with-current-buffer bottom
+       (should (derived-mode-p 'eve-segment-panel-mode))
+       (should (eq eve-segment-panel-source-buffer source))
+       (should (equal eve-segment-panel-segment-id "seg-1"))))))
+
+(ert-deftest eve-segment-panel-word-navigation-and-selection-are-local ()
+  "Panel word navigation updates local state without activating a source region."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (delete-other-windows)
+   (let ((source (current-buffer)))
+     (eve-context-panels-open)
+     (with-current-buffer (buffer-local-value 'context-panels-bottom-panel-buffer source)
+       (should (eq eve-segment-panel-word-index 0))
+       (call-interactively #'eve-segment-panel-next-word)
+       (should (eq eve-segment-panel-word-index 1))
+       (call-interactively #'eve-segment-panel-toggle-selection)
+       (call-interactively #'eve-segment-panel-next-word)
+       (should (eq eve-segment-panel-word-index 2))
+       (should (eq eve-segment-panel-selection-anchor 1)))
+     (with-current-buffer source
+       (should-not (region-active-p))))))
+
+(ert-deftest eve-segment-panel-q-focuses-source-and-Q-closes-panel ()
+  "Panel q returns to source; Q closes the bottom panel."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (delete-other-windows)
+   (let ((source (current-buffer)))
+     (eve-context-panels-open)
+     (let ((bottom (buffer-local-value 'context-panels-bottom-panel-buffer source)))
+       (with-current-buffer bottom
+         (call-interactively #'eve-segment-panel-focus-source))
+       (should (eq (window-buffer (selected-window)) source))
+       (select-window (get-buffer-window bottom t))
+       (with-current-buffer bottom
+         (call-interactively #'eve-segment-panel-close))
+       (should-not (get-buffer-window bottom t))))))
+
+(ert-deftest eve-segment-panel-segment-navigation-keeps-focus-in-panel ()
+  "Panel segment navigation moves source point while keeping panel focus."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((second '((id . "seg-2")
+                   (source . "clip")
+                   (start . 4.0)
+                   (end . 5.0)
+                   (text . "epsilon zeta")
+                   (words . (((start . 4.0) (end . 4.5) (token . "epsilon"))
+                             ((start . 4.5) (end . 5.0) (token . "zeta")))))))
+     (setf (alist-get 'segments eve--data)
+           (append (alist-get 'segments eve--data) (list second)))
+     (eve--render)
+     (delete-other-windows)
+     (let ((source (current-buffer)))
+       (eve-context-panels-open)
+       (let ((bottom (buffer-local-value 'context-panels-bottom-panel-buffer source)))
+         (with-current-buffer bottom
+           (call-interactively #'eve-segment-panel-next-segment)
+           (should (equal eve-segment-panel-segment-id "seg-2"))
+           (should (eq (current-buffer) bottom)))
+         (should (eq (window-buffer (selected-window)) bottom)))
+       (with-current-buffer source
+         (should (equal (eve--segment-id-at-point) "seg-2")))))))
+
 (ert-deftest eve-context-panels-open-disables-ruler-mode ()
   "Opening the context side panel drops the legacy right-margin ruler."
   (skip-unless (featurep 'context-panels))
@@ -1967,19 +2081,22 @@
    (eve-ruler-mode 1)
    (should eve-ruler-mode)
    (should (> (length eve--ruler-overlays) 0))
-   (let ((panel-buffer (eve-context-panels-open)))
+   (let* ((source (current-buffer))
+          (panel-buffer (eve-context-panels-open)))
      (should (buffer-live-p panel-buffer))
-     (should (eq panel-buffer context-panels-side-panel-buffer))
-     (should-not eve-ruler-mode)
-     (should (= 0 (length eve--ruler-overlays)))
-     (should (= 1 (length eve--context-tick-overlays)))
-     (let* ((overlay (car eve--context-tick-overlays))
-            (tick (overlay-get overlay 'before-string)))
-       (should (< (overlay-start overlay) (overlay-end overlay)))
-       (should-not (overlay-get overlay 'evaporate))
-       (should (equal "| " (substring-no-properties tick)))
-       (should (eq 'eve-ruler-face (get-text-property 0 'face tick)))
-       (should (equal '(height 1.0) (get-text-property 0 'display tick)))))))
+     (with-current-buffer source
+       (should (eq panel-buffer context-panels-side-panel-buffer))
+       (should-not eve-ruler-mode)
+       (should (= 0 (length eve--ruler-overlays)))
+       (should (= 1 (length eve--context-tick-overlays))))
+     (with-current-buffer source
+       (let* ((overlay (car eve--context-tick-overlays))
+              (tick (overlay-get overlay 'before-string)))
+         (should (< (overlay-start overlay) (overlay-end overlay)))
+         (should-not (overlay-get overlay 'evaporate))
+         (should (equal "| " (substring-no-properties tick)))
+         (should (eq 'eve-ruler-face (get-text-property 0 'face tick)))
+         (should (equal '(height 1.0) (get-text-property 0 'display tick))))))))
 
 (ert-deftest eve-context-panels-open-errors-when-unavailable ()
   "The context-panel command fails cleanly when optional support is absent."

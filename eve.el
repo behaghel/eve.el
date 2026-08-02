@@ -44,11 +44,17 @@
 
 (declare-function image-file-name-p "image-mode" (filename))
 (defvar context-panels-side-panel-buffer)
+(defvar context-panels-bottom-panel-buffer)
+(defvar context-panels-source-buffer)
 
 (declare-function context-panels-mode "context-panels" (&optional arg))
 (declare-function context-panels-open "context-panels" (&optional source-buffer))
+(declare-function context-panels-open-bottom-view "context-panels" (view-id &optional source-buffer select))
 (declare-function context-panels-refresh "context-panels" ())
+(declare-function context-panels-refresh-bottom-view "context-panels" ())
+(declare-function context-panels-close-bottom-view "context-panels" ())
 (declare-function context-panels-register-provider "context-panels" (provider))
+(declare-function context-panels-propertize-key "context-panels" (label key &optional face))
 (declare-function dired-get-marked-files "dired"
                   (&optional localp arg filter distinguish-one-marked
                              error-if-none-p))
@@ -248,6 +254,16 @@ When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
 (defface eve-deleted-face
   '((t :inherit shadow :strike-through t))
   "Face used for deleted content when shown."
+  :group 'eve)
+
+(defface eve-segment-panel-current-word-face
+  '((t :inherit isearch :weight bold))
+  "Face used for the focused word in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-selection-face
+  '((t :inherit region))
+  "Face used for the selected word range in the Eve segment panel."
   :group 'eve)
 
 (defface eve-broll-face
@@ -1113,6 +1129,11 @@ only and shows text until it is available."
   :type 'integer
   :group 'eve)
 
+(defcustom eve-segment-panel-height 10
+  "Height of the Eve current-segment bottom panel."
+  :type 'natnum
+  :group 'eve)
+
 (defvar-local eve-auto-render-mode nil
   "Non-nil when automatic Eve render-cache warming is enabled.")
 
@@ -1833,6 +1854,37 @@ The milestone interval is controlled by `eve-ruler-interval'."
     (setq-local right-margin-width 0)
     (eve--apply-visual-wrap)))
 
+(defvar eve-segment-panel-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "w" #'eve-segment-panel-next-word)
+    (define-key map "b" #'eve-segment-panel-previous-word)
+    (define-key map "v" #'eve-segment-panel-toggle-selection)
+    (define-key map "j" #'eve-segment-panel-next-segment)
+    (define-key map "n" #'eve-segment-panel-next-segment)
+    (define-key map "k" #'eve-segment-panel-previous-segment)
+    (define-key map "p" #'eve-segment-panel-previous-segment)
+    (define-key map "q" #'eve-segment-panel-focus-source)
+    (define-key map "Q" #'eve-segment-panel-close)
+    map)
+  "Keymap for `eve-segment-panel-mode'.")
+
+(defvar-local eve-segment-panel-source-buffer nil
+  "Eve source buffer associated with the current segment panel.")
+
+(defvar-local eve-segment-panel-segment-id nil
+  "Segment id currently displayed by the segment panel.")
+
+(defvar-local eve-segment-panel-word-index 0
+  "Focused canonical word index in the current segment panel.")
+
+(defvar-local eve-segment-panel-selection-anchor nil
+  "Selection anchor word index in the current segment panel, or nil.")
+
+(define-derived-mode eve-segment-panel-mode special-mode "Eve-Segment"
+  "Mode for Eve's current-segment bottom panel."
+  (setq-local truncate-lines nil)
+  (setq-local word-wrap t))
+
 (defun eve--context-panels-available-p ()
   "Return non-nil when optional context-panel support can be used."
   (setq eve--context-panels-available
@@ -1851,6 +1903,227 @@ The milestone interval is controlled by `eve-ruler-interval'."
 (defun eve--segment-end-position (segment-id)
   "Return end buffer position for SEGMENT-ID, or nil."
   (cdr (eve--segment-bounds segment-id)))
+
+(defun eve--segment-by-id (segment-id &optional segments)
+  "Return segment SEGMENT-ID from SEGMENTS or current manifest."
+  (seq-find (lambda (segment)
+              (equal (eve--stringify (alist-get 'id segment))
+                     (eve--stringify segment-id)))
+            (or segments (eve--segments))))
+
+(defun eve--segment-panel-source-buffer ()
+  "Return the Eve source buffer associated with the current segment panel."
+  (or eve-segment-panel-source-buffer
+      (and (boundp 'context-panels-source-buffer)
+           (buffer-live-p context-panels-source-buffer)
+           context-panels-source-buffer)
+      (user-error "No Eve source buffer for segment panel")))
+
+(defun eve--segment-panel-key-label (label key)
+  "Return LABEL with KEY highlighted when context-panels provides a helper."
+  (if (fboundp 'context-panels-propertize-key)
+      (context-panels-propertize-key label key)
+    label))
+
+(defun eve--segment-panel-segment-id (source-buffer)
+  "Return segment id the panel should display for SOURCE-BUFFER."
+  (if (eq (window-buffer (selected-window)) source-buffer)
+      (with-current-buffer source-buffer
+        (or (eve--segment-id-at-point)
+            (alist-get 'id (car (eve--segments)))))
+    (or eve-segment-panel-segment-id
+        (with-current-buffer source-buffer
+          (or (eve--segment-id-at-point)
+              (alist-get 'id (car (eve--segments))))))))
+
+(defun eve--segment-panel-visible-words (segment source-buffer)
+  "Return visible words for SEGMENT as (INDEX WORD TEXT) using SOURCE-BUFFER state."
+  (let ((hide-deleted (buffer-local-value 'eve-hide-deleted-mode source-buffer)))
+    (cl-loop for word in (or (alist-get 'words segment) '())
+             for index from 0
+             unless (and hide-deleted (eve--edit-deleted-p word))
+             collect (list index word (string-trim (eve--word-render-text word))))))
+
+(defun eve--segment-panel-clamp-word-index (visible-words)
+  "Clamp `eve-segment-panel-word-index' to VISIBLE-WORDS."
+  (let ((indices (mapcar #'car visible-words)))
+    (setq eve-segment-panel-word-index
+          (cond
+           ((null indices) 0)
+           ((member eve-segment-panel-word-index indices)
+            eve-segment-panel-word-index)
+           ((seq-find (lambda (idx) (> idx eve-segment-panel-word-index)) indices))
+           (t (car (last indices)))))))
+
+(defun eve--segment-panel-selection-range ()
+  "Return selected word range as (START . END), or nil."
+  (when eve-segment-panel-selection-anchor
+    (cons (min eve-segment-panel-selection-anchor eve-segment-panel-word-index)
+          (max eve-segment-panel-selection-anchor eve-segment-panel-word-index))))
+
+(defun eve--segment-panel-word-face (word index)
+  "Return face for WORD at INDEX in the segment panel."
+  (eve--merge-faces
+   (when-let* ((range (eve--segment-panel-selection-range)))
+     (when (and (<= (car range) index) (<= index (cdr range)))
+       'eve-segment-panel-selection-face))
+   (when (= index eve-segment-panel-word-index)
+     'eve-segment-panel-current-word-face)
+   (when (equal (eve--edit-kind word) "filler")
+     'eve-filler-face)
+   (when (eve--edit-deleted-p word)
+     'eve-deleted-face)))
+
+(defun eve--segment-panel-insert-words (visible-words)
+  "Insert VISIBLE-WORDS into the current segment panel."
+  (let ((first t))
+    (dolist (entry visible-words)
+      (pcase-let ((`(,index ,word ,text) entry))
+        (unless first (insert " "))
+        (setq first nil)
+        (let ((start (point)))
+          (insert text)
+          (add-text-properties
+           start (point)
+           (list 'eve-segment-panel-word-index index
+                 'face (eve--segment-panel-word-face word index))))))))
+
+(defun eve--segment-panel-broll-summary (segment)
+  "Return bottom-panel b-roll summary for SEGMENT."
+  (if-let* ((broll (eve--segment-broll segment)))
+      (eve--context-panel-broll-label broll)
+    "none"))
+
+(defun eve--segment-panel-cache-summary (source-buffer)
+  "Return cheap cache/dirty summary for SOURCE-BUFFER."
+  (with-current-buffer source-buffer
+    (if (buffer-modified-p)
+        "Modified"
+      "Saved")))
+
+(defun eve--segment-panel-render (source-buffer _view)
+  "Render Eve current-segment bottom panel for SOURCE-BUFFER."
+  (setq-local eve-segment-panel-source-buffer source-buffer)
+  (let* ((segment-id (eve--segment-panel-segment-id source-buffer))
+         (segment (with-current-buffer source-buffer
+                    (eve--segment-by-id segment-id)))
+         (inhibit-read-only t))
+    (unless segment
+      (setq segment (with-current-buffer source-buffer (car (eve--segments)))
+            segment-id (alist-get 'id segment)))
+    (setq-local eve-segment-panel-segment-id (eve--stringify segment-id))
+    (let* ((visible-words (and segment
+                               (eve--segment-panel-visible-words segment source-buffer)))
+           (start (alist-get 'start segment))
+           (end (alist-get 'end segment))
+           (duration (max 0.0 (- (or end 0.0) (or start 0.0))))
+           (speaker (or (eve--aget 'speaker segment) "—"))
+           (tags (or (eve--segment-tags segment) '())))
+      (eve--segment-panel-clamp-word-index visible-words)
+      (insert (propertize (format "Segment %s" eve-segment-panel-segment-id)
+                          'face 'eve-heading-face)
+              (format "  %s–%s  %.1fs  Speaker: %s  Tags: %s  %s\n"
+                      (eve--format-time start)
+                      (eve--format-time end)
+                      duration
+                      (eve--stringify speaker)
+                      (if tags (string-join (mapcar #'eve--stringify tags) ",") "—")
+                      (eve--segment-panel-cache-summary source-buffer)))
+      (insert (eve--segment-panel-key-label "Transcript" "T") "  ")
+      (eve--segment-panel-insert-words visible-words)
+      (insert "\n  [e] edit  [E] segment  [d] delete  [f] filler  [A] accept  [F] del fillers  [s] split\n")
+      (insert (eve--segment-panel-key-label "B-roll" "B")
+              ": " (eve--segment-panel-broll-summary segment)
+              "  [B] edit  [C] continue  [P] preview\n")
+      (insert (eve--segment-panel-key-label "Other" "O")
+              "  [N] Notes  [T] Tags  [I] Speaker  [G] Range  [O] Marker  [SPC] Source  [R] Rendered\n")
+      (when-let* ((pos (text-property-any (point-min) (point-max)
+                                          'eve-segment-panel-word-index
+                                          eve-segment-panel-word-index)))
+        (goto-char pos)))))
+
+(defun eve--segment-panel-refresh ()
+  "Refresh the current Eve segment panel without replacing panel-local state."
+  (let ((source (eve--segment-panel-source-buffer))
+        (inhibit-read-only t))
+    (erase-buffer)
+    (eve--segment-panel-render source nil)))
+
+(defun eve--segment-panel-move-word (delta)
+  "Move focused panel word by DELTA visible words."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (segment (with-current-buffer source
+                    (eve--segment-by-id segment-id)))
+         (visible (eve--segment-panel-visible-words segment source))
+         (indices (mapcar #'car visible))
+         (pos (or (cl-position eve-segment-panel-word-index indices) 0))
+         (target (nth (min (max 0 (+ pos delta)) (max 0 (1- (length indices))))
+                      indices)))
+    (when target
+      (setq eve-segment-panel-word-index target)
+      (eve--segment-panel-refresh))))
+
+(defun eve-segment-panel-next-word ()
+  "Move to the next visible word in the segment panel."
+  (interactive)
+  (eve--segment-panel-move-word 1))
+
+(defun eve-segment-panel-previous-word ()
+  "Move to the previous visible word in the segment panel."
+  (interactive)
+  (eve--segment-panel-move-word -1))
+
+(defun eve-segment-panel-toggle-selection ()
+  "Toggle the segment panel word-selection anchor."
+  (interactive)
+  (setq eve-segment-panel-selection-anchor
+        (unless eve-segment-panel-selection-anchor
+          eve-segment-panel-word-index))
+  (eve--segment-panel-refresh))
+
+(defun eve--segment-panel-move-segment (delta)
+  "Move the segment panel by DELTA segments, keeping panel focus."
+  (let* ((panel (current-buffer))
+         (source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id))
+    (with-current-buffer source
+      (when (eve--goto-segment segment-id)
+        (eve--move-by-segments delta))
+      (setq eve-segment-panel-segment-id (eve--segment-id-at-point))
+      (setq eve-segment-panel-word-index 0)
+      (setq eve-segment-panel-selection-anchor nil)
+      (eve--update-focus-overlay)
+      (when-let* ((window (get-buffer-window source t)))
+        (set-window-point window (point))))
+    (with-current-buffer panel
+      (setq eve-segment-panel-segment-id
+            (with-current-buffer source (eve--segment-id-at-point)))
+      (setq eve-segment-panel-word-index 0)
+      (setq eve-segment-panel-selection-anchor nil)
+      (eve--segment-panel-refresh))))
+
+(defun eve-segment-panel-next-segment ()
+  "Move the segment panel to the next segment."
+  (interactive)
+  (eve--segment-panel-move-segment 1))
+
+(defun eve-segment-panel-previous-segment ()
+  "Move the segment panel to the previous segment."
+  (interactive)
+  (eve--segment-panel-move-segment -1))
+
+(defun eve-segment-panel-focus-source ()
+  "Return focus to the Eve source buffer."
+  (interactive)
+  (pop-to-buffer (eve--segment-panel-source-buffer)))
+
+(defun eve-segment-panel-close ()
+  "Close the Eve segment panel."
+  (interactive)
+  (if (fboundp 'context-panels-close-bottom-view)
+      (context-panels-close-bottom-view)
+    (quit-window t)))
 
 (defun eve--context-panel-compact-duration (duration)
   "Return compact text for b-roll DURATION."
@@ -2167,12 +2440,22 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
   "Return the Eve context side-panel buffer name."
   "*Eve Context*")
 
+(defun eve--context-panel-bottom-views (_source-buffer)
+  "Return Eve bottom views for `context-panels'."
+  (list (list :id 'segment-editor
+              :label "Segment editor"
+              :height eve-segment-panel-height
+              :mode #'eve-segment-panel-mode
+              :render #'eve--segment-panel-render
+              :select t)))
+
 (defun eve--context-panels-provider ()
   "Return the Eve provider descriptor for `context-panels'."
   (list :name 'eve
         :collect-side-items #'eve--context-panel-side-items
         :render-side-item #'eve--context-panel-render-side-item
         :jump-side-item #'eve--context-panel-jump-side-item
+        :collect-bottom-views #'eve--context-panel-bottom-views
         :side-panel-buffer-name #'eve--context-panel-buffer-name
         :side-panel-width 42))
 
@@ -2235,8 +2518,12 @@ This command requires the optional `context-panels' package."
   (unless (eve--context-panels-available-p)
     (user-error "Optional context-panels package is unavailable"))
   (eve--context-panels-setup)
-  (prog1 (context-panels-open (current-buffer))
-    (message "Opened Eve context panel")))
+  (let* ((source (current-buffer))
+         (side-buffer (context-panels-open source)))
+    (when (fboundp 'context-panels-open-bottom-view)
+      (context-panels-open-bottom-view 'segment-editor source t))
+    (message "Opened Eve context panel")
+    side-buffer))
 
 ;;;###autoload
 (define-derived-mode eve-mode special-mode "EVE"
