@@ -409,6 +409,8 @@ compatibility but =eve-filler-phrases= is preferred.
 |-----+---------+-------------|
 | =f= | =eve-dwim-filler= | Add the word at point to phrases and retag; or delete region as filler. |
 | =F= | =eve-delete-fillers= | Mark all tagged fillers as deleted. |
+| =A= | =eve-accept-filler= | Accept the filler at point by removing its filler tag. |
+| =]f= / =[f= | =eve-next-filler= / =eve-previous-filler= | Jump to next / previous visible filler. |
 | =C-c C-d= | =eve-delete-fillers= | Same as =F= from the =C-c= prefix map. |
 | — | =M-x eve-tag-fillers= | Tag all matching words in the buffer. |
 | — | =M-x eve-add-filler-at-point= | Add the word at point to =eve-filler-phrases= and retag. |
@@ -418,7 +420,8 @@ compatibility but =eve-filler-phrases= is preferred.
 
 Fillers are tagged automatically every time a TJM manifest is opened.  If you
 add a new phrase to =eve-filler-phrases=, reopen the file or run
-=M-x eve-tag-fillers= to apply the updated list.
+=M-x eve-tag-fillers= to apply the updated list.  Accepted fillers are simply
+untagged, so explicit re-tagging may mark them as fillers again.
 
 * B-Roll
 :PROPERTIES:

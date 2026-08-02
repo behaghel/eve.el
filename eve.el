@@ -388,6 +388,9 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     ;; Fillers
     (define-key map "f" #'eve-dwim-filler)
     (define-key map "F" #'eve-delete-fillers)
+    (define-key map "A" #'eve-accept-filler)
+    (define-key map (kbd "] f") #'eve-next-filler)
+    (define-key map (kbd "[ f") #'eve-previous-filler)
     ;; Playback
     (define-key map (kbd "SPC") #'eve-play-segment)
     (define-key map (kbd "RET") #'eve-play-segment)
@@ -1267,8 +1270,8 @@ CPU priority when `eve-auto-render-low-priority' is non-nil."
 Navigation        Edit              Fillers           Playback
 ──────────────   ──────────────   ──────────────   ──────────────────────
 _j_/_k_  next/prev  _d_ del word      _f_ filler        _SPC_/_RET_ play
-_n_/_p_  next/prev  _D_ del segment   _F_ del fillers   _<left>_/_<right>_ seek ±5s
-_J_/_K_  move up/dn _s_/|  split                        _S-<left>_/_S-<right>_ ±30s/10s
+_n_/_p_  next/prev  _D_ del segment   _F_ del fillers   ]f next filler
+_J_/_K_  move up/dn _s_/|  split        [f prev filler _S-<left>_/_S-<right>_ ±30s/10s
                   _m_/_)_ merge                       During playback:
 Metadata          _u_ undo          Structure           _SPC_ pause/resume
 ──────────────   _C-r_ redo         ___  separator       _q_ stop
@@ -1307,6 +1310,9 @@ _?_ this help     _C-c C-p_ panels     _C-c C-s_ play source
     ("r" eve-edit-start-end)
     ("f" eve-dwim-filler)
     ("F" eve-delete-fillers)
+    ("A" eve-accept-filler)
+    ("] f" eve-next-filler)
+    ("[ f" eve-previous-filler)
     ("SPC" eve-play-segment)
     ("RET" eve-play-segment)
     ("<left>" eve-seek-short-backward)
@@ -1340,7 +1346,7 @@ summary in the echo area."
       (eve-hydra/body)
     (message
      (concat "eve bindings: j/k nav  d del-word  D del-seg  s split  m merge  "
-             "u undo  C-r redo  f filler  F del-fillers  "
+             "u undo  C-r redo  f filler  F del-fillers  A accept  ]f/[f nav  "
              "SPC play  C-c C-c compile  ? (install hydra for full cheatsheet)"))))
 
 (defun eve--snapshot ()
@@ -1486,6 +1492,19 @@ or record undo state."
 (defun eve--set-word-edit-kind (word kind)
   "Set WORD's nested edit KIND while preserving other edit members."
   (eve--set-edit-field word 'kind kind))
+
+(defun eve--remove-edit-field (item key)
+  "Remove ITEM nested edit KEY while preserving other edit members."
+  (let ((edit (copy-tree (eve--edit-metadata item) t)))
+    (when (listp edit)
+      (setq edit (assq-delete-all key edit))
+      (if edit
+          (eve--alist-set item 'edit edit)
+        (eve--alist-set item 'edit nil)))))
+
+(defun eve--remove-word-edit-kind (word)
+  "Remove WORD's nested edit kind while preserving other edit members."
+  (eve--remove-edit-field word 'kind))
 
 (defun eve--set-edit-deleted (item deleted)
   "Set ITEM's nested edit deleted flag while preserving other edit members."
@@ -3193,6 +3212,28 @@ Optional COUNT moves backward multiple segments."
 	(eve--echo-segment-info)
 	(message "Segment %s" (if deleted "deleted" "restored"))))))
 
+(defun eve--word-data-at-point ()
+  "Return plist containing mutable word data for the word at point."
+  (let* ((info (eve--word-info-at-point))
+         (segment (plist-get info :segment))
+         (word-index (plist-get info :word-index))
+         (word-text (plist-get info :word-text))
+         (words (alist-get 'words segment))
+         (token-index (eve--find-word-token-index words word-text word-index))
+         (fallback-token-index (and words (numberp word-index)
+                                    (<= 0 word-index)
+                                    (< word-index (length words))
+                                    word-index))
+         (effective-token-index (or token-index fallback-token-index))
+         (word (and words
+                    (numberp effective-token-index)
+                    (<= 0 effective-token-index)
+                    (< effective-token-index (length words))
+                    (nth effective-token-index words))))
+    (unless word
+      (user-error "Segment has no word timings"))
+    (plist-put info :word word)))
+
 (defun eve-delete-word ()
   "Toggle the deleted flag on the word at point."
   (interactive)
@@ -3226,6 +3267,77 @@ Optional COUNT moves backward multiple segments."
       (eve--update-focus-overlay)
       (eve--echo-segment-info)
       (message "Word '%s' %s" word-text (if deleted "deleted" "restored")))))
+
+(defun eve--filler-word-positions ()
+  "Return visible filler word positions as (POSITION SEGMENT-ID WORD-INDEX WORD)."
+  (let (positions)
+    (dolist (segment (eve--segments) (nreverse positions))
+      (unless (eve--marker-p segment)
+        (let* ((id (alist-get 'id segment))
+               (bounds (and id (eve--segment-bounds id)))
+               (render-data (and bounds (eve--segment-render-data segment)))
+               (spans (plist-get render-data :word-spans))
+               (words (alist-get 'words segment)))
+          (when bounds
+            (cl-loop for span in spans
+                     for word = (nth 2 span)
+                     for index = (cl-position word words :test #'eq)
+                     when (and index (equal (eve--edit-kind word) "filler"))
+                     do (push (list (+ (car bounds) (nth 0 span)) id index word)
+                              positions))))))))
+
+(defun eve--goto-filler (direction)
+  "Move to the next filler in DIRECTION, either `next' or `previous'."
+  (let* ((here (point))
+         (positions (eve--filler-word-positions))
+         (candidate
+          (pcase direction
+            ('next
+             (car (seq-sort-by #'car #'<
+                               (seq-filter (lambda (item) (> (car item) here))
+                                           positions))))
+            ('previous
+             (car (seq-sort-by #'car #'>
+                               (seq-filter (lambda (item) (< (car item) here))
+                                           positions)))))))
+    (unless candidate
+      (user-error "No %s filler word" (symbol-name direction)))
+    (goto-char (car candidate))
+    (eve--update-focus-overlay)
+    (eve--echo-segment-info)
+    candidate))
+
+(defun eve-next-filler ()
+  "Move point to the next visible word tagged as filler."
+  (interactive)
+  (eve--goto-filler 'next))
+
+(defun eve-previous-filler ()
+  "Move point to the previous visible word tagged as filler."
+  (interactive)
+  (eve--goto-filler 'previous))
+
+(defun eve-accept-filler ()
+  "Accept the filler word at point by removing its filler tag.
+This keeps the word in the transcript and prevents `eve-delete-fillers' from
+removing it until fillers are explicitly re-tagged."
+  (interactive)
+  (let* ((info (eve--word-data-at-point))
+         (segment-id (plist-get info :segment-id))
+         (word-index (plist-get info :word-index))
+         (word-text (plist-get info :word-text))
+         (word (plist-get info :word)))
+    (unless (equal (eve--edit-kind word) "filler")
+      (user-error "Word is not tagged as a filler"))
+    (eve--record-state)
+    (eve--remove-word-edit-kind word)
+    (eve--mark-dirty)
+    (eve--render t)
+    (or (eve--goto-word-by-index segment-id word-index)
+        (eve--goto-segment segment-id))
+    (eve--update-focus-overlay)
+    (eve--echo-segment-info)
+    (message "Accepted filler word '%s'" word-text)))
 
 (defun eve-split-segment ()
   "Split the current segment at point, creating a new segment

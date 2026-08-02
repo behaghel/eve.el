@@ -717,14 +717,16 @@ File: eve.info,  Node: Commands,  Next: Auto-tagging on file open,  Prev: Config
 6.3 Commands
 ============
 
-Key         Command                         Description
-----------------------------------------------------------------------------------------------------------------------
-‘f’         ‘eve-dwim-filler’               Add the word at point to phrases and retag; or delete region as filler.
-‘F’         ‘eve-delete-fillers’            Mark all tagged fillers as deleted.
-‘C-c C-d’   ‘eve-delete-fillers’            Same as ‘F’ from the ‘C-c’ prefix map.
-—           ‘M-x eve-tag-fillers’           Tag all matching words in the buffer.
-—           ‘M-x eve-add-filler-at-point’   Add the word at point to ‘eve-filler-phrases’ and retag.
-—           ‘M-x eve-add-filler-region’     Add the selected phrase to ‘eve-filler-phrases’ and retag.
+Key           Command                                     Description
+------------------------------------------------------------------------------------------------------------------------------------
+‘f’           ‘eve-dwim-filler’                           Add the word at point to phrases and retag; or delete region as filler.
+‘F’           ‘eve-delete-fillers’                        Mark all tagged fillers as deleted.
+‘A’           ‘eve-accept-filler’                         Accept the filler at point by removing its filler tag.
+‘]f’ / ‘[f’   ‘eve-next-filler’ / ‘eve-previous-filler’   Jump to next / previous visible filler.
+‘C-c C-d’     ‘eve-delete-fillers’                        Same as ‘F’ from the ‘C-c’ prefix map.
+—             ‘M-x eve-tag-fillers’                       Tag all matching words in the buffer.
+—             ‘M-x eve-add-filler-at-point’               Add the word at point to ‘eve-filler-phrases’ and retag.
+—             ‘M-x eve-add-filler-region’                 Add the selected phrase to ‘eve-filler-phrases’ and retag.
 
 
 File: eve.info,  Node: Auto-tagging on file open,  Prev: Commands,  Up: Filler Words
@@ -734,7 +736,8 @@ File: eve.info,  Node: Auto-tagging on file open,  Prev: Commands,  Up: Filler W
 
 Fillers are tagged automatically every time a TJM manifest is opened.
 If you add a new phrase to ‘eve-filler-phrases’, reopen the file or run
-‘M-x eve-tag-fillers’ to apply the updated list.
+‘M-x eve-tag-fillers’ to apply the updated list.  Accepted fillers are
+simply untagged, so explicit re-tagging may mark them as fillers again.
 
 
 File: eve.info,  Node: B-Roll,  Next: Compilation and Rendering,  Prev: Filler Words,  Up: Top
@@ -1428,6 +1431,7 @@ Key           Command
 ‘<left>’      ‘eve-seek-short-backward’
 ‘RET’         ‘eve-play-segment’
 ‘SPC’         ‘eve-play-segment’
+‘A’           ‘eve-accept-filler’
 ‘F’           ‘eve-delete-fillers’
 ‘f’           ‘eve-dwim-filler’
 ‘r’           ‘eve-edit-start-end’
@@ -1475,6 +1479,8 @@ Key         Command
 ‘C-c C-r’   ‘eve-play-rendered’
 ‘C-c C-v’   ‘eve-validate’
 ‘C-c C-c’   ‘eve-compile’
+‘[ f’       ‘eve-previous-filler’
+‘] f’       ‘eve-next-filler’
 
    Prefix-arg variants: ‘C-u C-c C-c’ compiles at final quality; ‘C-u
 C-c SPC’ plays the rendered output instead of the source.
@@ -1687,50 +1693,50 @@ Node: Filler Words20784
 Node: Concept20996
 Node: Configuration (1)21398
 Node: Commands22366
-Node: Auto-tagging on file open23306
-Node: B-Roll23655
-Node: Concept (1)23961
-Node: Editing b-roll metadata24617
-Node: Compositing modes in detail26386
-Node: Replace mode26611
-Node: Pip mode27059
-Node: Audio policy27978
-Node: JSON templates28457
-Node: Overlay fields29750
-Node: Concrete example lower-third title card31153
-Node: Placeholders without templates33038
-Node: Continuation chains33461
-Node: Compilation and Rendering34484
-Node: Two modes draft and final34836
-Node: Under the hood35314
-Node: Pre-flight validation36978
-Node: Dry-run analysis37715
-Node: Checkpoint and resume38241
-Node: Progressive output38722
-Node: Configuration reference39124
-Node: CLI reference41250
-Node: Playback42678
-Node: Source playback42925
-Node: Rendered playback43386
-Node: Playback tracking and segment highlighting43884
-Node: Controls44311
-Node: Video layout45292
-Node: Display46828
-Node: Timestamp ruler47033
-Node: Context panels47621
-Node: Hiding deleted segments48919
-Node: Word-level display49352
-Node: Key Bindings50371
-Node: Single-key bindings50612
-Node: C-c prefix bindings52413
-Node: Playback-mode overrides53341
-Node: The hydra cheatsheet53942
-Node: Configuration Reference54344
-Node: Architecture59889
-Node: Two-layer boundary60076
-Node: Shared contract60880
-Node: Development61352
-Node: Appendix A TJM v11 Specification61828
+Node: Auto-tagging on file open23653
+Node: B-Roll24096
+Node: Concept (1)24402
+Node: Editing b-roll metadata25058
+Node: Compositing modes in detail26827
+Node: Replace mode27052
+Node: Pip mode27500
+Node: Audio policy28419
+Node: JSON templates28898
+Node: Overlay fields30191
+Node: Concrete example lower-third title card31594
+Node: Placeholders without templates33479
+Node: Continuation chains33902
+Node: Compilation and Rendering34925
+Node: Two modes draft and final35277
+Node: Under the hood35755
+Node: Pre-flight validation37419
+Node: Dry-run analysis38156
+Node: Checkpoint and resume38682
+Node: Progressive output39163
+Node: Configuration reference39565
+Node: CLI reference41691
+Node: Playback43119
+Node: Source playback43366
+Node: Rendered playback43827
+Node: Playback tracking and segment highlighting44325
+Node: Controls44752
+Node: Video layout45733
+Node: Display47269
+Node: Timestamp ruler47474
+Node: Context panels48062
+Node: Hiding deleted segments49360
+Node: Word-level display49793
+Node: Key Bindings50812
+Node: Single-key bindings51053
+Node: C-c prefix bindings52896
+Node: Playback-mode overrides53904
+Node: The hydra cheatsheet54505
+Node: Configuration Reference54907
+Node: Architecture60452
+Node: Two-layer boundary60639
+Node: Shared contract61443
+Node: Development61915
+Node: Appendix A TJM v11 Specification62391
 
 End Tag Table
 

@@ -245,6 +245,52 @@
       (should (equal (eve--edit-kind word) "filler"))
       (should (> render-count 0)))))
 
+(ert-deftest eve-accept-filler-removes-filler-kind ()
+  "Accepting a filler unmarks it so bulk filler deletion skips it."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (words (alist-get 'words segment))
+          (filler (nth 1 words)))
+     (setf (alist-get 'edit filler) '((kind . "filler")))
+     (eve--render)
+     (should (eve--goto-word-by-index "seg-1" 1))
+     (call-interactively #'eve-accept-filler)
+     (should-not (eve--edit-kind filler))
+     (call-interactively #'eve-delete-fillers)
+     (should-not (eve--edit-deleted-p filler)))))
+
+(ert-deftest eve-accept-filler-errors-on-non-filler ()
+  "Accepting a non-filler word reports a user error."
+  (eve-test-with-buffer
+   (should (eve--goto-word-by-index "seg-1" 1))
+   (should-error (call-interactively #'eve-accept-filler) :type 'user-error)))
+
+(ert-deftest eve-next-previous-filler-navigate-visible-fillers ()
+  "Filler navigation moves between visible filler words."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (words (alist-get 'words segment)))
+     (setf (alist-get 'edit (nth 1 words)) '((kind . "filler")))
+     (setf (alist-get 'edit (nth 3 words)) '((kind . "filler")))
+     (eve--render)
+     (goto-char (point-min))
+     (call-interactively #'eve-next-filler)
+     (should (looking-at "beta"))
+     (call-interactively #'eve-next-filler)
+     (should (looking-at "delta"))
+     (call-interactively #'eve-previous-filler)
+     (should (looking-at "beta")))))
+
+(ert-deftest eve-next-filler-errors-when-none-after-point ()
+  "Next filler reports a user error when no later filler exists."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (words (alist-get 'words segment)))
+     (setf (alist-get 'edit (nth 1 words)) '((kind . "filler")))
+     (eve--render)
+     (goto-char (point-max))
+     (should-error (call-interactively #'eve-next-filler) :type 'user-error))))
+
 (ert-deftest eve-split-segment-creates-new-entry ()
   "Splitting a segment duplicates metadata and assigns a fresh id."
   (eve-test-with-buffer
@@ -1786,6 +1832,9 @@
   (should (eq (lookup-key eve-mode-map "r") #'eve-edit-start-end))
   (should (eq (lookup-key eve-mode-map "f") #'eve-dwim-filler))
   (should (eq (lookup-key eve-mode-map "F") #'eve-delete-fillers))
+  (should (eq (lookup-key eve-mode-map "A") #'eve-accept-filler))
+  (should (eq (lookup-key eve-mode-map (kbd "] f")) #'eve-next-filler))
+  (should (eq (lookup-key eve-mode-map (kbd "[ f")) #'eve-previous-filler))
   (should (eq (lookup-key eve-mode-map (kbd "SPC")) #'eve-play-segment))
   (should (eq (lookup-key eve-mode-map (kbd "RET")) #'eve-play-segment))
   (should (eq (lookup-key eve-mode-map (kbd "<left>")) #'eve-seek-short-backward))

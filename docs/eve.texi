@@ -726,7 +726,7 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @node Commands
 @section Commands
 
-@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Key
 @tab Command
 @tab Description
@@ -736,6 +736,12 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @item @samp{F}
 @tab @samp{eve-delete-fillers}
 @tab Mark all tagged fillers as deleted.
+@item @samp{A}
+@tab @samp{eve-accept-filler}
+@tab Accept the filler at point by removing its filler tag.
+@item @samp{]f} / @samp{[f}
+@tab @samp{eve-next-filler} / @samp{eve-previous-filler}
+@tab Jump to next / previous visible filler.
 @item @samp{C-c C-d}
 @tab @samp{eve-delete-fillers}
 @tab Same as @samp{F} from the @samp{C-c} prefix map.
@@ -755,7 +761,8 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 
 Fillers are tagged automatically every time a TJM manifest is opened.  If you
 add a new phrase to @samp{eve-filler-phrases}, reopen the file or run
-@samp{M-x eve-tag-fillers} to apply the updated list.
+@samp{M-x eve-tag-fillers} to apply the updated list.  Accepted fillers are simply
+untagged, so explicit re-tagging may mark them as fillers again.
 
 @node B-Roll
 @chapter B-Roll
@@ -1528,6 +1535,8 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-play-segment}
 @item @samp{SPC}
 @tab @samp{eve-play-segment}
+@item @samp{A}
+@tab @samp{eve-accept-filler}
 @item @samp{F}
 @tab @samp{eve-delete-fillers}
 @item @samp{f}
@@ -1612,6 +1621,10 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-validate}
 @item @samp{C-c C-c}
 @tab @samp{eve-compile}
+@item @samp{[ f}
+@tab @samp{eve-previous-filler}
+@item @samp{] f}
+@tab @samp{eve-next-filler}
 @end multitable
 
 Prefix-arg variants: @samp{C-u C-c C-c} compiles at final quality; @samp{C-u C-c SPC}
