@@ -2016,6 +2016,22 @@
        (should (eq eve-segment-panel-source-buffer source))
        (should (equal eve-segment-panel-segment-id "seg-1"))))))
 
+(ert-deftest eve-context-panels-open-closes-visible-panels-when-already-open ()
+  "C-c C-p closes existing side and bottom panels instead of opening duplicates."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (delete-other-windows)
+   (let ((source (current-buffer)))
+     (eve-context-panels-open)
+     (let ((side (buffer-local-value 'context-panels-side-panel-buffer source))
+           (bottom (buffer-local-value 'context-panels-bottom-panel-buffer source)))
+       (should (get-buffer-window side t))
+       (should (get-buffer-window bottom t))
+       (with-current-buffer source
+         (eve-context-panels-open))
+       (should-not (get-buffer-window side t))
+       (should-not (get-buffer-window bottom t))))))
+
 (ert-deftest eve-segment-panel-word-navigation-and-selection-are-local ()
   "Panel word navigation updates local state without activating a source region."
   (skip-unless (featurep 'context-panels))

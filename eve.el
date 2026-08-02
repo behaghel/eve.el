@@ -49,6 +49,7 @@
 
 (declare-function context-panels-mode "context-panels" (&optional arg))
 (declare-function context-panels-open "context-panels" (&optional source-buffer))
+(declare-function context-panels-close "context-panels" ())
 (declare-function context-panels-open-bottom-view "context-panels" (view-id &optional source-buffer select))
 (declare-function context-panels-refresh "context-panels" ())
 (declare-function context-panels-refresh-bottom-view "context-panels" ())
@@ -2943,19 +2944,50 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
     (add-hook 'context-panels-before-side-panel-close-hook
               #'eve--context-panels-before-close nil t)))
 
+(defun eve--context-panels-command-source-buffer ()
+  "Return the Eve source buffer for a context-panel command."
+  (cond
+   ((derived-mode-p 'eve-mode) (current-buffer))
+   ((and (boundp 'context-panels-source-buffer)
+         (buffer-live-p context-panels-source-buffer)
+         (with-current-buffer context-panels-source-buffer
+           (derived-mode-p 'eve-mode)))
+    context-panels-source-buffer)
+   (t (user-error "No Eve source buffer for context panels"))))
+
+(defun eve--context-panels-visible-p (source)
+  "Return non-nil when SOURCE already has visible context panels."
+  (or (when-let* ((side (buffer-local-value 'context-panels-side-panel-buffer
+                                            source)))
+        (get-buffer-window side t))
+      (when-let* ((bottom (buffer-local-value 'context-panels-bottom-panel-buffer
+                                              source)))
+        (get-buffer-window bottom t))))
+
+(defun eve--context-panels-close (source)
+  "Close Eve context panels for SOURCE."
+  (with-current-buffer source
+    (context-panels-close)
+    (when (fboundp 'context-panels-close-bottom-view)
+      (context-panels-close-bottom-view)))
+  (message "Closed Eve context panels"))
+
 (defun eve-context-panels-open ()
-  "Open or refresh Eve context panels for the current buffer.
-This command requires the optional `context-panels' package."
+  "Toggle Eve context panels for the current buffer.
+Open the side and bottom panels when absent; close visible context panels when
+already open.  This command requires the optional `context-panels' package."
   (interactive)
   (unless (eve--context-panels-available-p)
     (user-error "Optional context-panels package is unavailable"))
   (eve--context-panels-setup)
-  (let* ((source (current-buffer))
-         (side-buffer (context-panels-open source)))
-    (when (fboundp 'context-panels-open-bottom-view)
-      (context-panels-open-bottom-view 'segment-editor source t))
-    (message "Opened Eve context panel")
-    side-buffer))
+  (let ((source (eve--context-panels-command-source-buffer)))
+    (if (eve--context-panels-visible-p source)
+        (eve--context-panels-close source)
+      (let ((side-buffer (context-panels-open source)))
+        (when (fboundp 'context-panels-open-bottom-view)
+          (context-panels-open-bottom-view 'segment-editor source t))
+        (message "Opened Eve context panel")
+        side-buffer))))
 
 ;;;###autoload
 (define-derived-mode eve-mode special-mode "EVE"
