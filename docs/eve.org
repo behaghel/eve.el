@@ -927,7 +927,7 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 | Variable | Default | Description |
 |----------+---------+-------------|
 | =eve-context-panels-auto-open= | =nil= | Open context panels automatically when available. |
-| =eve-segment-panel-height= | =10= | Height of the current-segment bottom panel. |
+| =eve-segment-panel-height= | =12= | Height of the current-segment bottom panel. |
 | =eve-line-spacing= | =2= | Additional pixel spacing between transcript lines. |
 | =eve-ruler-interval= | =30.0= | Seconds between ruler markers. |
 | =eve-show-words-by-default= | =nil= | Show word timings on buffer open. |

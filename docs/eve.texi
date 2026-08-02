@@ -1488,7 +1488,7 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 @tab @samp{nil}
 @tab Open context panels automatically when available.
 @item @samp{eve-segment-panel-height}
-@tab @samp{10}
+@tab @samp{12}
 @tab Height of the current-segment bottom panel.
 @item @samp{eve-line-spacing}
 @tab @samp{2}
@@ -1776,7 +1776,7 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @tab @samp{5}
 @tab Seconds used by short seek commands.
 @item @samp{eve-segment-panel-height}
-@tab @samp{10}
+@tab @samp{12}
 @tab Height of the Eve current-segment bottom panel.
 @item @samp{eve-show-words-by-default}
 @tab @samp{nil}

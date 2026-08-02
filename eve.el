@@ -272,8 +272,13 @@ When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
   :group 'eve)
 
 (defface eve-segment-panel-value-face
-  '((t :inherit default))
+  '((t :inherit font-lock-constant-face))
   "Face used for values in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-broll-value-face
+  '((t :inherit font-lock-warning-face))
+  "Face used for b-roll values in the Eve segment panel."
   :group 'eve)
 
 (defface eve-segment-panel-action-face
@@ -1144,7 +1149,7 @@ only and shows text until it is available."
   :type 'integer
   :group 'eve)
 
-(defcustom eve-segment-panel-height 10
+(defcustom eve-segment-panel-height 12
   "Height of the Eve current-segment bottom panel."
   :type 'natnum
   :group 'eve)
@@ -1951,7 +1956,6 @@ The milestone interval is controlled by `eve-ruler-interval'."
 The label uses `eve-segment-panel-action-face', parentheses use the muted label
 face, and KEY uses the normal context-panel key-hint face."
   (concat (propertize label 'face 'eve-segment-panel-action-face)
-          " "
           (propertize "(" 'face 'eve-segment-panel-label-face)
           (eve--segment-panel-key-label key key)
           (propertize ")" 'face 'eve-segment-panel-label-face)))
@@ -2086,8 +2090,8 @@ face, and KEY uses the normal context-panel key-hint face."
                "  ")
               "\n\n")
       (insert (eve--segment-panel-key-label "B-roll" "B")
-              ": " (eve--segment-panel-header-value
-                     (eve--segment-panel-broll-summary segment))
+              ": " (propertize (eve--segment-panel-broll-summary segment)
+                                'face 'eve-segment-panel-broll-value-face)
               "\n  "
               (string-join
                (list (eve--segment-panel-action-with-key "edit" "B")
