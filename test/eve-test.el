@@ -2034,6 +2034,79 @@
      (with-current-buffer source
        (should-not (region-active-p))))))
 
+(ert-deftest eve-segment-panel-rephrase-equal-count-preserves-timing-and-edit ()
+  "Equal-count panel rephrase preserves per-word timing and edit metadata."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment))))
+     (setf (alist-get 'edit word) '((kind . "filler")))
+     (eve--segment-panel-rephrase-range segment 1 1 "bravo")
+     (let ((updated (nth 1 (alist-get 'words segment))))
+       (should (equal (alist-get 'token updated) "bravo"))
+       (should (= (alist-get 'start updated) 1.5))
+       (should (= (alist-get 'end updated) 2.0))
+       (should (equal (alist-get 'edit updated) '((kind . "filler"))))
+       (should (equal (alist-get 'text segment) "alpha bravo gamma delta"))))))
+
+(ert-deftest eve-segment-panel-rephrase-different-count-retimes-range ()
+  "Different-count panel rephrase retimes replacement words proportionally."
+  (eve-test-with-buffer
+   (let* ((segment (car (eve--segments))))
+     (eve--segment-panel-rephrase-range segment 1 2 "bravo charlie echo")
+     (let ((words (alist-get 'words segment)))
+       (should (= (length words) 5))
+       (should (equal (mapcar (lambda (word) (alist-get 'token word)) words)
+                      '("alpha" "bravo" "charlie" "echo" "delta")))
+       (should (= (alist-get 'start (nth 1 words)) 1.5))
+       (should (= (alist-get 'end (nth 1 words)) 2.0))
+       (should (= (alist-get 'start (nth 2 words)) 2.0))
+       (should (= (alist-get 'end (nth 2 words)) 2.5))
+       (should (= (alist-get 'start (nth 3 words)) 2.5))
+       (should (= (alist-get 'end (nth 3 words)) 3.0))
+       (should (equal (alist-get 'text segment) "alpha bravo charlie echo delta"))))))
+
+(ert-deftest eve-segment-panel-delete-fillers-is-current-segment-only ()
+  "Panel bulk filler deletion affects only the current segment."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((second (copy-tree (car (eve--segments)) t)))
+     (setf (alist-get 'id second) "seg-2")
+     (setf (alist-get 'segments eve--data)
+           (append (alist-get 'segments eve--data) (list second)))
+     (dolist (segment (eve--segments))
+       (setf (alist-get 'edit (nth 1 (alist-get 'words segment))) '((kind . "filler"))))
+     (eve--render)
+     (delete-other-windows)
+     (let ((source (current-buffer)))
+       (eve-context-panels-open)
+       (with-current-buffer (buffer-local-value 'context-panels-bottom-panel-buffer source)
+         (call-interactively #'eve-segment-panel-delete-fillers))
+       (with-current-buffer source
+         (let ((first-word (nth 1 (alist-get 'words (nth 0 (eve--segments)))))
+               (second-word (nth 1 (alist-get 'words (nth 1 (eve--segments))))))
+           (should (eve--edit-deleted-p first-word))
+           (should-not (eve--edit-deleted-p second-word))))))))
+
+(ert-deftest eve-merge-with-next-errors-on-conflict-unless-forced ()
+  "Strict merge reports metadata conflicts and forced merge succeeds."
+  (eve-test-with-buffer
+   (let ((second '((id . "seg-2")
+                   (source . "clip")
+                   (start . 4.0)
+                   (end . 5.0)
+                   (speaker . "Other")
+                   (text . "epsilon")
+                   (words . (((start . 4.0) (end . 5.0) (token . "epsilon")))))))
+     (setf (alist-get 'speaker (car (eve--segments))) "Hubert")
+     (setf (alist-get 'segments eve--data)
+           (append (alist-get 'segments eve--data) (list second)))
+     (eve--render)
+     (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _args) nil)))
+       (should-error (eve-merge-with-next) :type 'user-error))
+     (eve-merge-with-next t)
+     (should (= 1 (length (eve--segments))))
+     (should (equal (alist-get 'text (car (eve--segments))) "alpha beta gamma delta epsilon")))))
+
 (ert-deftest eve-segment-panel-q-focuses-source-and-Q-closes-panel ()
   "Panel q returns to source; Q closes the bottom panel."
   (skip-unless (featurep 'context-panels))

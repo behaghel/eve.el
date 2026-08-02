@@ -1883,6 +1883,29 @@ The milestone interval is controlled by `eve-ruler-interval'."
     (define-key map "n" #'eve-segment-panel-next-segment)
     (define-key map "k" #'eve-segment-panel-previous-segment)
     (define-key map "p" #'eve-segment-panel-previous-segment)
+    (define-key map "e" #'eve-segment-panel-edit-words)
+    (define-key map "E" #'eve-segment-panel-edit-segment)
+    (define-key map "d" #'eve-segment-panel-delete-words)
+    (define-key map "f" #'eve-segment-panel-mark-filler)
+    (define-key map "A" #'eve-segment-panel-accept-filler)
+    (define-key map "F" #'eve-segment-panel-delete-fillers)
+    (define-key map "s" #'eve-segment-panel-split)
+    (define-key map "B" #'eve-segment-panel-edit-broll)
+    (define-key map "C" #'eve-segment-panel-toggle-broll-continue)
+    (define-key map "P" #'eve-segment-panel-preview)
+    (define-key map "N" #'eve-segment-panel-edit-notes)
+    (define-key map "T" #'eve-segment-panel-toggle-tag)
+    (define-key map "I" #'eve-segment-panel-edit-speaker)
+    (define-key map "G" #'eve-segment-panel-edit-range)
+    (define-key map "O" #'eve-segment-panel-insert-marker)
+    (define-key map (kbd "SPC") #'eve-segment-panel-play-source)
+    (define-key map "R" #'eve-segment-panel-play-rendered)
+    (define-key map "c" #'eve-segment-panel-cache-current)
+    (define-key map "m" #'eve-segment-panel-merge-next)
+    (define-key map "," #'eve-segment-panel-merge-previous)
+    (define-key map "u" #'eve-segment-panel-undo)
+    (define-key map (kbd "C-r") #'eve-segment-panel-redo)
+    (define-key map (kbd "C-x C-s") #'eve-segment-panel-save)
     (define-key map "q" #'eve-segment-panel-focus-source)
     (define-key map "Q" #'eve-segment-panel-close)
     map)
@@ -2108,7 +2131,12 @@ face, and KEY uses the normal context-panel key-hint face."
                      (eve--segment-panel-action-with-key "range" "G")
                      (eve--segment-panel-action-with-key "marker" "O")
                      (eve--segment-panel-action-with-key "Source" "SPC")
-                     (eve--segment-panel-action "Rendered" "R"))
+                     (eve--segment-panel-action "Rendered" "R")
+                     (eve--segment-panel-action "merge" "m")
+                     (eve--segment-panel-action-with-key "prev" ",")
+                     (eve--segment-panel-action "undo" "u")
+                     (eve--segment-panel-action-with-key "save" "C-x C-s")
+                     (eve--segment-panel-action "cache" "c"))
                "  ")
               "\n")
       (when-let* ((pos (text-property-any (point-min) (point-max)
@@ -2198,6 +2226,336 @@ face, and KEY uses the normal context-panel key-hint face."
   (if (fboundp 'context-panels-close-bottom-view)
       (context-panels-close-bottom-view)
     (quit-window t)))
+
+(defun eve--segment-panel-segment ()
+  "Return the current panel segment."
+  (let ((source (eve--segment-panel-source-buffer))
+        (segment-id eve-segment-panel-segment-id))
+    (or (with-current-buffer source
+          (eve--segment-by-id segment-id))
+        (user-error "No current segment"))))
+
+(defun eve--segment-panel-word-range ()
+  "Return active word range as (START . END)."
+  (or (eve--segment-panel-selection-range)
+      (cons eve-segment-panel-word-index eve-segment-panel-word-index)))
+
+(defun eve--segment-panel-visible-range-after-change (segment preferred)
+  "Return nearest visible word index in SEGMENT around PREFERRED."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (visible (eve--segment-panel-visible-words segment source))
+         (indices (mapcar #'car visible)))
+    (cond
+     ((null indices) 0)
+     ((member preferred indices) preferred)
+     ((seq-find (lambda (idx) (> idx preferred)) indices))
+     (t (car (last indices))))))
+
+(defun eve--segment-panel-after-edit (&optional preferred-index)
+  "Mark source dirty, render it, and refresh the segment panel."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (preferred (or preferred-index eve-segment-panel-word-index)))
+    (with-current-buffer source
+      (eve--mark-dirty)
+      (eve--render t)
+      (eve--goto-segment segment-id))
+    (let ((segment (eve--segment-panel-segment)))
+      (setq eve-segment-panel-word-index
+            (eve--segment-panel-visible-range-after-change segment preferred)))
+    (setq eve-segment-panel-selection-anchor nil)
+    (eve--segment-panel-refresh)))
+
+(defun eve--segment-panel-retokenize (text)
+  "Return non-empty whitespace tokens from TEXT."
+  (mapcar #'substring-no-properties
+          (split-string (string-trim text) "[[:space:]]+" t)))
+
+(defun eve--segment-panel-copy-word-with-token (word token)
+  "Return copy of WORD with visible TOKEN updated."
+  (let ((copy (copy-tree word t)))
+    (if (alist-get 'spoken copy)
+        (setf (alist-get 'spoken copy) token)
+      (setf (alist-get 'token copy) token))
+    copy))
+
+(defun eve--segment-panel-word-start (word)
+  "Return WORD start time."
+  (or (eve--coerce-number (alist-get 'start word))
+      (eve--coerce-number (alist-get 'start_tick word))
+      0.0))
+
+(defun eve--segment-panel-word-end (word)
+  "Return WORD end time."
+  (or (eve--coerce-number (alist-get 'end word))
+      (eve--coerce-number (alist-get 'end_tick word))
+      (eve--segment-panel-word-start word)))
+
+(defun eve--segment-panel-replacement-word (token start end)
+  "Return a new replacement word TOKEN from START to END."
+  (list (cons 'start start)
+        (cons 'end end)
+        (cons 'token token)))
+
+(defun eve--segment-panel-rephrase-range (segment start-index end-index replacement)
+  "Replace SEGMENT words from START-INDEX to END-INDEX with REPLACEMENT text."
+  (let* ((tokens (eve--segment-panel-retokenize replacement))
+         (words (copy-sequence (alist-get 'words segment)))
+         (range-len (1+ (- end-index start-index))))
+    (when (null tokens)
+      (user-error "Replacement cannot be empty; use delete instead"))
+    (unless (and (<= 0 start-index) (< end-index (length words)))
+      (user-error "Invalid word range"))
+    (let* ((before (cl-subseq words 0 start-index))
+           (after (nthcdr (1+ end-index) words))
+           (old-range (cl-subseq words start-index (1+ end-index)))
+           (new-range
+            (if (= (length tokens) range-len)
+                (cl-mapcar #'eve--segment-panel-copy-word-with-token old-range tokens)
+              (let* ((span-start (eve--segment-panel-word-start (car old-range)))
+                     (span-end (eve--segment-panel-word-end (car (last old-range))))
+                     (step (/ (max 0.0 (- span-end span-start))
+                              (float (length tokens))))
+                     (idx 0)
+                     result)
+                (dolist (token tokens (nreverse result))
+                  (let ((start (+ span-start (* idx step)))
+                        (end (+ span-start (* (1+ idx) step))))
+                    (push (eve--segment-panel-replacement-word token start end)
+                          result)
+                    (setq idx (1+ idx)))))))
+           (merged (append before new-range after)))
+      (setf (alist-get 'words segment) merged)
+      (setf (alist-get 'text segment)
+            (string-join (mapcar #'eve--word-render-text merged) " "))
+      (setf (alist-get 'start segment)
+            (eve--segment-panel-word-start (car merged)))
+      (setf (alist-get 'end segment)
+            (eve--segment-panel-word-end (car (last merged))))
+      start-index)))
+
+(defun eve-segment-panel-edit-words ()
+  "Rephrase the focused word or selected range in the panel."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (alist-get 'words segment))
+         (current (string-join
+                   (mapcar #'eve--word-render-text
+                           (cl-subseq words (car range) (1+ (cdr range))))
+                   " "))
+         (replacement (read-string "Rephrase words: " current)))
+    (eve--record-state)
+    (eve--segment-panel-rephrase-range segment (car range) (cdr range) replacement)
+    (eve--segment-panel-after-edit (car range))))
+
+(defun eve-segment-panel-edit-segment ()
+  "Rephrase the whole current segment in the panel."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (words (alist-get 'words segment))
+         (replacement (read-string "Rephrase segment: "
+                                   (string-join (mapcar #'eve--word-render-text words) " "))))
+    (eve--record-state)
+    (eve--segment-panel-rephrase-range segment 0 (1- (length words)) replacement)
+    (eve--segment-panel-after-edit 0)))
+
+(defun eve--segment-panel-words-in-range (segment range)
+  "Return words in SEGMENT RANGE."
+  (cl-subseq (alist-get 'words segment) (car range) (1+ (cdr range))))
+
+(defun eve-segment-panel-delete-words ()
+  "Delete the focused word or selected range in the panel."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range)))
+    (eve--record-state)
+    (dolist (word (eve--segment-panel-words-in-range segment range))
+      (eve--set-edit-deleted word t))
+    (eve--segment-panel-after-edit (car range))))
+
+(defun eve--segment-panel-learn-filler-phrase (phrase)
+  "Prompt to add PHRASE to `eve-filler-phrases'."
+  (unless (member phrase eve-filler-phrases)
+    (when (y-or-n-p (format "Add filler phrase '%s' for future sessions? " phrase))
+      (setq eve-filler-phrases (append eve-filler-phrases (list phrase)))
+      (customize-save-variable 'eve-filler-phrases eve-filler-phrases))))
+
+(defun eve-segment-panel-mark-filler ()
+  "Mark focused word/range as filler and optionally learn the phrase."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (eve--segment-panel-words-in-range segment range))
+         (phrase (string-join (mapcar #'eve--word-render-text words) " ")))
+    (eve--record-state)
+    (dolist (word words)
+      (eve--set-word-edit-kind word "filler"))
+    (eve--segment-panel-learn-filler-phrase phrase)
+    (eve--segment-panel-after-edit (car range))))
+
+(defun eve-segment-panel-accept-filler ()
+  "Accept focused filler word/range by removing filler kind."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range)))
+    (eve--record-state)
+    (dolist (word (eve--segment-panel-words-in-range segment range))
+      (when (equal (eve--edit-kind word) "filler")
+        (eve--remove-word-edit-kind word)))
+    (eve--segment-panel-after-edit (car range))))
+
+(defun eve-segment-panel-delete-fillers ()
+  "Delete fillers in the current segment only."
+  (interactive)
+  (let ((segment (eve--segment-panel-segment)))
+    (eve--record-state)
+    (dolist (word (alist-get 'words segment))
+      (when (equal (eve--edit-kind word) "filler")
+        (eve--set-edit-deleted word t)))
+    (eve--segment-panel-after-edit eve-segment-panel-word-index)))
+
+(defun eve--segment-panel-run-source-command (function &rest args)
+  "Run source-buffer FUNCTION with ARGS on the current panel segment, then refresh."
+  (let* ((panel (current-buffer))
+         (source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id))
+    (with-current-buffer source
+      (eve--goto-segment segment-id)
+      (apply function args))
+    (when (buffer-live-p panel)
+      (with-current-buffer panel
+        (eve--segment-panel-refresh)))))
+
+(defun eve-segment-panel-split ()
+  "Split current segment at focused word."
+  (interactive)
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (word-index eve-segment-panel-word-index)
+         (panel (current-buffer)))
+    (with-current-buffer source
+      (eve--goto-word-by-index segment-id word-index)
+      (call-interactively #'eve-split-segment))
+    (with-current-buffer panel
+      (setq eve-segment-panel-segment-id
+            (with-current-buffer source (eve--segment-id-at-point)))
+      (setq eve-segment-panel-word-index 0)
+      (setq eve-segment-panel-selection-anchor nil)
+      (eve--segment-panel-refresh))))
+
+(defun eve-segment-panel-edit-broll ()
+  "Edit b-roll for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-broll))
+
+(defun eve-segment-panel-toggle-broll-continue ()
+  "Toggle b-roll continue for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-toggle-broll-continue))
+
+(defun eve-segment-panel-preview ()
+  "Preview current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-play-segment))
+
+(defun eve-segment-panel-edit-notes ()
+  "Edit notes for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-notes))
+
+(defun eve-segment-panel-toggle-tag ()
+  "Toggle a tag for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-toggle-tag))
+
+(defun eve-segment-panel-edit-speaker ()
+  "Edit speaker for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-speaker))
+
+(defun eve-segment-panel-edit-range ()
+  "Edit time range for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-start-end))
+
+(defun eve-segment-panel-insert-marker ()
+  "Insert a marker before the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-insert-marker))
+
+(defun eve-segment-panel-play-source ()
+  "Play source for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-play-segment))
+
+(defun eve-segment-panel-play-rendered ()
+  "Play rendered output for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-play-rendered))
+
+(defun eve-segment-panel-cache-current ()
+  "Warm render cache for the current panel segment."
+  (interactive)
+  (let ((segment-id eve-segment-panel-segment-id))
+    (with-current-buffer (eve--segment-panel-source-buffer)
+      (if (not buffer-file-name)
+          (message "Cannot cache unsaved Eve buffer")
+        (when (buffer-modified-p)
+          (save-buffer))
+        (let* ((output (eve--default-output-file))
+               (base-cmd (split-string
+                          (eve--text-edit-command buffer-file-name output)
+                          " " t))
+               (full-cmd (eve--auto-render-command
+                          (append base-cmd (list "--segments" segment-id)))))
+          (setq eve--render-status 'speculative)
+          (force-mode-line-update)
+          (make-process :name "eve-panel-cache"
+                        :buffer nil
+                        :command full-cmd
+                        :noquery t))))))
+
+(defun eve-segment-panel-undo ()
+  "Undo Eve edit from the segment panel."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-undo))
+
+(defun eve-segment-panel-redo ()
+  "Redo Eve edit from the segment panel."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-redo))
+
+(defun eve-segment-panel-save ()
+  "Save the source TJM buffer from the segment panel."
+  (interactive)
+  (let ((source (eve--segment-panel-source-buffer)))
+    (with-current-buffer source
+      (save-buffer))
+    (eve--segment-panel-refresh)))
+
+(defun eve-segment-panel-merge-next (&optional force)
+  "Merge current panel segment with the next segment."
+  (interactive "P")
+  (let ((panel (current-buffer)))
+    (eve--segment-panel-run-source-command #'eve-merge-with-next force)
+    (when (buffer-live-p panel)
+      (with-current-buffer panel
+        (setq eve-segment-panel-selection-anchor nil)
+        (eve--segment-panel-refresh)))))
+
+(defun eve-segment-panel-merge-previous (&optional force)
+  "Merge previous segment with the current panel segment."
+  (interactive "P")
+  (let ((panel (current-buffer)))
+    (eve--segment-panel-run-source-command #'eve-merge-with-previous force)
+    (when (buffer-live-p panel)
+      (with-current-buffer panel
+        (setq eve-segment-panel-segment-id
+              (with-current-buffer (eve--segment-panel-source-buffer)
+                (eve--segment-id-at-point)))
+        (setq eve-segment-panel-selection-anchor nil)
+        (eve--segment-panel-refresh)))))
 
 (defun eve--context-panel-compact-duration (duration)
   "Return compact text for b-roll DURATION."
@@ -3800,109 +4158,142 @@ that starts at the word under point."
 	(eve--echo-segment-info)
 	(message "Split segment %s" segment-id)))))
 
-(defun eve-merge-with-next ()
-  "Merge the segment at point with the next segment in the manifest."
-  (interactive)
-  (let* ((segment (or (eve--segment-at-point)
-		      (user-error "No segment at point")))
-	 (segments (eve--segments))
-	 (idx (cl-position segment segments :test #'eq)))
-    (unless idx
-      (error "Unable to determine segment index"))
+(defun eve--merge-conflicts (segment other)
+  "Return strict merge conflicts between SEGMENT and OTHER."
+  (let (conflicts)
+    (let ((source-a (eve--stringify (alist-get 'source segment)))
+          (source-b (eve--stringify (alist-get 'source other))))
+      (when (and (not (string-empty-p source-a))
+                 (not (string-empty-p source-b))
+                 (not (string= source-a source-b)))
+        (push "source" conflicts)))
+    (let ((speaker-a (eve--stringify (alist-get 'speaker segment)))
+          (speaker-b (eve--stringify (alist-get 'speaker other))))
+      (when (and (not (string-empty-p speaker-a))
+                 (not (string-empty-p speaker-b))
+                 (not (string= speaker-a speaker-b)))
+        (push "speaker" conflicts)))
+    (let ((broll-a (eve--segment-broll segment))
+          (broll-b (eve--segment-broll other)))
+      (when (and broll-a broll-b (not (equal broll-a broll-b)))
+        (push "b-roll" conflicts)))
+    (nreverse conflicts)))
+
+(defun eve--merge-segments-at-index (idx &optional force)
+  "Merge segment at IDX with its next segment, optionally FORCE conflicts."
+  (let* ((segments (eve--segments))
+         (segment (nth idx segments))
+         (next (nth (1+ idx) segments)))
+    (unless segment
+      (user-error "No segment at point"))
     (when (eve--marker-p segment)
       (user-error "Cannot merge marker segments"))
-    (let ((next (nth (1+ idx) segments)))
-      (unless next
-	(user-error "Already at last segment"))
-      (when (eve--marker-p next)
-	(user-error "Cannot merge into a marker segment"))
-      (let* ((source (alist-get 'source segment))
-	     (next-source (alist-get 'source next))
-	     (source-str (eve--stringify source))
-	     (next-source-str (eve--stringify next-source)))
-	(when (and source-str next-source-str
-		   (not (string= source-str next-source-str)))
-	  (user-error "Segments use different sources (%s vs %s)" source-str next-source-str))
-	(when (and (null source) next-source)
-	  (setf (alist-get 'source segment) next-source)))
-      (eve--record-state)
-      (let* ((text-a (eve--stringify (alist-get 'text segment)))
-	     (text-b (eve--stringify (alist-get 'text next)))
-	     (combined-text
-	      (string-trim
-	       (string-join
-		(seq-filter (lambda (chunk)
-			      (and chunk (not (string-empty-p chunk))))
-			    (list text-a text-b))
-		" ")))
-	     (words-a (copy-sequence (alist-get 'words segment)))
-	     (words-b (copy-sequence (alist-get 'words next)))
-	     (merged-words (append words-a words-b))
-	     (start-a (eve--coerce-number (alist-get 'start segment)))
-	     (end-a (eve--coerce-number (alist-get 'end segment)))
-	     (start-b (eve--coerce-number (alist-get 'start next)))
-	     (end-b (eve--coerce-number (alist-get 'end next)))
-	     (note-a (eve--stringify (eve--segment-notes segment)))
-	     (note-b (eve--stringify (eve--segment-notes next)))
-	     (tag-a (copy-sequence (eve--segment-tags segment)))
-	     (tag-b (copy-sequence (eve--segment-tags next)))
-	     (next-id (alist-get 'id next))
-	     (next-had-broll (eve--segment-broll next)))
-	(setf (alist-get 'text segment)
-	      (and (not (string-empty-p combined-text)) combined-text))
-	(setf (alist-get 'words segment) (and merged-words merged-words))
-	(let ((notes (seq-filter (lambda (chunk)
-				   (and chunk (not (string-empty-p chunk))))
-				 (list note-a note-b))))
-	  (eve--set-segment-notes
-	   segment
-	   (cond
-	    ((null notes) nil)
-	    ((= (length notes) 1) (car notes))
-	    (t (mapconcat #'identity notes "\n\n")))))
-	(let* ((combined-tags (append tag-a tag-b))
-	       (clean-tags
-		(seq-filter (lambda (tag)
-			      (let ((as-string (eve--stringify tag)))
-				(and as-string (not (string-empty-p as-string)))))
-			    combined-tags)))
-	  (eve--set-segment-tags
-	   segment
-	   (when clean-tags
-	     (cl-delete-duplicates clean-tags
-				   :test #'string=
-				   :key #'eve--stringify))))
-	(if merged-words
-	    (let ((first-word (car merged-words))
-		  (last-word (car (last merged-words))))
-	      (setf (alist-get 'start segment)
-		    (eve--coerce-number (alist-get 'start first-word)))
-	      (setf (alist-get 'end segment)
-		    (eve--coerce-number (alist-get 'end last-word))))
-	  (let ((starts (seq-filter #'numberp (list start-a start-b)))
-		(ends (seq-filter #'numberp (list end-a end-b))))
-	    (when starts
-	      (setf (alist-get 'start segment) (apply #'min starts)))
-	    (when ends
-	      (setf (alist-get 'end segment) (apply #'max ends)))))
-	(setq eve--visual-separators
-	      (cl-remove (eve--stringify next-id) eve--visual-separators
-			 :test #'string= :count 1))
-	(setf (alist-get 'segments eve--data)
-	      (cl-remove next segments :test #'eq :count 1))
-	(eve--mark-dirty)
-	(let ((merged-id (alist-get 'id segment)))
-	  (eve--render t)
-	  (when merged-id
-	    (eve--goto-segment merged-id)
-	    (eve--update-focus-overlay)
-	    (eve--echo-segment-info))
-	  (message "Merged segment %s with %s%s"
-		   merged-id
-		   (eve--stringify next-id)
-		   (if next-had-broll
-		       " (review b-roll metadata)"
-		     "")))))))
+    (unless next
+      (user-error "Already at last segment"))
+    (when (eve--marker-p next)
+      (user-error "Cannot merge across marker segments"))
+    (let ((conflicts (eve--merge-conflicts segment next)))
+      (when (and conflicts
+                 (not force)
+                 (not (y-or-n-p (format "Merge conflicts (%s). Force merge? "
+                                        (string-join conflicts ", ")))))
+        (user-error "Merge conflicts: %s" (string-join conflicts ", "))))
+    (eve--record-state)
+    (let* ((text-a (eve--stringify (alist-get 'text segment)))
+           (text-b (eve--stringify (alist-get 'text next)))
+           (combined-text
+            (string-trim
+             (string-join
+              (seq-filter (lambda (chunk)
+                            (and chunk (not (string-empty-p chunk))))
+                          (list text-a text-b))
+              " ")))
+           (words-a (copy-sequence (alist-get 'words segment)))
+           (words-b (copy-sequence (alist-get 'words next)))
+           (merged-words (append words-a words-b))
+           (note-a (eve--stringify (eve--segment-notes segment)))
+           (note-b (eve--stringify (eve--segment-notes next)))
+           (tag-a (copy-sequence (eve--segment-tags segment)))
+           (tag-b (copy-sequence (eve--segment-tags next)))
+           (next-id (alist-get 'id next))
+           (merged-id (alist-get 'id segment)))
+      (when (and (null (alist-get 'source segment)) (alist-get 'source next))
+        (setf (alist-get 'source segment) (alist-get 'source next)))
+      (when (and (string-empty-p (eve--stringify (alist-get 'speaker segment)))
+                 (not (string-empty-p (eve--stringify (alist-get 'speaker next)))))
+        (setf (alist-get 'speaker segment) (alist-get 'speaker next)))
+      (when (and (null (eve--segment-broll segment)) (eve--segment-broll next))
+        (eve--set-segment-broll segment (copy-tree (eve--segment-broll next) t)))
+      (setf (alist-get 'text segment)
+            (and (not (string-empty-p combined-text)) combined-text))
+      (setf (alist-get 'words segment) (and merged-words merged-words))
+      (let ((notes (seq-filter (lambda (chunk)
+                                 (and chunk (not (string-empty-p chunk))))
+                               (list note-a note-b))))
+        (eve--set-segment-notes
+         segment
+         (cond
+          ((null notes) nil)
+          ((= (length notes) 1) (car notes))
+          (t (mapconcat #'identity notes "\n\n")))))
+      (let* ((combined-tags (append tag-a tag-b))
+             (clean-tags
+              (seq-filter (lambda (tag)
+                            (let ((as-string (eve--stringify tag)))
+                              (and as-string (not (string-empty-p as-string)))))
+                          combined-tags)))
+        (eve--set-segment-tags
+         segment
+         (when clean-tags
+           (cl-delete-duplicates clean-tags
+                                 :test #'string=
+                                 :key #'eve--stringify))))
+      (if merged-words
+          (let ((first-word (car merged-words))
+                (last-word (car (last merged-words))))
+            (setf (alist-get 'start segment)
+                  (eve--coerce-number (alist-get 'start first-word)))
+            (setf (alist-get 'end segment)
+                  (eve--coerce-number (alist-get 'end last-word))))
+        (setf (alist-get 'end segment) (alist-get 'end next)))
+      (setq eve--visual-separators
+            (cl-remove (eve--stringify next-id) eve--visual-separators
+                       :test #'string= :count 1))
+      (setf (alist-get 'segments eve--data)
+            (cl-remove next segments :test #'eq :count 1))
+      (eve--mark-dirty)
+      (eve--render t)
+      (when merged-id
+        (eve--goto-segment merged-id)
+        (eve--update-focus-overlay)
+        (eve--echo-segment-info))
+      (message "Merged segment %s with %s" merged-id (eve--stringify next-id)))))
+
+(defun eve-merge-with-next (&optional force)
+  "Merge the segment at point with the next segment in the manifest.
+With prefix FORCE, merge despite metadata conflicts."
+  (interactive "P")
+  (let* ((segment (or (eve--segment-at-point)
+                      (user-error "No segment at point")))
+         (segments (eve--segments))
+         (idx (cl-position segment segments :test #'eq)))
+    (unless idx
+      (error "Unable to determine segment index"))
+    (eve--merge-segments-at-index idx force)))
+
+(defun eve-merge-with-previous (&optional force)
+  "Merge the previous segment with the segment at point.
+With prefix FORCE, merge despite metadata conflicts."
+  (interactive "P")
+  (let* ((segment (or (eve--segment-at-point)
+                      (user-error "No segment at point")))
+         (segments (eve--segments))
+         (idx (cl-position segment segments :test #'eq)))
+    (unless idx
+      (error "Unable to determine segment index"))
+    (when (<= idx 0)
+      (user-error "Already at first segment"))
+    (eve--merge-segments-at-index (1- idx) force)))
 
 (defun eve-move-segment-up ()
   "Move the current segment up by one position."
