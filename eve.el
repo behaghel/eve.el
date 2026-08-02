@@ -266,6 +266,21 @@ When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
   "Face used for the selected word range in the Eve segment panel."
   :group 'eve)
 
+(defface eve-segment-panel-label-face
+  '((t :inherit shadow))
+  "Muted face used for labels in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-value-face
+  '((t :inherit default))
+  "Face used for values in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-action-face
+  '((t :inherit font-lock-doc-face))
+  "Face used for action indicators in the Eve segment panel."
+  :group 'eve)
+
 (defface eve-broll-face
   '((t :inherit font-lock-warning-face :weight bold))
   "Face to highlight segments with b-roll metadata."
@@ -1925,6 +1940,20 @@ The milestone interval is controlled by `eve-ruler-interval'."
       (context-panels-propertize-key label key)
     label))
 
+(defun eve--segment-panel-action (label key)
+  "Return action LABEL with KEY highlighted and action face applied."
+  (eve--segment-panel-key-label
+   (propertize label 'face 'eve-segment-panel-action-face)
+   key))
+
+(defun eve--segment-panel-header-label (label)
+  "Return muted header LABEL."
+  (propertize label 'face 'eve-segment-panel-label-face))
+
+(defun eve--segment-panel-header-value (value)
+  "Return header VALUE using the segment-panel value face."
+  (propertize (eve--stringify value) 'face 'eve-segment-panel-value-face))
+
 (defun eve--segment-panel-segment-id (source-buffer)
   "Return segment id the panel should display for SOURCE-BUFFER."
   (if (eq (window-buffer (selected-window)) source-buffer)
@@ -2020,23 +2049,54 @@ The milestone interval is controlled by `eve-ruler-interval'."
            (speaker (or (eve--aget 'speaker segment) "—"))
            (tags (or (eve--segment-tags segment) '())))
       (eve--segment-panel-clamp-word-index visible-words)
-      (insert (propertize (format "Segment %s" eve-segment-panel-segment-id)
-                          'face 'eve-heading-face)
-              (format "  %s–%s  %.1fs  Speaker: %s  Tags: %s  %s\n"
-                      (eve--format-time start)
-                      (eve--format-time end)
-                      duration
-                      (eve--stringify speaker)
-                      (if tags (string-join (mapcar #'eve--stringify tags) ",") "—")
-                      (eve--segment-panel-cache-summary source-buffer)))
+      (insert (propertize eve-segment-panel-segment-id 'face 'eve-heading-face)
+              "  " (eve--segment-panel-header-value (format "%.1fs" duration))
+              "  " (eve--segment-panel-header-label "Time: ")
+              (eve--segment-panel-header-value
+               (format "%s–%s" (eve--format-time start) (eve--format-time end)))
+              "  " (eve--segment-panel-header-label "Speaker: ")
+              (eve--segment-panel-header-value speaker)
+              "  " (eve--segment-panel-header-label "Tags: ")
+              (eve--segment-panel-header-value
+               (if tags (string-join (mapcar #'eve--stringify tags) ",") "—"))
+              "  " (eve--segment-panel-header-value
+                     (eve--segment-panel-cache-summary source-buffer))
+              "\n\n")
       (insert (eve--segment-panel-key-label "Transcript" "T") "  ")
       (eve--segment-panel-insert-words visible-words)
-      (insert "\n  [e] edit  [E] segment  [d] delete  [f] filler  [A] accept  [F] del fillers  [s] split\n")
+      (insert "\n\n  "
+              (string-join
+               (list (eve--segment-panel-action "edit" "e")
+                     (eve--segment-panel-action "sEgment" "E")
+                     (eve--segment-panel-action "delete" "d")
+                     (eve--segment-panel-action "filler" "f")
+                     (eve--segment-panel-action "Accept" "A")
+                     (eve--segment-panel-action "Fillers" "F")
+                     (eve--segment-panel-action "split" "s"))
+               "  ")
+              "\n\n")
       (insert (eve--segment-panel-key-label "B-roll" "B")
-              ": " (eve--segment-panel-broll-summary segment)
-              "  [B] edit  [C] continue  [P] preview\n")
-      (insert (eve--segment-panel-key-label "Other" "O")
-              "  [N] Notes  [T] Tags  [I] Speaker  [G] Range  [O] Marker  [SPC] Source  [R] Rendered\n")
+              ": " (eve--segment-panel-header-value
+                     (eve--segment-panel-broll-summary segment))
+              "\n  "
+              (string-join
+               (list (eve--segment-panel-action "edit_(B)" "B")
+                     (eve--segment-panel-action "continue_(C)" "C")
+                     (eve--segment-panel-action "preview_(P)" "P"))
+               "  ")
+              "\n\n")
+      (insert (eve--segment-panel-header-label "Other")
+              "  "
+              (string-join
+               (list (eve--segment-panel-action "Notes" "N")
+                     (eve--segment-panel-action "Tags" "T")
+                     (eve--segment-panel-action "speaker_(I)" "I")
+                     (eve--segment-panel-action "range_(G)" "G")
+                     (eve--segment-panel-action "marker_(O)" "O")
+                     (eve--segment-panel-action "Source_(SPC)" "SPC")
+                     (eve--segment-panel-action "Rendered" "R"))
+               "  ")
+              "\n")
       (when-let* ((pos (text-property-any (point-min) (point-max)
                                           'eve-segment-panel-word-index
                                           eve-segment-panel-word-index)))
