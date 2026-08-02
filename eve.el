@@ -277,7 +277,7 @@ When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
   :group 'eve)
 
 (defface eve-segment-panel-broll-value-face
-  '((t :inherit font-lock-warning-face))
+  '((t :inherit font-lock-string-face))
   "Face used for b-roll values in the Eve segment panel."
   :group 'eve)
 
