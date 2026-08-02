@@ -1946,6 +1946,16 @@ The milestone interval is controlled by `eve-ruler-interval'."
    (propertize label 'face 'eve-segment-panel-action-face)
    key))
 
+(defun eve--segment-panel-action-with-key (label key)
+  "Return action LABEL followed by parenthesized KEY.
+The label uses `eve-segment-panel-action-face', parentheses use the muted label
+face, and KEY uses the normal context-panel key-hint face."
+  (concat (propertize label 'face 'eve-segment-panel-action-face)
+          " "
+          (propertize "(" 'face 'eve-segment-panel-label-face)
+          (eve--segment-panel-key-label key key)
+          (propertize ")" 'face 'eve-segment-panel-label-face)))
+
 (defun eve--segment-panel-header-label (label)
   "Return muted header LABEL."
   (propertize label 'face 'eve-segment-panel-label-face))
@@ -2080,9 +2090,9 @@ The milestone interval is controlled by `eve-ruler-interval'."
                      (eve--segment-panel-broll-summary segment))
               "\n  "
               (string-join
-               (list (eve--segment-panel-action "edit_(B)" "B")
-                     (eve--segment-panel-action "continue_(C)" "C")
-                     (eve--segment-panel-action "preview_(P)" "P"))
+               (list (eve--segment-panel-action-with-key "edit" "B")
+                     (eve--segment-panel-action-with-key "continue" "C")
+                     (eve--segment-panel-action-with-key "preview" "P"))
                "  ")
               "\n\n")
       (insert (eve--segment-panel-header-label "Other")
@@ -2090,10 +2100,10 @@ The milestone interval is controlled by `eve-ruler-interval'."
               (string-join
                (list (eve--segment-panel-action "Notes" "N")
                      (eve--segment-panel-action "Tags" "T")
-                     (eve--segment-panel-action "speaker_(I)" "I")
-                     (eve--segment-panel-action "range_(G)" "G")
-                     (eve--segment-panel-action "marker_(O)" "O")
-                     (eve--segment-panel-action "Source_(SPC)" "SPC")
+                     (eve--segment-panel-action-with-key "speaker" "I")
+                     (eve--segment-panel-action-with-key "range" "G")
+                     (eve--segment-panel-action-with-key "marker" "O")
+                     (eve--segment-panel-action-with-key "Source" "SPC")
                      (eve--segment-panel-action "Rendered" "R"))
                "  ")
               "\n")
