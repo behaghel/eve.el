@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Never
 
-from ..utils.fillers import build_filler_set
+from ..utils.fillers import DEFAULT_FILLERS
 from .common import add_json_flag
 from .tag_fillers import tag_manifest_fillers
 
@@ -23,6 +23,7 @@ VERBATIM_INITIAL_PROMPT = (
     "um, uh, ah, hmm... I, I mean, like, you know, so, uh, we were, um, "
     "talking and then-- and then I..."
 )
+DEFAULT_FILLER_HOTWORDS = "um uh ah hmm like you know I mean"
 BackendRunner = Callable[[Namespace, list[pathlib.Path]], list[dict[str, Any]]]
 
 
@@ -73,7 +74,12 @@ def ffmpeg_extract(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
         "-vn",
         str(output_path),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except FileNotFoundError as exc:
+        raise MissingBackendDependencyError(
+            "ffmpeg executable not found; install ffmpeg or run from the devenv shell"
+        ) from exc
 
 
 def split_segment(
@@ -449,6 +455,11 @@ def transcribe_faster_whisper(
                 "vad_filter": getattr(args, "vad", False) or args.verbatim,
                 "word_timestamps": True,
             }
+            hotwords = args.hotwords
+            if args.verbatim and hotwords is None:
+                hotwords = DEFAULT_FILLER_HOTWORDS
+            if hotwords:
+                transcribe_kwargs["hotwords"] = hotwords
             if args.verbatim:
                 transcribe_kwargs.update(
                     initial_prompt=VERBATIM_INITIAL_PROMPT,
@@ -631,6 +642,14 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         help="Bias decoding toward verbatim disfluencies on supported backends",
     )
     parser.add_argument(
+        "--hotwords",
+        default=None,
+        help=(
+            "Hotwords passed to supported backends. In verbatim faster-whisper mode, "
+            "defaults to common filler/disfluency words."
+        ),
+    )
+    parser.add_argument(
         "--vad",
         action="store_true",
         help="Enable voice-activity-detection filtering (faster-whisper only)",
@@ -676,7 +695,7 @@ def run(args: Namespace) -> int:
         "segments": manifest_segments,
     }
     if args.tag_fillers:
-        tag_manifest_fillers(manifest, build_filler_set())
+        tag_manifest_fillers(manifest, DEFAULT_FILLERS)
 
     output_path = pathlib.Path(args.output).expanduser()
     ensure_dir(output_path)

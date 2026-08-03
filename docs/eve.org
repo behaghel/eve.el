@@ -31,7 +31,8 @@ edit.
 The typical eve session looks like this:
 
 1. *Transcribe* — run =M-x eve-transcribe= on a directory of raw recordings.
-   Eve calls =eve transcribe= and opens the resulting =.tjm.json= in eve-mode.
+   Eve calls =eve transcribe=, shows a visible running status while work is in
+   progress, and opens the resulting =.tjm.json= in eve-mode on success.
 
 2. *Edit* — delete filler words (=d=, =f=, =F=), reorder segments (=J=, =K=),
    add markers to name sections (=o=), attach b-roll (=b=).
@@ -70,12 +71,16 @@ does not reproduce it in full.
 
 *** Installing the CLI
 
-The =eve= CLI ships as a Python package inside this repository.  On a fresh
-clone it bootstraps itself automatically via =scripts/run-cli.sh= using the
-pre-built wheel in =cli/dist/= — no =uv= or Python package manager required
-at runtime.
+The Emacs package first looks for an =eve= executable on your =PATH=.  If it
+does not find one, and =eve-cli-program= is still set to its default ="eve"=,
+it falls back to =scripts/run-cli.sh= inside this checkout.  That script
+creates a local virtualenv and installs the pre-built wheel from =cli/dist/=.
 
-To install =eve= globally so =M-x eve-transcribe= can find it:
+For standard in-Emacs use, that local bootstrap path means a separate global
+=eve= install is optional.  The fallback path assumes Python 3.12 or later is
+available and that the package checkout is writable.
+
+If you want =eve= on your =PATH= for shell use, install it globally:
 
 #+begin_src shell
 pip install cli/dist/eve_cli-*.whl
@@ -111,14 +116,8 @@ Opening any =*.tjm.json= file then activates =eve-mode= automatically.
 
 *** Accessing the manual in Emacs
 
-After installing the package, add the =docs/= directory to Emacs's Info path:
-
-#+begin_src emacs-lisp
-(add-to-list 'Info-directory-list
-             (expand-file-name "docs" (file-name-directory (locate-library "eve"))))
-#+end_src
-
-Then browse the manual with =C-h i m eve RET=.
+Eve registers its bundled Info manual automatically when the package is loaded.
+Browse it with =M-x eve-info= or =C-h i m eve RET=.
 
 ** Quick Start
 
@@ -131,9 +130,10 @@ steps.
    M-x eve-transcribe RET
    #+end_example
 
-   Select the directory containing your =.mp4= files.  Eve starts
-   =eve transcribe= in the background.  When it finishes, the manifest opens
-   automatically in eve-mode.
+    Select the directory containing your =.mp4= files.  Eve starts
+    =eve transcribe= in the background, keeps a visible =Eve: transcribing…=
+    status in the mode line while it runs, and opens the manifest
+    automatically in eve-mode when it finishes.
 
 2. *Read through the transcript*
 
@@ -233,7 +233,8 @@ the eve-mode view.
 Two commands launch transcription:
 
 - =M-x eve-transcribe= prompts for a directory, scans for media files, and
-  starts =eve transcribe= asynchronously.  On success the manifest opens
+  starts =eve transcribe= asynchronously.  While it runs, Eve shows a visible
+  =Eve: transcribing…= mode-line status.  On success the manifest opens
   automatically in eve-mode.
 
 - =M-x eve-dired-transcribe= runs from Dired using the marked files (or the
@@ -253,8 +254,10 @@ output.
 | =nemo= | =--backend nemo= | NVIDIA NeMo.  Needs optional deps. |
 
 The =--verbatim= flag (on by default in Emacs) biases =faster-whisper= toward
-preserving disfluencies and filler words.  For =transformers= and =nemo=,
-choose a verbatim-friendly model instead.
+preserving disfluencies and filler words.  In verbatim mode, faster-whisper also
+receives default filler hotwords such as =um=, =uh=, =like=, and =you know=;
+set =eve-transcribe-hotwords= or pass =--hotwords= to override them.  For
+=transformers= and =nemo=, choose a verbatim-friendly model instead.
 
 Good starting points:
 - =transformers=: =nyrahealth/CrisperWhisper=
@@ -267,6 +270,7 @@ Good starting points:
 | =eve-transcribe-backend= | ="faster-whisper"= | Backend name passed to =eve transcribe=. |
 | =eve-transcribe-model= | ="medium.en"= | Model identifier. |
 | =eve-transcribe-verbatim= | =t= | Pass =--verbatim= to the backend. |
+| =eve-transcribe-hotwords= | =nil= | Optional hotwords override; nil uses CLI defaults. |
 | =eve-transcribe-tag-fillers= | =t= | Tag filler words during transcription. |
 | =eve-media-extensions= | =("mp4" "mov" ...)= | File types scanned by =eve-transcribe=. |
 
@@ -323,6 +327,11 @@ Deleted content is shown or hidden with =C-c C-h= (=eve-hide-deleted-mode=).
 
 - =J= (=eve-move-segment-down=) — move the current segment one position down.
 - =K= (=eve-move-segment-up=) — move the current segment one position up.
+- =y= (=eve-copy-segment=) — copy the current segment or marker, including edit
+  metadata such as b-roll.
+- =C-y= (=eve-paste-segment=) — paste the copied segment after point.  Pasting
+  into another TJM buffer also copies the referenced source descriptor when
+  needed.
 
 ** Markers and sections
 
@@ -330,9 +339,11 @@ Press =o= (=eve-insert-marker=) to insert a marker above the current segment.
 Markers act as named section headings.  They appear in the buffer as bold
 titles.
 
-When you compile with =C-c C-c= while point is on a marker, only the segments
-in that section are compiled.  This is useful for working on one chapter of a
-longer video.
+When you compile with =C-c C-c= while point is on a marker, the marker and the
+segments in that section are compiled.  Plain markers are structural headings and
+render no media, but a marker with =edit.broll= is included as a timeline unit.
+This is useful for intro cards, outro cards, interstitial title cards, and for
+working on one chapter of a longer video.
 
 ** Inline editing
 
@@ -382,8 +393,12 @@ distinct face and excluded from compilation.  You can untag them at any time.
 #+end_src
 
 =eve-filler-phrases= stores phrases as plain strings.  Matching is
-case-insensitive and ignores punctuation.  The list is persisted when you use
-the interactive add commands.
+case-insensitive, punctuation-insensitive, and prefers the longest phrase first.
+For example, ="you know"= matches adjacent words like =you know,= and tags both
+words as a filler phrase; it does not tag separated words such as =you ...
+know=.  The CLI =eve tag-fillers --filler "you know"= follows the same adjacent
+phrase semantics and writes the canonical =word.edit.kind = "filler"= metadata.
+The list is persisted when you use the interactive add commands.
 
 The legacy =eve-filler-regex= variable is still honoured for backwards
 compatibility but =eve-filler-phrases= is preferred.
@@ -394,6 +409,8 @@ compatibility but =eve-filler-phrases= is preferred.
 |-----+---------+-------------|
 | =f= | =eve-dwim-filler= | Add the word at point to phrases and retag; or delete region as filler. |
 | =F= | =eve-delete-fillers= | Mark all tagged fillers as deleted. |
+| =A= | =eve-accept-filler= | Accept the filler at point by removing its filler tag. |
+| =]f= / =[f= | =eve-next-filler= / =eve-previous-filler= | Jump to next / previous visible filler. |
 | =C-c C-d= | =eve-delete-fillers= | Same as =F= from the =C-c= prefix map. |
 | — | =M-x eve-tag-fillers= | Tag all matching words in the buffer. |
 | — | =M-x eve-add-filler-at-point= | Add the word at point to =eve-filler-phrases= and retag. |
@@ -403,7 +420,8 @@ compatibility but =eve-filler-phrases= is preferred.
 
 Fillers are tagged automatically every time a TJM manifest is opened.  If you
 add a new phrase to =eve-filler-phrases=, reopen the file or run
-=M-x eve-tag-fillers= to apply the updated list.
+=M-x eve-tag-fillers= to apply the updated list.  Accepted fillers are simply
+untagged, so explicit re-tagging may mark them as fillers again.
 
 * B-Roll
 :PROPERTIES:
@@ -660,10 +678,17 @@ Eve's rendering pipeline is designed to be fast after the first run:
   manifest, keyed by a SHA-256 hash of the segment's content and encoding
   settings.  Unchanged segments are reused; only changed ones re-encode.
 
-- *Speculative pre-rendering* — after each save, an idle timer
-  (=eve-auto-render-idle-seconds=) fires a background render of the segments
-  that changed.  When you press =C-c C-c=, the cache is already warm and
-  compilation reduces to a concat step.
+- *Speculative pre-rendering* — when =eve-auto-render-mode= is enabled, after
+  each save an idle timer (=eve-auto-render-idle-seconds=) fires a low-priority
+  background render of the segments that changed.  When you press =C-c C-c=,
+  the cache is already warm and compilation reduces to a concat step.  Use
+  =M-x eve-render-cache-changed= to warm changed segments immediately, or
+  =M-x eve-render-cache-all= to proactively warm every segment cache entry.
+
+- *Context thumbnails* — timestamp rows in the optional context side panel can
+  show cached thumbnails from the rendered output when it already exists and is
+  fresh, falling back to source media frames.  Thumbnail extraction is lazy,
+  visible-row-driven, low-priority, and never triggers a full render.
 
 ** Pre-flight validation
 
@@ -716,8 +741,15 @@ partial file, which Emacs can use to update a live preview.
 | =eve-compile-scale= | =1.0= | Resolution scale for draft (e.g. =0.5= = half res). |
 | =eve-compile-cache= | =t= | Use the =.eve-cache/= segment cache. |
 | =eve-compile-confirm-threshold= | =30= | Estimated seconds above which a confirmation prompt appears. |
-| =eve-auto-render= | =t= | Speculatively pre-render changed segments after each save. |
+| =eve-auto-render-default-enabled= | =t= | Enable =eve-auto-render-mode= in new Eve buffers. |
 | =eve-auto-render-idle-seconds= | =2.0= | Idle delay before the speculative render fires. |
+| =eve-auto-render-low-priority= | =t= | Run speculative renders via =nice -n 19= when available. |
+| =eve-auto-render-all-segments= | =nil= | Auto-render all segment ids after save instead of only changed ones. |
+| =eve-context-thumbnails-enabled= | =t= | Show thumbnails on context-panel timestamp rows. |
+| =eve-context-thumbnail-source= | =best= | Use rendered thumbnails when available, falling back to source media. |
+| =eve-context-thumbnail-width= | =96= | Context thumbnail width in pixels. |
+| =eve-context-thumbnail-height= | =54= | Context thumbnail height in pixels. |
+| =eve-context-thumbnail-jobs= | =1= | Maximum concurrent thumbnail extraction jobs. |
 | =eve-play-after-compile= | =nil= | When non-nil, play the output automatically after compilation. |
 | =eve-preserve-gaps-max= | =2.0= | Maximum gap (seconds) that is preserved between segments. |
 
@@ -743,6 +775,16 @@ eve text-edit manifest.tjm.json --output out.mp4 [FLAGS]
 --partial-every N       Write a partial .mp4 every N segments
 #+end_example
 
+Filler tagging can also be run from the CLI:
+
+#+begin_example
+eve tag-fillers manifest.tjm.json --filler "you know"
+#+end_example
+
+Repeated =--filler= values may be single words or adjacent multi-word phrases.
+Matches are case- and punctuation-insensitive, and classification is written to
+=word.edit.kind=.
+
 * Playback
 :PROPERTIES:
 :DESCRIPTION: Live preview of source and rendered video.
@@ -759,7 +801,7 @@ Playback position maps directly to the original recording timestamps.
 
 ** Rendered playback
 
-=C-u C-c SPC= (=eve-play= with prefix) or =C-c C-p= (=eve-play-rendered=)
+=C-u C-c SPC= (=eve-play= with prefix) or =C-c C-r= (=eve-play-rendered=)
 plays the compiled output file.  If the output is missing or older than the
 manifest, eve compiles it first.
 
@@ -836,6 +878,40 @@ The total rendered duration appears in the mode line.
 
 Toggle the ruler with =C-c C-l= (=eve-ruler-mode=).
 
+** Context panels
+
+=C-c C-p= (=eve-context-panels-open=) opens or refreshes the optional Eve
+context UI when the =context-panels= package is available.  It opens the side
+panel plus the current-segment bottom editor, then focuses the bottom panel for
+rapid review.  During the optional-first migration, Eve continues to work
+without that package.
+
+Opening the side panel disables the legacy right-margin =eve-ruler-mode= while
+the panel is active.  The side panel shows fixed rendered-timeline timestamp
+landmarks using the same interval, anchored to the corresponding visible
+transcript row when possible.  Internal segment ids are intentionally hidden.
+Segments and markers with b-roll also get compact =🎞= rows showing file
+basename, duration, and configuration glyphs such as =▣=
+replace, =⊕= overlay, =◱= picture-in-picture, =🎙= source audio, =♪= b-roll
+audio, =🔇= mute, =→= continue, =▧= still, ={…}= placeholders, and =▭=
+overlays.
+
+The bottom panel is a current-segment cockpit.  It repeats the canonical timed
+transcript words, shows segment timing/speaker/tags state, b-roll status, and
+key-hinted action rows.  In the bottom panel, =w= / =b= move between visible
+words, =v= toggles a panel-local word selection, =j= / =n= and =k= / =p= move to
+next/previous segments while keeping focus in the panel, =q= returns focus to
+the source buffer, and =Q= closes the bottom panel.  Panel selection is visual
+and does not mutate the source buffer's region.
+
+#+begin_src emacs-lisp
+;; Enable local development integration outside eve.el itself.
+(add-to-list 'load-path "~/ws/context-panels")
+#+end_src
+
+Set =eve-context-panels-auto-open= to non-nil to open context panels
+automatically when entering =eve-mode=.
+
 ** Hiding deleted segments
 
 =C-c C-h= (=eve-hide-deleted-mode=) toggles visibility of deleted words and
@@ -850,6 +926,9 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 
 | Variable | Default | Description |
 |----------+---------+-------------|
+| =eve-context-panels-auto-open= | =nil= | Open context panels automatically when available. |
+| =eve-segment-panel-height= | =12= | Height of the current-segment bottom panel. |
+| =eve-line-spacing= | =2= | Additional pixel spacing between transcript lines. |
 | =eve-ruler-interval= | =30.0= | Seconds between ruler markers. |
 | =eve-show-words-by-default= | =nil= | Show word timings on buffer open. |
 | =eve-validation-on-save= | =t= | Validate manifest on every save. |
@@ -940,79 +1019,22 @@ The two layers communicate through:
 :DESCRIPTION: Working on eve.el and the CLI.
 :END:
 
-** devenv commands
+This manual focuses on using Eve.
 
-The project uses [[https://devenv.sh][devenv]] at the repository root.
+For contributor setup, local commands, CI parity, and documentation generation,
+see [[file:../CONTRIBUTING.md][CONTRIBUTING.md]].
 
-#+begin_src shell
-# Emacs
-devenv shell -- format-elisp   # Format .el files
-devenv shell -- parse           # Check Emacs Lisp syntax
-devenv shell -- checkdoc        # Lint docstrings
-devenv shell -- load-check      # Verify the package loads
-devenv shell -- compile         # Byte-compile
-devenv shell -- test-elisp      # Run ERT tests
-
-# Python CLI
-devenv shell -- sync-py         # Install Python deps
-devenv shell -- format-py       # Format Python code
-devenv shell -- lint-py         # Run ruff / mypy
-devenv shell -- test-py         # Run pytest
-devenv shell -- build-py        # Build the wheel
-devenv shell -- run-cli -- --help
-
-# Combined
-devenv shell -- format          # Format all
-devenv shell -- lint            # Lint all
-devenv shell -- test            # Test all
-devenv shell -- ci              # Full CI pipeline
-
-# Documentation
-devenv shell -- docs            # Generate eve.texi and eve.info
-#+end_src
-
-** Running tests
+The combined local test command is:
 
 #+begin_src shell
-# ERT (Emacs Lisp)
-devenv shell -- test-elisp
-# or directly:
-emacs --batch -Q -L . -l ert -l test/eve-test.el -f ert-run-tests-batch-and-exit
-
-# Pytest (Python CLI)
-devenv shell -- test-py
-# or directly:
-PYTHONPATH=cli/src python3 -m pytest cli/tests/
+devenv shell -- test-all
 #+end_src
 
-** Project layout
+If you are editing this manual itself, regenerate the Info output with:
 
-#+begin_example
-eve.el            Main Emacs library
-test/             ERT test suite
-docs/             User documentation
-  eve.org           This manual (source)
-  eve.texi          Texinfo export (generated)
-  eve.info          Info file (generated)
-  tjm-spec.md       TJM v1.1 format specification
-  internal/         Working documents and migration notes
-cli/              Python package
-  src/eve_cli/      CLI source
-  tests/            Pytest suite
-scripts/          Build helpers
-#+end_example
-
-** Dependencies
-
-Hard requirements:
-
-- Emacs 29.1+
-- mpv (playback)
-- =eve= CLI (transcription and rendering)
-
-Optional:
-
-- =hydra= — enables the =?= graphical cheatsheet popup
+#+begin_src shell
+devenv shell -- docs
+#+end_src
 
 * Appendix A: TJM v1.1 Specification
 :PROPERTIES:

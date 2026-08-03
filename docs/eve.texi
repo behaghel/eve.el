@@ -141,6 +141,7 @@ Playback
 Display
 
 * Timestamp ruler::
+* Context panels::
 * Hiding deleted segments::
 * Word-level display::
 
@@ -155,13 +156,6 @@ Architecture
 
 * Two-layer boundary::
 * Shared contract::
-
-Development
-
-* devenv commands::
-* Running tests::
-* Project layout::
-* Dependencies::
 
 @end detailmenu
 @end menu
@@ -201,7 +195,8 @@ The typical eve session looks like this:
 @enumerate
 @item
 @strong{Transcribe} — run @samp{M-x eve-transcribe} on a directory of raw recordings.
-Eve calls @samp{eve transcribe} and opens the resulting @samp{.tjm.json} in eve-mode.
+Eve calls @samp{eve transcribe}, shows a visible running status while work is in
+progress, and opens the resulting @samp{.tjm.json} in eve-mode on success.
 
 @item
 @strong{Edit} — delete filler words (@samp{d}, @samp{f}, @samp{F}), reorder segments (@samp{J}, @samp{K}),
@@ -265,12 +260,16 @@ does not reproduce it in full.
 @node Installing the CLI
 @subsection Installing the CLI
 
-The @samp{eve} CLI ships as a Python package inside this repository.  On a fresh
-clone it bootstraps itself automatically via @samp{scripts/run-cli.sh} using the
-pre-built wheel in @samp{cli/dist/} — no @samp{uv} or Python package manager required
-at runtime.
+The Emacs package first looks for an @samp{eve} executable on your @samp{PATH}.  If it
+does not find one, and @samp{eve-cli-program} is still set to its default @samp{"eve"},
+it falls back to @samp{scripts/run-cli.sh} inside this checkout.  That script
+creates a local virtualenv and installs the pre-built wheel from @samp{cli/dist/}.
 
-To install @samp{eve} globally so @samp{M-x eve-transcribe} can find it:
+For standard in-Emacs use, that local bootstrap path means a separate global
+@samp{eve} install is optional.  The fallback path assumes Python 3.12 or later is
+available and that the package checkout is writable.
+
+If you want @samp{eve} on your @samp{PATH} for shell use, install it globally:
 
 @example
 pip install cli/dist/eve_cli-*.whl
@@ -315,14 +314,8 @@ Opening any @samp{*.tjm.json} file then activates @samp{eve-mode} automatically.
 @node Accessing the manual in Emacs
 @subsection Accessing the manual in Emacs
 
-After installing the package, add the @samp{docs/} directory to Emacs's Info path:
-
-@lisp
-(add-to-list 'Info-directory-list
-             (expand-file-name "docs" (file-name-directory (locate-library "eve"))))
-@end lisp
-
-Then browse the manual with @samp{C-h i m eve RET}.
+Eve registers its bundled Info manual automatically when the package is loaded.
+Browse it with @samp{M-x eve-info} or @samp{C-h i m eve RET}.
 
 @node Quick Start
 @section Quick Start
@@ -339,8 +332,9 @@ M-x eve-transcribe RET
 @end example
 
 Select the directory containing your @samp{.mp4} files.  Eve starts
-@samp{eve transcribe} in the background.  When it finishes, the manifest opens
-automatically in eve-mode.
+@samp{eve transcribe} in the background, keeps a visible @samp{Eve: transcribing…}
+status in the mode line while it runs, and opens the manifest
+automatically in eve-mode when it finishes.
 
 @item
 @strong{Read through the transcript}
@@ -464,7 +458,8 @@ Two commands launch transcription:
 @itemize
 @item
 @samp{M-x eve-transcribe} prompts for a directory, scans for media files, and
-starts @samp{eve transcribe} asynchronously.  On success the manifest opens
+starts @samp{eve transcribe} asynchronously.  While it runs, Eve shows a visible
+@samp{Eve: transcribing…} mode-line status.  On success the manifest opens
 automatically in eve-mode.
 
 @item
@@ -496,8 +491,10 @@ output.
 @end multitable
 
 The @samp{--verbatim} flag (on by default in Emacs) biases @samp{faster-whisper} toward
-preserving disfluencies and filler words.  For @samp{transformers} and @samp{nemo},
-choose a verbatim-friendly model instead.
+preserving disfluencies and filler words.  In verbatim mode, faster-whisper also
+receives default filler hotwords such as @samp{um}, @samp{uh}, @samp{like}, and @samp{you know};
+set @samp{eve-transcribe-hotwords} or pass @samp{--hotwords} to override them.  For
+@samp{transformers} and @samp{nemo}, choose a verbatim-friendly model instead.
 
 Good starting points:
 @itemize
@@ -510,7 +507,7 @@ Good starting points:
 @node Configuration
 @section Configuration
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
@@ -523,6 +520,9 @@ Good starting points:
 @item @samp{eve-transcribe-verbatim}
 @tab @samp{t}
 @tab Pass @samp{--verbatim} to the backend.
+@item @samp{eve-transcribe-hotwords}
+@tab @samp{nil}
+@tab Optional hotwords override; nil uses CLI defaults.
 @item @samp{eve-transcribe-tag-fillers}
 @tab @samp{t}
 @tab Tag filler words during transcription.
@@ -617,6 +617,13 @@ one below, combining text and adjusting the end time.
 @samp{J} (@samp{eve-move-segment-down}) — move the current segment one position down.
 @item
 @samp{K} (@samp{eve-move-segment-up}) — move the current segment one position up.
+@item
+@samp{y} (@samp{eve-copy-segment}) — copy the current segment or marker, including edit
+metadata such as b-roll.
+@item
+@samp{C-y} (@samp{eve-paste-segment}) — paste the copied segment after point.  Pasting
+into another TJM buffer also copies the referenced source descriptor when
+needed.
 @end itemize
 
 @node Markers and sections
@@ -626,9 +633,11 @@ Press @samp{o} (@samp{eve-insert-marker}) to insert a marker above the current s
 Markers act as named section headings.  They appear in the buffer as bold
 titles.
 
-When you compile with @samp{C-c C-c} while point is on a marker, only the segments
-in that section are compiled.  This is useful for working on one chapter of a
-longer video.
+When you compile with @samp{C-c C-c} while point is on a marker, the marker and the
+segments in that section are compiled.  Plain markers are structural headings and
+render no media, but a marker with @samp{edit.broll} is included as a timeline unit.
+This is useful for intro cards, outro cards, interstitial title cards, and for
+working on one chapter of a longer video.
 
 @node Inline editing
 @section Inline editing
@@ -704,8 +713,12 @@ distinct face and excluded from compilation.  You can untag them at any time.
 @end lisp
 
 @samp{eve-filler-phrases} stores phrases as plain strings.  Matching is
-case-insensitive and ignores punctuation.  The list is persisted when you use
-the interactive add commands.
+case-insensitive, punctuation-insensitive, and prefers the longest phrase first.
+For example, @samp{"you know"} matches adjacent words like @samp{you know,} and tags both
+words as a filler phrase; it does not tag separated words such as @samp{you ...
+know}.  The CLI @samp{eve tag-fillers --filler "you know"} follows the same adjacent
+phrase semantics and writes the canonical @samp{word.edit.kind = "filler"} metadata.
+The list is persisted when you use the interactive add commands.
 
 The legacy @samp{eve-filler-regex} variable is still honoured for backwards
 compatibility but @samp{eve-filler-phrases} is preferred.
@@ -713,7 +726,7 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @node Commands
 @section Commands
 
-@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Key
 @tab Command
 @tab Description
@@ -723,6 +736,12 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @item @samp{F}
 @tab @samp{eve-delete-fillers}
 @tab Mark all tagged fillers as deleted.
+@item @samp{A}
+@tab @samp{eve-accept-filler}
+@tab Accept the filler at point by removing its filler tag.
+@item @samp{]f} / @samp{[f}
+@tab @samp{eve-next-filler} / @samp{eve-previous-filler}
+@tab Jump to next / previous visible filler.
 @item @samp{C-c C-d}
 @tab @samp{eve-delete-fillers}
 @tab Same as @samp{F} from the @samp{C-c} prefix map.
@@ -742,7 +761,8 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 
 Fillers are tagged automatically every time a TJM manifest is opened.  If you
 add a new phrase to @samp{eve-filler-phrases}, reopen the file or run
-@samp{M-x eve-tag-fillers} to apply the updated list.
+@samp{M-x eve-tag-fillers} to apply the updated list.  Accepted fillers are simply
+untagged, so explicit re-tagging may mark them as fillers again.
 
 @node B-Roll
 @chapter B-Roll
@@ -1119,10 +1139,18 @@ manifest, keyed by a SHA-256 hash of the segment's content and encoding
 settings.  Unchanged segments are reused; only changed ones re-encode.
 
 @item
-@strong{Speculative pre-rendering} — after each save, an idle timer
-(@samp{eve-auto-render-idle-seconds}) fires a background render of the segments
-that changed.  When you press @samp{C-c C-c}, the cache is already warm and
-compilation reduces to a concat step.
+@strong{Speculative pre-rendering} — when @samp{eve-auto-render-mode} is enabled, after
+each save an idle timer (@samp{eve-auto-render-idle-seconds}) fires a low-priority
+background render of the segments that changed.  When you press @samp{C-c C-c},
+the cache is already warm and compilation reduces to a concat step.  Use
+@samp{M-x eve-render-cache-changed} to warm changed segments immediately, or
+@samp{M-x eve-render-cache-all} to proactively warm every segment cache entry.
+
+@item
+@strong{Context thumbnails} — timestamp rows in the optional context side panel can
+show cached thumbnails from the rendered output when it already exists and is
+fresh, falling back to source media frames.  Thumbnail extraction is lazy,
+visible-row-driven, low-priority, and never triggers a full render.
 @end itemize
 
 @node Pre-flight validation
@@ -1180,7 +1208,7 @@ partial file, which Emacs can use to update a live preview.
 @node Configuration reference
 @section Configuration reference
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
@@ -1199,12 +1227,33 @@ partial file, which Emacs can use to update a live preview.
 @item @samp{eve-compile-confirm-threshold}
 @tab @samp{30}
 @tab Estimated seconds above which a confirmation prompt appears.
-@item @samp{eve-auto-render}
+@item @samp{eve-auto-render-default-enabled}
 @tab @samp{t}
-@tab Speculatively pre-render changed segments after each save.
+@tab Enable @samp{eve-auto-render-mode} in new Eve buffers.
 @item @samp{eve-auto-render-idle-seconds}
 @tab @samp{2.0}
 @tab Idle delay before the speculative render fires.
+@item @samp{eve-auto-render-low-priority}
+@tab @samp{t}
+@tab Run speculative renders via @samp{nice -n 19} when available.
+@item @samp{eve-auto-render-all-segments}
+@tab @samp{nil}
+@tab Auto-render all segment ids after save instead of only changed ones.
+@item @samp{eve-context-thumbnails-enabled}
+@tab @samp{t}
+@tab Show thumbnails on context-panel timestamp rows.
+@item @samp{eve-context-thumbnail-source}
+@tab @samp{best}
+@tab Use rendered thumbnails when available, falling back to source media.
+@item @samp{eve-context-thumbnail-width}
+@tab @samp{96}
+@tab Context thumbnail width in pixels.
+@item @samp{eve-context-thumbnail-height}
+@tab @samp{54}
+@tab Context thumbnail height in pixels.
+@item @samp{eve-context-thumbnail-jobs}
+@tab @samp{1}
+@tab Maximum concurrent thumbnail extraction jobs.
 @item @samp{eve-play-after-compile}
 @tab @samp{nil}
 @tab When non-nil, play the output automatically after compilation.
@@ -1236,6 +1285,16 @@ eve text-edit manifest.tjm.json --output out.mp4 [FLAGS]
 --partial-every N       Write a partial .mp4 every N segments
 @end example
 
+Filler tagging can also be run from the CLI:
+
+@example
+eve tag-fillers manifest.tjm.json --filler "you know"
+@end example
+
+Repeated @samp{--filler} values may be single words or adjacent multi-word phrases.
+Matches are case- and punctuation-insensitive, and classification is written to
+@samp{word.edit.kind}.
+
 @node Playback
 @chapter Playback
 
@@ -1260,7 +1319,7 @@ Playback position maps directly to the original recording timestamps.
 @node Rendered playback
 @section Rendered playback
 
-@samp{C-u C-c SPC} (@samp{eve-play} with prefix) or @samp{C-c C-p} (@samp{eve-play-rendered})
+@samp{C-u C-c SPC} (@samp{eve-play} with prefix) or @samp{C-c C-r} (@samp{eve-play-rendered})
 plays the compiled output file.  If the output is missing or older than the
 manifest, eve compiles it first.
 
@@ -1350,6 +1409,7 @@ Configuration:
 
 @menu
 * Timestamp ruler::
+* Context panels::
 * Hiding deleted segments::
 * Word-level display::
 @end menu
@@ -1371,6 +1431,41 @@ The total rendered duration appears in the mode line.
 
 Toggle the ruler with @samp{C-c C-l} (@samp{eve-ruler-mode}).
 
+@node Context panels
+@section Context panels
+
+@samp{C-c C-p} (@samp{eve-context-panels-open}) opens or refreshes the optional Eve
+context UI when the @samp{context-panels} package is available.  It opens the side
+panel plus the current-segment bottom editor, then focuses the bottom panel for
+rapid review.  During the optional-first migration, Eve continues to work
+without that package.
+
+Opening the side panel disables the legacy right-margin @samp{eve-ruler-mode} while
+the panel is active.  The side panel shows fixed rendered-timeline timestamp
+landmarks using the same interval, anchored to the corresponding visible
+transcript row when possible.  Internal segment ids are intentionally hidden.
+Segments and markers with b-roll also get compact @samp{🎞} rows showing file
+basename, duration, and configuration glyphs such as @samp{▣}
+replace, @samp{⊕} overlay, @samp{◱} picture-in-picture, @samp{🎙} source audio, @samp{♪} b-roll
+audio, @samp{🔇} mute, @samp{→} continue, @samp{▧} still, @samp{@{…@}} placeholders, and @samp{▭}
+overlays.
+
+The bottom panel is a current-segment cockpit.  It repeats the canonical timed
+transcript words, shows segment timing/speaker/tags state, b-roll status, and
+key-hinted action rows.  In the bottom panel, @samp{w} / @samp{b} move between visible
+words, @samp{v} toggles a panel-local word selection, @samp{j} / @samp{n} and @samp{k} / @samp{p} move to
+next/previous segments while keeping focus in the panel, @samp{q} returns focus to
+the source buffer, and @samp{Q} closes the bottom panel.  Panel selection is visual
+and does not mutate the source buffer's region.
+
+@lisp
+;; Enable local development integration outside eve.el itself.
+(add-to-list 'load-path "~/ws/context-panels")
+@end lisp
+
+Set @samp{eve-context-panels-auto-open} to non-nil to open context panels
+automatically when entering @samp{eve-mode}.
+
 @node Hiding deleted segments
 @section Hiding deleted segments
 
@@ -1389,6 +1484,15 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 @headitem Variable
 @tab Default
 @tab Description
+@item @samp{eve-context-panels-auto-open}
+@tab @samp{nil}
+@tab Open context panels automatically when available.
+@item @samp{eve-segment-panel-height}
+@tab @samp{12}
+@tab Height of the current-segment bottom panel.
+@item @samp{eve-line-spacing}
+@tab @samp{2}
+@tab Additional pixel spacing between transcript lines.
 @item @samp{eve-ruler-interval}
 @tab @samp{30.0}
 @tab Seconds between ruler markers.
@@ -1444,6 +1548,8 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-play-segment}
 @item @samp{SPC}
 @tab @samp{eve-play-segment}
+@item @samp{A}
+@tab @samp{eve-accept-filler}
 @item @samp{F}
 @tab @samp{eve-delete-fillers}
 @item @samp{f}
@@ -1462,6 +1568,10 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-insert-marker}
 @item @samp{e}
 @tab @samp{eve-dwim-edit}
+@item @samp{C-y}
+@tab @samp{eve-paste-segment}
+@item @samp{y}
+@tab @samp{eve-copy-segment}
 @item @samp{C-r}
 @tab @samp{eve-redo}
 @item @samp{u}
@@ -1506,8 +1616,6 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-play}
 @item @samp{C-c C-s}
 @tab @samp{eve-play-source}
-@item @samp{C-c C-p}
-@tab @samp{eve-play-rendered}
 @item @samp{C-c C-t}
 @tab @samp{eve-transcribe}
 @item @samp{C-c C-l}
@@ -1518,12 +1626,18 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-hide-deleted-mode}
 @item @samp{C-c C-o}
 @tab @samp{eve-open-raw-json}
+@item @samp{C-c C-p}
+@tab @samp{eve-context-panels-open}
 @item @samp{C-c C-r}
-@tab @samp{eve-reload}
+@tab @samp{eve-play-rendered}
 @item @samp{C-c C-v}
 @tab @samp{eve-validate}
 @item @samp{C-c C-c}
 @tab @samp{eve-compile}
+@item @samp{[ f}
+@tab @samp{eve-previous-filler}
+@item @samp{] f}
+@tab @samp{eve-next-filler}
 @end multitable
 
 Prefix-arg variants: @samp{C-u C-c C-c} compiles at final quality; @samp{C-u C-c SPC}
@@ -1573,16 +1687,22 @@ All eve variables belong to the @samp{eve} customization group.  Access it with
 The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @samp{scripts/gen-docs}.
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
-@item @samp{eve-auto-render}
+@item @samp{eve-auto-render-all-segments}
+@tab @samp{nil}
+@tab Whether speculative renders should warm every segment cache entry.
+@item @samp{eve-auto-render-default-enabled}
 @tab @samp{t}
-@tab Whether to speculatively pre-render changed segments on save.
+@tab Whether `eve-auto-render-mode' is enabled in new Eve buffers.
 @item @samp{eve-auto-render-idle-seconds}
 @tab @samp{2.0}
 @tab Idle time in seconds before a background speculative render fires after save.
+@item @samp{eve-auto-render-low-priority}
+@tab @samp{t}
+@tab Whether speculative render processes should run at low CPU priority.
 @item @samp{eve-cli-program}
 @tab @samp{"eve"}
 @tab Executable used for `eve` CLI commands.
@@ -1601,12 +1721,33 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-compile-scale}
 @tab @samp{1.0}
 @tab Resolution scale factor passed to `eve text-edit --scale'.
+@item @samp{eve-context-panels-auto-open}
+@tab @samp{nil}
+@tab When non-nil, open Eve context panels automatically in `eve-mode'.
+@item @samp{eve-context-thumbnail-height}
+@tab @samp{54}
+@tab Height in pixels for context-panel timestamp thumbnails.
+@item @samp{eve-context-thumbnail-jobs}
+@tab @samp{1}
+@tab Maximum concurrent ffmpeg thumbnail extraction jobs per Eve buffer.
+@item @samp{eve-context-thumbnail-source}
+@tab @samp{(...)}
+@tab Preferred source for context-panel timestamp thumbnails.
+@item @samp{eve-context-thumbnail-width}
+@tab @samp{96}
+@tab Width in pixels for context-panel timestamp thumbnails.
+@item @samp{eve-context-thumbnails-enabled}
+@tab @samp{t}
+@tab Whether Eve context-panel timestamp rows show video thumbnails.
 @item @samp{eve-filler-phrases}
 @tab @samp{("um" "uh")}
 @tab Filler words/phrases to tag in transcripts.
 @item @samp{eve-filler-regex}
 @tab @samp{("\\`um\\'" "\\`uh\\'")}
 @tab Regexps matched against word text when tagging filler words.
+@item @samp{eve-line-spacing}
+@tab @samp{2}
+@tab Additional pixel spacing between lines in `eve-mode' buffers.
 @item @samp{eve-media-extensions}
 @tab @samp{(...)}
 @tab Supported media extensions for transcription inputs.
@@ -1634,12 +1775,18 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-seek-short-seconds}
 @tab @samp{5}
 @tab Seconds used by short seek commands.
+@item @samp{eve-segment-panel-height}
+@tab @samp{12}
+@tab Height of the Eve current-segment bottom panel.
 @item @samp{eve-show-words-by-default}
 @tab @samp{nil}
 @tab If non-nil, show per-word timings when rendering segments.
 @item @samp{eve-transcribe-backend}
 @tab @samp{"faster-whisper"}
 @tab Backend passed to `eve transcribe'.
+@item @samp{eve-transcribe-hotwords}
+@tab @samp{nil}
+@tab Optional hotwords string passed to `eve transcribe'.
 @item @samp{eve-transcribe-model}
 @tab @samp{"medium.en"}
 @tab Model passed to `eve transcribe'.
@@ -1710,98 +1857,22 @@ with @samp{--json}; the Emacs package parses it.
 @node Development
 @chapter Development
 
-@menu
-* devenv commands::
-* Running tests::
-* Project layout::
-* Dependencies::
-@end menu
+This manual focuses on using Eve.
 
-@node devenv commands
-@section devenv commands
+For contributor setup, local commands, CI parity, and documentation generation,
+see @uref{../CONTRIBUTING.md, CONTRIBUTING.md}.
 
-The project uses @uref{https://devenv.sh, devenv} at the repository root.
+The combined local test command is:
 
 @example
-# Emacs
-devenv shell -- format-elisp   # Format .el files
-devenv shell -- parse           # Check Emacs Lisp syntax
-devenv shell -- checkdoc        # Lint docstrings
-devenv shell -- load-check      # Verify the package loads
-devenv shell -- compile         # Byte-compile
-devenv shell -- test-elisp      # Run ERT tests
-
-# Python CLI
-devenv shell -- sync-py         # Install Python deps
-devenv shell -- format-py       # Format Python code
-devenv shell -- lint-py         # Run ruff / mypy
-devenv shell -- test-py         # Run pytest
-devenv shell -- build-py        # Build the wheel
-devenv shell -- run-cli -- --help
-
-# Combined
-devenv shell -- format          # Format all
-devenv shell -- lint            # Lint all
-devenv shell -- test            # Test all
-devenv shell -- ci              # Full CI pipeline
-
-# Documentation
-devenv shell -- docs            # Generate eve.texi and eve.info
+devenv shell -- test-all
 @end example
 
-@node Running tests
-@section Running tests
+If you are editing this manual itself, regenerate the Info output with:
 
 @example
-# ERT (Emacs Lisp)
-devenv shell -- test-elisp
-# or directly:
-emacs --batch -Q -L . -l ert -l test/eve-test.el -f ert-run-tests-batch-and-exit
-
-# Pytest (Python CLI)
-devenv shell -- test-py
-# or directly:
-PYTHONPATH=cli/src python3 -m pytest cli/tests/
+devenv shell -- docs
 @end example
-
-@node Project layout
-@section Project layout
-
-@example
-eve.el            Main Emacs library
-test/             ERT test suite
-docs/             User documentation
-  eve.org           This manual (source)
-  eve.texi          Texinfo export (generated)
-  eve.info          Info file (generated)
-  tjm-spec.md       TJM v1.1 format specification
-  internal/         Working documents and migration notes
-cli/              Python package
-  src/eve_cli/      CLI source
-  tests/            Pytest suite
-scripts/          Build helpers
-@end example
-
-@node Dependencies
-@section Dependencies
-
-Hard requirements:
-
-@itemize
-@item
-Emacs 29.1+
-@item
-mpv (playback)
-@item
-@samp{eve} CLI (transcription and rendering)
-@end itemize
-
-Optional:
-
-@itemize
-@item
-@samp{hydra} — enables the @samp{?} graphical cheatsheet popup
-@end itemize
 
 @node Appendix A TJM v11 Specification
 @appendix Appendix A: TJM v1.1 Specification
