@@ -306,30 +306,33 @@ Conforming word objects use:
 
 `end_tick` MUST be strictly greater than `start_tick`.
 
-The canonical home for filler classification is `word.edit.kind`.
+The canonical home for editable filler classification is `word.edit.filler`.
+It records explicit local editorial intent for this TJM file:
 
-If a producer or editor encounters a legacy top-level `word.kind`, it SHOULD
-normalize that value into `word.edit.kind`. When both are present and differ,
-`word.edit.kind` wins and the top-level `kind` remains compatibility input only.
+- `true`: the word is explicitly marked as filler;
+- `"no-filler"`: the word is explicitly marked as not filler and SHOULD NOT be
+  auto-tagged as filler by phrase-based editor workflows;
+- absent: the word has no explicit local filler decision.
 
-If neither `word.edit.kind` nor legacy top-level `kind` is present, consumers
-MUST treat the word as if its effective kind were `"lexical"`.
+For compatibility, producers and consumers MAY also encounter legacy
+`word.edit.kind = "filler"` or top-level `word.kind = "filler"`. These legacy
+forms MUST be interpreted as an effective filler mark when `word.edit.filler` is
+absent. When `word.edit.filler` is present, it wins over both legacy locations.
 
-The interoperable effective word-kind values in TJM v1.1 are:
-
-- `lexical`: an ordinary spoken word;
-- `filler`: a spoken filler or disfluency such as `um` or `uh`.
+If none of `word.edit.filler`, `word.edit.kind`, or legacy top-level `kind` is
+present, consumers MUST treat the word as if it were lexical / not filler.
 
 Editors SHOULD preserve recognized and unrecognized kind values when
-round-tripping. Renderers MUST reject unknown effective kind values.
+round-tripping. Renderers MUST reject unknown legacy effective kind values.
 
-Word kind is descriptive metadata. It does not itself delete or rewrite the
-word.
+Filler classification is descriptive metadata. It does not itself delete or
+rewrite the word.
 
 When present, `word.edit` MUST be an object. The following interoperable
 `word.edit` members are defined in TJM v1.1:
 
-- `kind`: OPTIONAL string;
+- `filler`: OPTIONAL boolean or the string `"no-filler"`;
+- `kind`: OPTIONAL legacy compatibility string;
 - `deleted`: OPTIONAL boolean.
 
 When `word.edit.deleted` is `true`, that word's content is marked for removal
@@ -460,7 +463,14 @@ image to be converted into a synthetic video stream of the requested duration.
 
 If `still` is `true`, `audio` MUST NOT be `"broll"`.
 
-### 12.4 Picture-in-picture positioning
+### 12.4 Replace-mode frame fitting
+
+When `mode` is `"replace"`, renderers MUST preserve the complete b-roll video
+frame. If the b-roll asset aspect ratio differs from the target output aspect
+ratio, the renderer MUST fit the b-roll inside the target frame and pad the
+remaining area. It MUST NOT crop edges merely to fill the target frame.
+
+### 12.5 Picture-in-picture positioning
 
 When `mode` is `"pip"`, `position` MAY contain:
 
@@ -471,7 +481,7 @@ When `mode` is `"pip"`, `position` MAY contain:
 Consumers SHOULD default `x` and `y` to `0.05`, and `width` to `0.3` when
 values are absent.
 
-### 12.5 Time values
+### 12.6 Time values
 
 `segment.edit.broll.start_offset`, `segment.edit.broll.duration`, and marker
 `duration` MAY be expressed as either:
@@ -484,7 +494,7 @@ values are absent.
 
 Consumers MUST interpret these forms as wall-clock durations.
 
-### 12.6 Continuous b-roll chains
+### 12.7 Continuous b-roll chains
 
 If adjacent segments carry equivalent b-roll definitions and the later segment's
 `continue` flag is `true`, a rendering consumer MAY treat the sequence as a
@@ -494,7 +504,7 @@ Equivalence SHOULD be determined by the effective b-roll source, `mode`,
 `audio`, `still`, `position`, and whether the referenced `file` is itself a
 template JSON descriptor.
 
-### 12.7 Template JSON extension
+### 12.8 Template JSON extension
 
 If `segment.edit.broll.file` names a `.json` file, a renderer MAY interpret it
 as a template descriptor rather than as media directly.

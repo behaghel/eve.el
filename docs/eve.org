@@ -381,9 +381,10 @@ Eve validates the manifest automatically on every save (controlled by
 ** Concept
 
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
-workflow is non-destructive: words are /tagged/ as fillers first, then
-/optionally deleted/.  Tagged fillers are highlighted in the buffer with a
-distinct face and excluded from compilation.  You can untag them at any time.
+workflow is non-destructive: words are /marked/ as fillers first, then
+/optionally deleted/.  Marked fillers are highlighted in the buffer with a
+distinct face and excluded from compilation.  You can mark a word as non-filler
+for this TJM file so future auto-tagging leaves it alone.
 
 ** Configuration
 
@@ -394,11 +395,15 @@ distinct face and excluded from compilation.  You can untag them at any time.
 
 =eve-filler-phrases= stores phrases as plain strings.  Matching is
 case-insensitive, punctuation-insensitive, and prefers the longest phrase first.
-For example, ="you know"= matches adjacent words like =you know,= and tags both
-words as a filler phrase; it does not tag separated words such as =you ...
-know=.  The CLI =eve tag-fillers --filler "you know"= follows the same adjacent
-phrase semantics and writes the canonical =word.edit.kind = "filler"= metadata.
+For example, ="you know"= matches adjacent words like =you know,= and marks both
+words as a filler phrase; it does not mark separated words such as =you ...
+know=.  Eve stores editable filler decisions in =word.edit.filler=; legacy
+=word.edit.kind = "filler"= metadata is still recognized.
 The list is persisted when you use the interactive add commands.
+
+=eve-filler-exception-phrases= stores phrases that should not be auto-marked as
+fillers.  Exceptions win over filler phrases: if =like= is a filler but
+=would like= is an exception, the =like= in =would like= stays non-filler.
 
 The legacy =eve-filler-regex= variable is still honoured for backwards
 compatibility but =eve-filler-phrases= is preferred.
@@ -409,19 +414,20 @@ compatibility but =eve-filler-phrases= is preferred.
 |-----+---------+-------------|
 | =f= | =eve-dwim-filler= | Add the word at point to phrases and retag; or delete region as filler. |
 | =F= | =eve-delete-fillers= | Mark all tagged fillers as deleted. |
-| =A= | =eve-accept-filler= | Accept the filler at point by removing its filler tag. |
+| =A= | =eve-accept-filler= | Mark the filler at point as non-filler in this TJM file. |
 | =]f= / =[f= | =eve-next-filler= / =eve-previous-filler= | Jump to next / previous visible filler. |
 | =C-c C-d= | =eve-delete-fillers= | Same as =F= from the =C-c= prefix map. |
-| — | =M-x eve-tag-fillers= | Tag all matching words in the buffer. |
+| — | =M-x eve-tag-fillers= | Mark all matching words in the buffer. |
 | — | =M-x eve-add-filler-at-point= | Add the word at point to =eve-filler-phrases= and retag. |
 | — | =M-x eve-add-filler-region= | Add the selected phrase to =eve-filler-phrases= and retag. |
+| — | =M-x eve-add-filler-exception= | Add the word/region as a future filler exception. |
 
 ** Auto-tagging on file open
 
 Fillers are tagged automatically every time a TJM manifest is opened.  If you
 add a new phrase to =eve-filler-phrases=, reopen the file or run
-=M-x eve-tag-fillers= to apply the updated list.  Accepted fillers are simply
-untagged, so explicit re-tagging may mark them as fillers again.
+=M-x eve-tag-fillers= to apply the updated list.  Words explicitly marked as
+non-filler with =A= are persisted in the TJM file and are not auto-tagged again.
 
 * B-Roll
 :PROPERTIES:
