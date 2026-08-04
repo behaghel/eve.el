@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,6 +26,14 @@ VERBATIM_INITIAL_PROMPT = (
 )
 DEFAULT_FILLER_HOTWORDS = "um uh ah hmm like you know I mean"
 BackendRunner = Callable[[Namespace, list[pathlib.Path]], list[dict[str, Any]]]
+
+
+def _emit_progress(args: Namespace, phase: str, **fields: Any) -> None:
+    """Emit a JSON progress event when requested."""
+    if not getattr(args, "progress_json", False):
+        return
+    payload = {"event": "progress", "phase": phase, **fields, "time": time.time()}
+    print(json.dumps(payload, separators=(",", ":")), file=sys.stderr, flush=True)
 
 
 @dataclass
@@ -447,6 +456,9 @@ def transcribe_faster_whisper(
         for index, media_path in enumerate(inputs, start=1):
             source_id = f"clip{index:02d}"
             wav_path = temp_dir / f"audio_{index:02d}.wav"
+            _emit_progress(
+                args, "extract", current=index, total=len(inputs), file=str(media_path)
+            )
             ffmpeg_extract(media_path, wav_path)
 
             transcribe_kwargs: dict[str, Any] = {
@@ -467,6 +479,9 @@ def transcribe_faster_whisper(
                     temperature=0.0,
                 )
 
+            _emit_progress(
+                args, "decode", current=index, total=len(inputs), file=str(media_path)
+            )
             segments, _info = model.transcribe(str(wav_path), **transcribe_kwargs)
 
             for segment_index, segment in enumerate(segments, start=1):
@@ -510,6 +525,9 @@ def transcribe_transformers(
         for index, media_path in enumerate(inputs, start=1):
             source_id = f"clip{index:02d}"
             wav_path = temp_dir / f"audio_{index:02d}.wav"
+            _emit_progress(
+                args, "extract", current=index, total=len(inputs), file=str(media_path)
+            )
             ffmpeg_extract(media_path, wav_path)
 
             inference_kwargs: dict[str, Any] = {"return_timestamps": "word"}
@@ -517,6 +535,9 @@ def transcribe_transformers(
             if generate_kwargs:
                 inference_kwargs["generate_kwargs"] = generate_kwargs
 
+            _emit_progress(
+                args, "decode", current=index, total=len(inputs), file=str(media_path)
+            )
             result = asr_pipeline(str(wav_path), **inference_kwargs)
             for segment_index, segment in enumerate(
                 _transformers_result_to_segments(result),
@@ -558,8 +579,14 @@ def transcribe_nemo(
         for index, media_path in enumerate(inputs, start=1):
             source_id = f"clip{index:02d}"
             wav_path = temp_dir / f"audio_{index:02d}.wav"
+            _emit_progress(
+                args, "extract", current=index, total=len(inputs), file=str(media_path)
+            )
             ffmpeg_extract(media_path, wav_path)
 
+            _emit_progress(
+                args, "decode", current=index, total=len(inputs), file=str(media_path)
+            )
             results = model.transcribe([str(wav_path)], timestamps=True)
             for hypothesis in results:
                 for segment_index, segment in enumerate(
@@ -654,6 +681,11 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         action="store_true",
         help="Enable voice-activity-detection filtering (faster-whisper only)",
     )
+    parser.add_argument(
+        "--progress-json",
+        action="store_true",
+        help="Emit machine-readable progress events as JSON lines on stderr",
+    )
     parser.add_argument("--stub", action="store_true", help=argparse.SUPPRESS)
     add_json_flag(parser)
     parser.set_defaults(handler=run, command="transcribe")
@@ -680,8 +712,13 @@ def run(args: Namespace) -> int:
     }
     if not stub_mode:
         try:
+            _emit_progress(
+                args, "start", total=len(inputs), backend=args.backend, model=args.model
+            )
+            _emit_progress(args, "load-model", backend=args.backend, model=args.model)
             manifest_segments = backend_runners[args.backend](args, inputs)
             if args.max_segment_words > 0:
+                _emit_progress(args, "resegment", max_words=args.max_segment_words)
                 manifest_segments = resegment_naturally(
                     manifest_segments, args.max_segment_words
                 )
@@ -695,10 +732,12 @@ def run(args: Namespace) -> int:
         "segments": manifest_segments,
     }
     if args.tag_fillers:
+        _emit_progress(args, "tag-fillers")
         tag_manifest_fillers(manifest, DEFAULT_FILLERS)
 
     output_path = pathlib.Path(args.output).expanduser()
     ensure_dir(output_path)
+    _emit_progress(args, "write", output=str(output_path))
     with output_path.open("w", encoding="utf-8") as file_handle:
         if args.pretty:
             json.dump(manifest, file_handle, indent=2, ensure_ascii=False)
@@ -706,4 +745,7 @@ def run(args: Namespace) -> int:
             json.dump(manifest, file_handle, separators=(",", ":"), ensure_ascii=False)
             file_handle.write("\n")
 
+    _emit_progress(
+        args, "done", output=str(output_path), segments=len(manifest_segments)
+    )
     return 0

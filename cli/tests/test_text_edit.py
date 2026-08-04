@@ -585,7 +585,15 @@ def test_prepare_broll_media_and_build_commands(
     source.touch()
     calls: list[list[str]] = []
 
-    def fake_probe(_path: Path) -> dict[str, Any]:
+    def fake_probe(path: Path) -> dict[str, Any]:
+        if path == still:
+            return {
+                "width": 1280,
+                "height": 720,
+                "fps": 24.0,
+                "fps_str": "24/1",
+                "pix_fmt": "yuv420p",
+            }
         return {
             "width": 320,
             "height": 240,
@@ -631,6 +639,10 @@ def test_prepare_broll_media_and_build_commands(
     assert prepared_path.suffix == ".mp4"
     assert pix_fmt == "yuv420p"
     assert calls and calls[0][0] == text_edit.FFMPEG
+    prepared_cmd = " ".join(calls[0])
+    assert "force_original_aspect_ratio=decrease" in prepared_cmd
+    assert "pad=320:240" in prepared_cmd
+    assert "crop=320:240" not in prepared_cmd
     assert "overlay=" in " ".join(pip_cmd)
     assert replace_cmd[0] == text_edit.FFMPEG
     assert "-af" in replace_cmd
@@ -722,6 +734,31 @@ def test_render_concat_and_marker_helpers(
     assert (
         json.loads((tmp_path / "pretty.json").read_text(encoding="utf-8")) == manifest
     )
+
+
+def test_concat_segments_uses_unique_temporary_lists(tmp_path, monkeypatch):
+    """Concurrent segment concatenations must not share one concat-list file."""
+    inputs = [tmp_path / "a.mp4", tmp_path / "b.mp4"]
+    for path in inputs:
+        path.write_text("stub", encoding="utf-8")
+
+    list_files: list[str] = []
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        assert context == "concatenating rendered segments"
+        list_file = cmd[cmd.index("-i") + 1]
+        list_files.append(list_file)
+        assert Path(list_file).exists()
+
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    text_edit.concat_segments(inputs, tmp_path / "one.mp4")
+    text_edit.concat_segments(inputs, tmp_path / "two.mp4")
+
+    assert len(list_files) == 2
+    assert list_files[0] != list_files[1]
+    assert not Path(list_files[0]).exists()
+    assert not Path(list_files[1]).exists()
 
 
 def test_text_edit_helper_error_paths(tmp_path: Path) -> None:
