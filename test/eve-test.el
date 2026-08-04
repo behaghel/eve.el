@@ -2254,6 +2254,31 @@
      (should (eq (plist-get view :mode) #'eve-segment-panel-mode))
      (should (plist-get view :select)))))
 
+(ert-deftest eve-segment-panel-renders-gap-warning-for-adjacent-segments ()
+  "Segment panel surfaces adjacent source gaps on the first line and CTA area."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let ((second '((id . "seg-2")
+                   (source . "clip")
+                   (start . 20.0)
+                   (end . 21.0)
+                   (text . "zeta")
+                   (words . (((start . 20.0) (end . 21.0) (token . "zeta")))))))
+     (setq-local eve-gap-indicator-duration 5.0)
+     (setf (alist-get 'segments eve--data)
+           (append (alist-get 'segments eve--data) (list second)))
+     (eve--render)
+     (delete-other-windows)
+     (let ((source (current-buffer)))
+       (eve-context-panels-open)
+       (with-current-buffer (buffer-local-value 'context-panels-bottom-panel-buffer source)
+         (setq eve-segment-panel-segment-id "seg-1")
+         (eve--segment-panel-refresh)
+         (goto-char (point-min))
+         (should (looking-at-p "seg-1  ⏱ gap 16\\.0s"))
+         (should (string-match-p "⏱ gap after — U regen through seg-2"
+                                 (buffer-string))))))))
+
 (ert-deftest eve-segment-panel-renders-current-segment-summary ()
   "The segment bottom panel renders a compact current segment cockpit."
   (skip-unless (featurep 'context-panels))
@@ -2417,6 +2442,33 @@
              (should (assoc "/usr/bin/eve" commands))))
        (ignore-errors (delete-file media))))))
 
+(ert-deftest eve-segment-panel-regenerate-until-defaults-to-gap-end ()
+  "Regenerate-until prompt default repairs adjacent source gaps."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let ((second '((id . "seg-2")
+                   (source . "clip")
+                   (start . 20.0)
+                   (end . 21.0)
+                   (text . "zeta")
+                   (words . (((start . 20.0) (end . 21.0) (token . "zeta")))))))
+     (setq-local eve-gap-indicator-duration 5.0)
+     (setf (alist-get 'segments eve--data)
+           (append (alist-get 'segments eve--data) (list second)))
+     (eve--render)
+     (delete-other-windows)
+     (let ((source (current-buffer)))
+       (eve-context-panels-open)
+       (with-current-buffer (buffer-local-value 'context-panels-bottom-panel-buffer source)
+         (setq eve-segment-panel-segment-id "seg-1")
+         (should (equal (eve--segment-panel-next-segment-id) "seg-2"))
+         (setq eve-segment-panel-segment-id "seg-2")
+         (should (equal (eve--segment-panel-next-segment-id) "seg-2"))
+         (should (equal (alist-get 'id
+                                   (eve--segment-panel-regenerate-start-segment
+                                    "seg-2"))
+                        "seg-1")))))))
+
 (ert-deftest eve-segment-panel-regenerate-until-defaults-to-next-segment ()
   "Regenerate-until prompt default uses the next non-marker after the panel id."
   (skip-unless (featurep 'context-panels))
@@ -2437,7 +2489,7 @@
      (let ((source (current-buffer)))
        (eve-context-panels-open)
        (with-current-buffer (buffer-local-value 'context-panels-bottom-panel-buffer source)
-         (should (equal eve-segment-panel-segment-id "seg-1"))
+         (setq eve-segment-panel-segment-id "seg-1")
          (should (equal (eve--segment-panel-next-segment-id) "seg-2")))))))
 
 (ert-deftest eve-segment-panel-regenerate-until-replaces-inclusive-range ()
@@ -2474,6 +2526,7 @@
                                 (insert "{\"segments\":[{\"text\":\"bravo\",\"words\":[{\"start\":0.2,\"end\":0.7,\"token\":\"bravo\"}]}]}"))))
                           0)))
                (with-current-buffer (buffer-local-value 'context-panels-bottom-panel-buffer source)
+                 (setq eve-segment-panel-segment-id "seg-1")
                  (eve-segment-panel-regenerate-until "seg-2" "faster-whisper" "large-v3")))
              (with-current-buffer source
                (let ((segments (eve--segments)))
@@ -2641,6 +2694,72 @@
      (should (eve--goto-segment "seg-1"))
      (call-interactively #'eve-next-segment)
      (should (equal (eve--segment-id-at-point) "seg-3")))))
+
+(ert-deftest eve-renders-source-gap-indicator-between-segments ()
+  "Significant source gaps render a compact in-flow indicator."
+  (eve-test-with-buffer
+   (let ((second '((id . "seg-2")
+                   (source . "clip")
+                   (start . 20.0)
+                   (end . 21.0)
+                   (text . "zeta")
+                   (words . (((start . 20.0) (end . 21.0) (token . "zeta")))))))
+     (setq-local eve-gap-indicator-duration 5.0)
+     (setf (alist-get 'segments eve--data)
+           (append (alist-get 'segments eve--data) (list second)))
+     (eve--render)
+     (should (string-match-p "\\[⏱ gap 16\\.0s\\] zeta" (buffer-string)))
+     (let ((seg-1-bounds (eve--segment-bounds "seg-1"))
+           (gap-pos (save-excursion
+                      (goto-char (point-min))
+                      (search-forward "[⏱ gap")
+                      (match-beginning 0))))
+       (should-not (and (<= (car seg-1-bounds) gap-pos)
+                        (< gap-pos (cdr seg-1-bounds)))))
+     (let ((items (eve--context-panel-side-items (current-buffer))))
+       (should (seq-find (lambda (item)
+                           (and (eq (plist-get item :kind) 'gap)
+                                (string-match-p "⏱ gap 16\\.0s" (plist-get item :label))))
+                         items))))))
+
+(ert-deftest eve-source-gap-indicator-ignores-gaps-explained-by-deleted-segments ()
+  "Deleted media segments between visible segments suppress source gap warnings."
+  (eve-test-with-buffer
+   (let ((deleted '((id . "seg-deleted")
+                    (source . "clip")
+                    (start . 4.0)
+                    (end . 19.0)
+                    (edit . ((deleted . t)))
+                    (text . "deleted")
+                    (words . (((start . 4.0) (end . 19.0) (token . "deleted"))))))
+         (second '((id . "seg-2")
+                   (source . "clip")
+                   (start . 20.0)
+                   (end . 21.0)
+                   (text . "zeta")
+                   (words . (((start . 20.0) (end . 21.0) (token . "zeta")))))))
+     (setq-local eve-gap-indicator-duration 5.0)
+     (setf (alist-get 'segments eve--data)
+           (append (alist-get 'segments eve--data) (list deleted second)))
+     (eve--render)
+     (should-not (string-match-p "⏱ gap" (buffer-string)))
+     (should-not (seq-find (lambda (item) (eq (plist-get item :kind) 'gap))
+                           (eve--context-panel-side-items (current-buffer)))))))
+
+(ert-deftest eve-renders-suspicious-long-segment-indicators ()
+  "Suspiciously long segments receive side-panel and face indicators."
+  (eve-test-with-buffer
+   (let ((segment (car (eve--segments))))
+     (setq-local eve-validation-suspicious-segment-duration 1.0)
+     (eve--render)
+     (let ((items (eve--context-panel-side-items (current-buffer))))
+       (should (seq-find (lambda (item)
+                           (eq (plist-get item :kind) 'long-segment))
+                         items)))
+     (let ((range (eve-test--match-range "alpha beta gamma delta")))
+       (should range)
+       (should (eve-test--span-has-face-p (car range) (cdr range)
+                                          'eve-suspicious-segment-face))))))
 
 (ert-deftest eve-marker-folding-hides-section-until-next-marker ()
   "TAB on a marker folds content until the next marker."

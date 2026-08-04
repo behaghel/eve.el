@@ -137,6 +137,13 @@ Set to nil to disable suspicious-gap reprocessing."
   :type '(choice (const :tag "Disabled" nil) float)
   :group 'eve)
 
+(defcustom eve-gap-indicator-duration 5.0
+  "Source gap duration in seconds above which Eve shows gap indicators.
+Gaps are computed from adjacent non-deleted media segments with the same source,
+using source start/end times and ignoring word-level edits."
+  :type '(choice (const :tag "Disabled" nil) float)
+  :group 'eve)
+
 (defcustom eve-show-words-by-default nil
   "If non-nil, show per-word timings when rendering segments."
   :type 'boolean
@@ -340,6 +347,16 @@ which is typically blue or grey in most themes."
 (defface eve-ruler-face
   '((t :inherit font-lock-comment-face :slant italic))
   "Face used for right-margin timestamp ruler markers."
+  :group 'eve)
+
+(defface eve-gap-indicator-face
+  '((t :inherit warning :slant italic))
+  "Face used for significant source gap indicators."
+  :group 'eve)
+
+(defface eve-suspicious-segment-face
+  '((t :underline (:style wave :color "orange red")))
+  "Face used to underline suspiciously long transcript segments."
   :group 'eve)
 
 (defface eve-playback-face
@@ -628,6 +645,9 @@ Forward-declared for the byte-compiler.")
 
 (defvar-local eve--fold-overlays nil
   "Active overlays hiding folded marker section bodies.")
+
+(defvar-local eve--suspicious-segment-overlays nil
+  "Active overlays underlining suspiciously long segments.")
 
 (defconst eve--transcribe-mode-line-entry
   'eve--transcribe-mode-line-string
@@ -921,18 +941,72 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
                  (or (process-get process :eve-start-time) (float-time)))))
           (error nil))))))
 
+(defun eve--suspicious-long-segment-p (segment)
+  "Return non-nil when SEGMENT is suspiciously long."
+  (and eve-validation-suspicious-segment-duration
+       (not (eve--marker-p segment))
+       (let ((start (eve--coerce-number (alist-get 'start segment)))
+             (end (eve--coerce-number (alist-get 'end segment))))
+         (and start end
+              (> (- end start) eve-validation-suspicious-segment-duration)))))
+
+(defun eve--segment-duration-seconds (segment)
+  "Return SEGMENT duration in seconds, or nil."
+  (let ((start (eve--coerce-number (alist-get 'start segment)))
+        (end (eve--coerce-number (alist-get 'end segment))))
+    (and start end (- end start))))
+
 (defun eve--suspicious-long-segments ()
   "Return non-marker segments longer than the suspicious-duration threshold."
   (when eve-validation-suspicious-segment-duration
-    (seq-filter
-     (lambda (segment)
-       (and (not (eve--marker-p segment))
-            (let ((start (eve--coerce-number (alist-get 'start segment)))
-                  (end (eve--coerce-number (alist-get 'end segment))))
-              (and start end
-                   (> (- end start)
-                      eve-validation-suspicious-segment-duration)))))
-     (eve--segments))))
+    (seq-filter #'eve--suspicious-long-segment-p (eve--segments))))
+
+(defun eve--media-segment-for-gap-p (segment)
+  "Return non-nil when SEGMENT can participate in source-gap indicators."
+  (and segment
+       (not (eve--marker-p segment))
+       (not (eve--edit-deleted-p segment))
+       (alist-get 'source segment)
+       (eve--coerce-number (alist-get 'start segment))
+       (eve--coerce-number (alist-get 'end segment))))
+
+(defun eve--source-gap-between (previous next)
+  "Return source gap plist between PREVIOUS and NEXT, or nil."
+  (when (and eve-gap-indicator-duration
+             (eve--media-segment-for-gap-p previous)
+             (eve--media-segment-for-gap-p next)
+             (equal (alist-get 'source previous) (alist-get 'source next)))
+    (let* ((prev-end (eve--coerce-number (alist-get 'end previous)))
+           (next-start (eve--coerce-number (alist-get 'start next)))
+           (duration (- next-start prev-end)))
+      (when (> duration eve-gap-indicator-duration)
+        (list :before previous :after next :duration duration
+              :source (alist-get 'source next)
+              :start prev-end :end next-start)))))
+
+(defun eve--source-gaps ()
+  "Return significant source gaps in manifest order."
+  (let (previous-media gaps)
+    (dolist (segment (eve--segments) (nreverse gaps))
+      (cond
+       ((and (eve--marker-p segment) (eve--segment-broll segment))
+        (setq previous-media nil))
+       ((and (not (eve--marker-p segment)) (eve--edit-deleted-p segment))
+        (setq previous-media nil))
+       ((eve--media-segment-for-gap-p segment)
+        (when-let* ((gap (eve--source-gap-between previous-media segment)))
+          (push gap gaps))
+        (setq previous-media segment))))))
+
+(defun eve--source-gap-before (segment)
+  "Return significant source gap before SEGMENT, if any."
+  (seq-find (lambda (gap) (eq (plist-get gap :after) segment))
+            (eve--source-gaps)))
+
+(defun eve--source-gap-after (segment)
+  "Return significant source gap after SEGMENT, if any."
+  (seq-find (lambda (gap) (eq (plist-get gap :before) segment))
+            (eve--source-gaps)))
 
 (defun eve--suspicious-transcript-intervals ()
   "Return index intervals needing post-transcription cleanup."
@@ -2389,8 +2463,16 @@ face, and KEY uses the normal context-panel key-hint face."
            (speaker (or (eve--aget 'speaker segment) "—"))
            (tags (or (eve--segment-tags segment) '())))
       (eve--segment-panel-clamp-word-index visible-words)
-      (insert (propertize eve-segment-panel-segment-id 'face 'eve-heading-face)
-              "  " (eve--segment-panel-header-value (format "%.1fs" duration))
+      (insert (propertize eve-segment-panel-segment-id 'face 'eve-heading-face))
+      (when (eve--suspicious-long-segment-p segment)
+        (insert "  " (propertize (format "⚠ long %.1fs" duration)
+                                  'face 'eve-gap-indicator-face)))
+      (when-let* ((gap (with-current-buffer source-buffer
+                         (or (eve--source-gap-after segment)
+                             (eve--source-gap-before segment)))))
+        (insert "  " (propertize (format "⏱ gap %.1fs" (plist-get gap :duration))
+                                  'face 'eve-gap-indicator-face)))
+      (insert "  " (eve--segment-panel-header-value (format "%.1fs" duration))
               "  " (eve--segment-panel-header-label "Time: ")
               (eve--segment-panel-header-value
                (format "%s–%s" (eve--format-time start) (eve--format-time end)))
@@ -2420,7 +2502,24 @@ face, and KEY uses the normal context-panel key-hint face."
                      (eve--segment-panel-action "Fillers" "F")
                      (eve--segment-panel-action-with-key "split" "|"))
                "  ")
-              "\n\n")
+              "\n")
+      (when (eve--suspicious-long-segment-p segment)
+        (insert "  " (propertize "⚠ suspiciously long — r regen segment"
+                                  'face 'eve-gap-indicator-face)
+                "\n"))
+      (when-let* ((gap (with-current-buffer source-buffer
+                         (or (eve--source-gap-after segment)
+                             (eve--source-gap-before segment)))))
+        (let* ((after (eq (plist-get gap :before) segment))
+               (target (if after (plist-get gap :after) (plist-get gap :before))))
+          (insert "  " (propertize
+                         (format "⏱ gap %s — U regen %s %s"
+                                 (if after "after" "before")
+                                 (if after "through" "from")
+                                 (eve--stringify (alist-get 'id target)))
+                         'face 'eve-gap-indicator-face)
+                  "\n")))
+      (insert "\n")
       (insert (eve--segment-panel-key-label "B-roll" "B")
               ": " (propertize (eve--segment-panel-broll-summary segment)
                                 'face 'eve-segment-panel-broll-value-face)
@@ -2979,22 +3078,40 @@ START-TIME is used for minibuffer elapsed-time feedback."
      start-time)))
 
 (defun eve--segment-panel-next-segment-id ()
-  "Return the next navigable non-marker segment id after the current panel segment."
+  "Return the default target id for panel range regeneration.
+Adjacent source gaps take precedence so `U' repairs the gap range."
   (let ((source (eve--segment-panel-source-buffer))
         (current-id eve-segment-panel-segment-id))
     (with-current-buffer source
-      (let* ((segments (eve--segments))
-             (count (length segments))
-             (index (or (eve--segment-index current-id segments) -1))
-             target-id)
-        (while (and (null target-id)
-                    (setq index (1+ index))
-                    (< index count))
-          (let ((segment (nth index segments)))
-            (when (and (not (eve--marker-p segment))
-                       (eve--navigable-segment-p segment eve-hide-deleted-mode))
-              (setq target-id (alist-get 'id segment)))))
-        target-id))))
+      (let ((current (eve--segment-by-id current-id)))
+        (or (when-let* ((gap (and current (eve--source-gap-after current))))
+              (alist-get 'id (plist-get gap :after)))
+            (when-let* ((gap (and current (eve--source-gap-before current))))
+              (alist-get 'id (plist-get gap :after)))
+            (let* ((segments (eve--segments))
+                   (count (length segments))
+                   (index (or (eve--segment-index current-id segments) -1))
+                   target-id)
+              (while (and (null target-id)
+                          (setq index (1+ index))
+                          (< index count))
+                (let ((segment (nth index segments)))
+                  (when (and (not (eve--marker-p segment))
+                             (eve--navigable-segment-p segment eve-hide-deleted-mode))
+                    (setq target-id (alist-get 'id segment)))))
+              target-id))))))
+
+(defun eve--segment-panel-regenerate-start-segment (target-id)
+  "Return the start segment for range regeneration ending at TARGET-ID."
+  (let ((source (eve--segment-panel-source-buffer))
+        (segment (eve--segment-panel-segment)))
+    (with-current-buffer source
+      (if-let* ((gap (eve--source-gap-before segment)))
+          (let ((after-id (eve--stringify (alist-get 'id (plist-get gap :after)))))
+            (if (string= (eve--stringify target-id) after-id)
+                (plist-get gap :before)
+              segment))
+        segment))))
 
 (defun eve-segment-panel-regenerate-until (target-id backend model)
   "Regenerate from the current segment through TARGET-ID, inclusive."
@@ -3005,7 +3122,7 @@ START-TIME is used for minibuffer elapsed-time feedback."
            (read-string "Backend: " eve-transcribe-backend)
            (read-string "Model: " eve-transcribe-model))))
   (let* ((source (eve--segment-panel-source-buffer))
-         (start-segment (eve--segment-panel-segment))
+         (start-segment (eve--segment-panel-regenerate-start-segment target-id))
          (end-segment (with-current-buffer source
                         (or (eve--segment-by-id target-id)
                             (user-error "Unknown target segment: %s" target-id))))
@@ -3658,6 +3775,39 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
                           :source-end (eve--segment-end-position segment-id))))
                 segments)))
 
+(defun eve--context-panel-gap-items ()
+  "Return side-panel source gap items."
+  (mapcar (lambda (gap)
+            (let* ((before (plist-get gap :before))
+                   (after (plist-get gap :after))
+                   (before-id (alist-get 'id before))
+                   (after-id (alist-get 'id after)))
+              (list :id (format "gap:%s:%s" before-id after-id)
+                    :kind 'gap
+                    :label (format "⏱ gap %.1fs after %s"
+                                   (plist-get gap :duration)
+                                   (eve--stringify before-id))
+                    :segment-id before-id
+                    :anchor-pos (eve--segment-position before-id)
+                    :after-segment-id after-id)))
+          (eve--source-gaps)))
+
+(defun eve--context-panel-long-segment-items (segments)
+  "Return side-panel suspicious long segment items for SEGMENTS."
+  (delq nil
+        (mapcar (lambda (segment)
+                  (when (eve--suspicious-long-segment-p segment)
+                    (let ((id (alist-get 'id segment))
+                          (duration (eve--segment-duration-seconds segment)))
+                      (list :id (format "long:%s" id)
+                            :kind 'long-segment
+                            :label (format "⚠ long %.1fs %s"
+                                           (or duration 0.0)
+                                           (eve--stringify id))
+                            :segment-id id
+                            :anchor-pos (eve--segment-position id)))))
+                segments)))
+
 (defun eve--context-panel-side-items (&optional source-buffer)
   "Return Eve side-panel items for SOURCE-BUFFER."
   (with-current-buffer (or source-buffer (current-buffer))
@@ -3666,6 +3816,8 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
                               segments eve-hide-deleted-mode))
            (milestones (eve--ruler-milestones cumulative-times eve-ruler-interval)))
       (append (eve--context-panel-timestamp-items milestones)
+              (eve--context-panel-gap-items)
+              (eve--context-panel-long-segment-items segments)
               (eve--context-panel-broll-items segments)))))
 
 (defun eve--context-panel-render-side-item (source-buffer item)
@@ -3682,7 +3834,12 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
             (insert-image image)
             (insert " "))
           (insert (propertize label 'face 'eve-ruler-face) "\n"))
-      (insert label "\n"))))
+      (insert (propertize label
+                          'face (if (memq (plist-get item :kind)
+                                          '(gap long-segment))
+                                    'eve-gap-indicator-face
+                                  'default))
+              "\n"))))
 
 (defun eve--context-panel-jump-side-item (source-buffer item)
   "Jump from an Eve side-panel ITEM to SOURCE-BUFFER."
@@ -4202,6 +4359,7 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 				segments))
 			    eve--visual-separators))
     (eve--clear-fold-overlays)
+    (eve--clear-suspicious-segment-overlays)
     (erase-buffer)
     (let ((previous-id nil)
 	  (previous-marker nil)
@@ -4226,7 +4384,9 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		   (word-spans (and render-data (plist-get render-data :word-spans)))
 		   (base-face (if broll 'eve-broll-face 'eve-text-face))
 		   (segment-face (eve--merge-faces (when segment-deleted 'eve-deleted-face)
-					      (if markerp 'eve-marker-face base-face)))
+					      (if markerp 'eve-marker-face base-face)
+                                      (when (eve--suspicious-long-segment-p segment)
+                                        'eve-suspicious-segment-face)))
 		   (segment-visible
 		    (and (not (and eve-hide-deleted-mode segment-deleted))
 			 (or markerp
@@ -4243,6 +4403,16 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		    (insert "\n"))
 		   (t
 		    (insert " "))))
+                (when-let* ((gap (and (not markerp)
+                                      (eve--source-gap-before segment))))
+                  (insert (propertize
+                           (format "[⏱ gap %.1fs] " (plist-get gap :duration))
+                           'face 'eve-gap-indicator-face
+                           'eve-source-gap gap
+                           'eve-segment nil
+                           'eve-segment-id nil
+                           'rear-nonsticky t
+                           'front-sticky nil)))
 		(when (and markerp
 			   (> (point) (point-min)))
 		  (let* ((start (max (point-min) (- (point) 2)))
@@ -4315,6 +4485,7 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
     (when eve--context-tick-overlays
       (eve--context-tick-refresh-overlays))
     (eve--apply-fold-overlays)
+    (eve--apply-suspicious-segment-overlays)
     (eve--apply-visual-wrap))))
 
 (defun eve--format-words (words)
@@ -4815,6 +4986,22 @@ With prefix COUNT, move that many markers."
   "Remove all active marker fold overlays in the current buffer."
   (mapc #'delete-overlay eve--fold-overlays)
   (setq eve--fold-overlays nil))
+
+(defun eve--clear-suspicious-segment-overlays ()
+  "Remove suspicious segment underline overlays in the current buffer."
+  (mapc #'delete-overlay eve--suspicious-segment-overlays)
+  (setq eve--suspicious-segment-overlays nil))
+
+(defun eve--apply-suspicious-segment-overlays ()
+  "Underline suspiciously long rendered segments with dedicated overlays."
+  (eve--clear-suspicious-segment-overlays)
+  (dolist (segment (eve--suspicious-long-segments))
+    (when-let* ((id (alist-get 'id segment))
+                (bounds (eve--segment-bounds id)))
+      (let ((overlay (make-overlay (car bounds) (cdr bounds) nil t nil)))
+        (overlay-put overlay 'face 'eve-suspicious-segment-face)
+        (overlay-put overlay 'priority 20)
+        (push overlay eve--suspicious-segment-overlays)))))
 
 (defun eve--marker-render-ranges ()
   "Return rendered marker ranges as (ID START END)."
