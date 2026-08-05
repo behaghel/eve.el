@@ -3787,8 +3787,10 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
                     :label (format "⏱ gap %.1fs after %s"
                                    (plist-get gap :duration)
                                    (eve--stringify before-id))
-                    :segment-id before-id
-                    :anchor-pos (eve--segment-position before-id)
+                    :segment-id after-id
+                    :anchor-pos (eve--segment-position after-id)
+                    :active-source-range nil
+                    :before-segment-id before-id
                     :after-segment-id after-id)))
           (eve--source-gaps)))
 
@@ -5039,7 +5041,7 @@ With prefix COUNT, move that many markers."
                   (overlay-put overlay 'invisible 'eve-fold)
                   (overlay-put overlay 'isearch-open-invisible #'delete-overlay)
                   (overlay-put overlay 'before-string
-                               (propertize " …" 'face 'eve-meta-face))
+                               (propertize " …\n\n" 'face 'eve-meta-face))
                   (push overlay eve--fold-overlays)))))
 
 (defun eve--refold ()
@@ -5049,7 +5051,12 @@ With prefix COUNT, move that many markers."
   (when eve-ruler-mode
     (eve--update-ruler))
   (when eve--context-tick-overlays
-    (eve--context-tick-refresh-overlays)))
+    (eve--context-tick-refresh-overlays))
+  (when (and (eve--context-panels-available-p)
+             (boundp 'context-panels-side-panel-buffer)
+             (buffer-live-p context-panels-side-panel-buffer)
+             (get-buffer-window context-panels-side-panel-buffer t))
+    (context-panels-refresh)))
 
 (defun eve-toggle-marker-fold ()
   "Toggle folding for the marker section at point."

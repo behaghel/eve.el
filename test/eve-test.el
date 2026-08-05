@@ -2716,11 +2716,16 @@
                       (match-beginning 0))))
        (should-not (and (<= (car seg-1-bounds) gap-pos)
                         (< gap-pos (cdr seg-1-bounds)))))
-     (let ((items (eve--context-panel-side-items (current-buffer))))
-       (should (seq-find (lambda (item)
-                           (and (eq (plist-get item :kind) 'gap)
-                                (string-match-p "⏱ gap 16\\.0s" (plist-get item :label))))
-                         items))))))
+     (let* ((items (eve--context-panel-side-items (current-buffer)))
+            (gap-item (seq-find (lambda (item)
+                                  (eq (plist-get item :kind) 'gap))
+                                items)))
+       (should gap-item)
+       (should (string-match-p "⏱ gap 16\\.0s" (plist-get gap-item :label)))
+       (should (equal (plist-get gap-item :segment-id) "seg-2"))
+       (should (equal (plist-get gap-item :before-segment-id) "seg-1"))
+       (should (plist-member gap-item :active-source-range))
+       (should-not (plist-get gap-item :active-source-range))))))
 
 (ert-deftest eve-source-gap-indicator-ignores-gaps-explained-by-deleted-segments ()
   "Deleted media segments between visible segments suppress source gap warnings."
@@ -2787,10 +2792,40 @@
                                 (<= (overlay-start overlay) alpha-pos)
                                 (< alpha-pos (overlay-end overlay))))
                          eve--fold-overlays))
+       (should (seq-some (lambda (overlay)
+                           (equal (overlay-get overlay 'before-string)
+                                  (propertize " …\n\n" 'face 'eve-meta-face)))
+                         eve--fold-overlays))
        (should-not (seq-some (lambda (overlay)
                                (and (<= (overlay-start overlay) marker-b-pos)
                                     (< marker-b-pos (overlay-end overlay))))
                              eve--fold-overlays))))))
+
+(ert-deftest eve-marker-folding-hides-related-side-panel-entries ()
+  "Folding a marker hides side-panel rows anchored in that folded section."
+  (skip-unless (featurep 'context-panels))
+  (eve-test-with-buffer
+   (let* ((seg-1 (car (eve--segments)))
+          (seg-2 (copy-tree seg-1 t))
+          (marker-a '((id . "marker-a") (kind . "marker") (title . "A")))
+          (marker-b '((id . "marker-b") (kind . "marker") (title . "B"))))
+     (setf (alist-get 'id seg-2) "seg-2")
+     (eve--set-segment-broll seg-1 '((file . "folded.mp4")
+                                     (duration . 3.0)
+                                     (mode . "overlay")))
+     (setf (alist-get 'segments eve--data)
+           (list marker-a seg-1 marker-b seg-2))
+     (eve--render)
+     (delete-other-windows)
+     (let* ((source (current-buffer))
+            (side (eve-context-panels-open)))
+       (with-current-buffer side
+         (should (string-match-p "folded.mp4" (buffer-string))))
+       (with-current-buffer source
+         (should (eve--goto-segment "marker-a"))
+         (call-interactively #'eve-toggle-marker-fold))
+       (with-current-buffer side
+         (should-not (string-match-p "folded.mp4" (buffer-string))))))))
 
 (ert-deftest eve-toggle-all-marker-folds-cycles-all-rendered-markers ()
   "S-TAB-style all-marker folding collapses and expands all markers."
