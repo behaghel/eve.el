@@ -1,0 +1,5 @@
+{
+  "packages": [
+    "npm:@behaghel/pi-domain-tree@0.4.0"
+  ]
+}
