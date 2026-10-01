@@ -585,13 +585,16 @@
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
   (let ((eve-cli-program "eve-custom")
-        (eve-transcribe-backend "mlx-whisper")
-        (eve-transcribe-model "large-v3")
-        (eve-transcribe-verbatim t)
-        (eve-transcribe-tag-fillers t)
-        (buffer (get-buffer-create eve--transcribe-buffer-name))
-        captured-plist
-        last-message)
+         (eve-transcribe-backend "mlx-whisper")
+         (eve-transcribe-model "large-v3")
+         (eve-transcribe-verbatim t)
+         (eve-transcribe-tag-fillers t)
+         (eve--transcribe-process-count 0)
+         (eve--transcribe-mode-line-string nil)
+         (global-mode-string nil)
+         (buffer (get-buffer-create eve--transcribe-buffer-name))
+         captured-plist
+         last-message)
     (unwind-protect
         (progn
           (with-current-buffer buffer
@@ -630,12 +633,15 @@
 (ert-deftest eve-transcribe-async-omits-disabled-boolean-flags ()
   "Launcher keeps string flags and omits disabled boolean transcription flags."
   (let ((eve-cli-program "eve-custom")
-        (eve-transcribe-backend "whisper.cpp")
-        (eve-transcribe-model "small.en")
-        (eve-transcribe-verbatim nil)
-        (eve-transcribe-tag-fillers nil)
-        (buffer (get-buffer-create eve--transcribe-buffer-name))
-        captured-plist)
+         (eve-transcribe-backend "whisper.cpp")
+         (eve-transcribe-model "small.en")
+         (eve-transcribe-verbatim nil)
+         (eve-transcribe-tag-fillers nil)
+         (eve--transcribe-process-count 0)
+         (eve--transcribe-mode-line-string nil)
+         (global-mode-string nil)
+         (buffer (get-buffer-create eve--transcribe-buffer-name))
+         captured-plist)
     (unwind-protect
         (progn
           (cl-letf (((symbol-function 'executable-find)
@@ -776,6 +782,9 @@
 (ert-deftest eve-transcribe-async-opens-output-on-success ()
   "Successful completion visits the output manifest without surfacing the log."
   (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+         (eve--transcribe-process-count 0)
+         (eve--transcribe-mode-line-string nil)
+         (global-mode-string nil)
          captured-plist
          opened
         popped
@@ -818,6 +827,9 @@
 (ert-deftest eve-transcribe-async-surfaces-buffer-on-failure ()
   "Non-zero completion shows the transcribe buffer and reports the failure."
   (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+         (eve--transcribe-process-count 0)
+         (eve--transcribe-mode-line-string nil)
+         (global-mode-string nil)
          captured-plist
          opened
         popped
@@ -855,8 +867,53 @@
                      "exited abnormally with code 1\n"))
           (should-not opened)
           (should (eq popped buffer))
-          (should (member "eve transcribe failed: exited abnormally with code 1"
-                          messages)))
+           (should (member "eve transcribe failed: exited abnormally with code 1"
+                           messages)))
+       (when (buffer-live-p buffer)
+         (kill-buffer buffer)))))
+
+(ert-deftest eve-transcribe-async-shows-visible-running-state ()
+  "Launcher exposes a persistent running indicator until transcription finishes."
+  (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+        captured-plist
+        mode-line-updates)
+    (unwind-protect
+        (progn
+          (let ((global-mode-string nil)
+                (eve--transcribe-mode-line-string nil))
+            (cl-letf (((symbol-function 'executable-find)
+                       (lambda (_program)
+                         "/opt/eve/bin/eve"))
+                      ((symbol-function 'make-process)
+                       (lambda (&rest args)
+                         (setq captured-plist args)
+                         'fake-process))
+                      ((symbol-function 'process-buffer)
+                       (lambda (_process)
+                         buffer))
+                      ((symbol-function 'process-status)
+                       (lambda (_process)
+                         'exit))
+                      ((symbol-function 'process-exit-status)
+                       (lambda (_process)
+                         0))
+                      ((symbol-function 'find-file)
+                       (lambda (_file)
+                         nil))
+                      ((symbol-function 'force-mode-line-update)
+                       (lambda (&optional all)
+                         (push all mode-line-updates)))
+                      ((symbol-function 'message)
+                       (lambda (&rest _args)
+                         nil)))
+              (eve--transcribe-async '("/tmp/clip.mp4") "/tmp/session.tjm.json")
+              (should (member eve--transcribe-mode-line-entry global-mode-string))
+              (should (string-match-p "Eve: transcribing"
+                                      eve--transcribe-mode-line-string))
+              (should (member t mode-line-updates))
+              (funcall (plist-get captured-plist :sentinel) 'fake-process "finished\n")
+              (should-not eve--transcribe-mode-line-string)
+              (should (> (length mode-line-updates) 1)))))
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
