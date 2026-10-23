@@ -96,7 +96,8 @@ A TJM v1.1 manifest MUST be a JSON object with the following top-level members:
 - `version`: REQUIRED string format version;
 - `sources`: REQUIRED array of source descriptors;
 - `segments`: REQUIRED array of timeline entries;
-- `render`: REQUIRED deterministic render configuration object.
+- `render`: REQUIRED deterministic render configuration object;
+- `subtitles`: OPTIONAL subtitle rendering configuration object (Section 14.1).
 
 Additional top-level members are allowed for forward compatibility. Editors
 SHOULD preserve unknown members when practical.
@@ -622,6 +623,80 @@ timeline-space labels using the accumulated rendered duration at the point where
 the marker appears. When deriving a marker label, consumers SHOULD prefer
 `title`, then `display_text`, then `id`.
 
+### 14.1 Subtitle rendering configuration
+
+The OPTIONAL top-level `subtitles` object specifies subtitle burning and visual
+styling as part of the resulting video. These settings belong to the manifest,
+not to a renderer's or editor's session preferences. Omitting this object does
+not request burned-in subtitles and does not change the cue-generation rules
+above or prevent consumers from exporting separate or embedded subtitle tracks.
+
+When present, `subtitles` has these members:
+
+- `mode`: REQUIRED string, `"burn"`; captions are permanently rendered into the
+  video pixels, independent of player subtitle-track selection;
+- `style`: REQUIRED string, `"plain"` or `"karaoke"`;
+- `reference_canvas`: OPTIONAL object with positive integer `width` and `height`,
+  defaulting to `1920` and `1080` when the object is absent;
+- `font`: REQUIRED object with non-empty string `family`, positive numeric `size`,
+  and boolean `bold`;
+- `color`: REQUIRED base text color;
+- `outline`: REQUIRED object with `color` and non-negative numeric `width`;
+- `highlight_color`: REQUIRED active-word color when `style` is `"karaoke"`;
+  OPTIONAL otherwise.
+
+Colors MUST use `"#RRGGBB"` notation, with hexadecimal RGB components. Font size
+and outline width are measured in pixels on the reference canvas. Renderers MUST
+scale both uniformly by the smaller of output-width/reference-width and
+output-height/reference-height; changing output resolution MUST NOT stretch
+letter shapes or change the intended relative text size.
+
+Example configuration:
+
+```json
+"subtitles": {
+  "mode": "burn",
+  "style": "karaoke",
+  "reference_canvas": { "width": 1920, "height": 1080 },
+  "font": { "family": "Arial", "size": 48, "bold": true },
+  "color": "#FFFFFF",
+  "outline": { "color": "#000000", "width": 3 },
+  "highlight_color": "#FFD700"
+}
+```
+
+Producers MUST serialize the selected styling values into the manifest rather
+than rely on private user preferences to reproduce them. Editors MUST preserve
+existing subtitle configuration unless the user changes it. The example values
+are a usable starting configuration, not a requirement that editors replace
+existing choices.
+
+### 14.2 Word-synchronized highlighting
+
+The `"plain"` style uses the base text color throughout each cue. The
+`"karaoke"` style uses `highlight_color` only for the currently spoken word;
+that word MUST return to the base color when its spoken interval ends. No word
+is highlighted during gaps. The outline color remains independent of the
+active-word text color. Karaoke MUST NOT progressively recolor already spoken
+words or assign unrelated colors to individual characters.
+
+Highlight intervals MUST derive from authoritative word ticks and source
+timebases, mapped onto the same rendered timeline as the video. Cuts, deleted
+segments and words, dropped fillers, preserved gaps, and renderable markers MUST
+have the same timing effects on video, subtitle cues, and word highlights.
+Removed words MUST NOT emit highlights. Consumers MUST NOT substitute evenly
+spaced or estimated word timings for missing timing or unresolved alignment
+between display text and word objects.
+
+### 14.3 Subtitle configuration validation
+
+Validators MUST reject invalid types, missing required subtitle members,
+unsupported `mode` or `style` values, invalid colors, non-positive reference
+canvas dimensions or font size, and negative outline width. Renderers MUST
+report an error rather than silently omit burning or requested word highlighting
+when they cannot honor the configuration. An editor MAY preserve a configuration
+it cannot render.
+
 ## 15. Producer Requirements
 
 A conforming TJM v1.1 producer:
@@ -724,7 +799,13 @@ At minimum, a v1.1 implementation SHOULD be tested against these cases:
 - invalid version value;
 - invalid or missing source timebase;
 - invalid filler word timing outside its segment;
-- invalid unsupported render policy or b-roll mode.
+- invalid unsupported render policy or b-roll mode;
+- valid plain and karaoke subtitle burning configurations;
+- omitted subtitle configuration without implicit burning;
+- subtitle size scaling from the default reference canvas;
+- karaoke boundaries after cuts, filler removal, gaps, and renderable markers;
+- karaoke gaps with no active-word highlight;
+- invalid subtitle configuration or unavailable word timing/alignment.
 
 ## Appendix A. Valid Minimal Manifest
 
