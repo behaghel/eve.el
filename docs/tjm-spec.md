@@ -96,7 +96,8 @@ A TJM v1.1 manifest MUST be a JSON object with the following top-level members:
 - `version`: REQUIRED string format version;
 - `sources`: REQUIRED array of source descriptors;
 - `segments`: REQUIRED array of timeline entries;
-- `render`: REQUIRED deterministic render configuration object.
+- `render`: REQUIRED deterministic render configuration object;
+- `subtitles`: OPTIONAL subtitle rendering configuration object (Section 14.1).
 
 Additional top-level members are allowed for forward compatibility. Editors
 SHOULD preserve unknown members when practical.
@@ -282,6 +283,18 @@ The display token for a word is:
 1. `word.display` when present and non-empty;
 2. otherwise `word.spoken`.
 
+A word object is an atomic timed editing token. Its `display` string MAY contain
+multiple written words or differ from `spoken` in spelling, punctuation, or
+meaning. Rewriting `display` MUST NOT change the token's identity, source timing,
+spoken content, or underlying media. For example, changing the display from
+`"$25"` to `"$2"` leaves the original spoken audio unchanged.
+
+Whitespace inside `display` MUST NOT create new timed tokens. All displayed
+words belonging to that token share its timing and act as one unit for media
+movement, deletion, and highlighting. Media-editing operations MUST act on the
+whole token, not on substrings of its display text. Display rewriting MUST NOT
+trigger automatic timing estimation or remapping.
+
 ### 8.5 Segment-level timing and words
 
 If a media segment supplies `words`, the segment's `start_tick` and `end_tick`
@@ -306,30 +319,33 @@ Conforming word objects use:
 
 `end_tick` MUST be strictly greater than `start_tick`.
 
-The canonical home for filler classification is `word.edit.kind`.
+The canonical home for editable filler classification is `word.edit.filler`.
+It records explicit local editorial intent for this TJM file:
 
-If a producer or editor encounters a legacy top-level `word.kind`, it SHOULD
-normalize that value into `word.edit.kind`. When both are present and differ,
-`word.edit.kind` wins and the top-level `kind` remains compatibility input only.
+- `true`: the word is explicitly marked as filler;
+- `"no-filler"`: the word is explicitly marked as not filler and SHOULD NOT be
+  auto-tagged as filler by phrase-based editor workflows;
+- absent: the word has no explicit local filler decision.
 
-If neither `word.edit.kind` nor legacy top-level `kind` is present, consumers
-MUST treat the word as if its effective kind were `"lexical"`.
+For compatibility, producers and consumers MAY also encounter legacy
+`word.edit.kind = "filler"` or top-level `word.kind = "filler"`. These legacy
+forms MUST be interpreted as an effective filler mark when `word.edit.filler` is
+absent. When `word.edit.filler` is present, it wins over both legacy locations.
 
-The interoperable effective word-kind values in TJM v1.1 are:
-
-- `lexical`: an ordinary spoken word;
-- `filler`: a spoken filler or disfluency such as `um` or `uh`.
+If none of `word.edit.filler`, `word.edit.kind`, or legacy top-level `kind` is
+present, consumers MUST treat the word as if it were lexical / not filler.
 
 Editors SHOULD preserve recognized and unrecognized kind values when
-round-tripping. Renderers MUST reject unknown effective kind values.
+round-tripping. Renderers MUST reject unknown legacy effective kind values.
 
-Word kind is descriptive metadata. It does not itself delete or rewrite the
-word.
+Filler classification is descriptive metadata. It does not itself delete or
+rewrite the word.
 
 When present, `word.edit` MUST be an object. The following interoperable
 `word.edit` members are defined in TJM v1.1:
 
-- `kind`: OPTIONAL string;
+- `filler`: OPTIONAL boolean or the string `"no-filler"`;
+- `kind`: OPTIONAL legacy compatibility string;
 - `deleted`: OPTIONAL boolean.
 
 When `word.edit.deleted` is `true`, that word's content is marked for removal
@@ -403,9 +419,18 @@ ignored for normal segment rendering.
 Markers MAY still contribute structure to downstream consumers, such as section
 labels or subtitle annotations.
 
-If a marker includes renderable `segment.edit.broll` metadata, a renderer MAY
-treat it as a timeline unit only when enough information exists to derive
-duration.
+If a marker includes renderable `segment.edit.broll` metadata, a renderer MUST
+treat it as a timeline unit when enough information exists to derive duration.
+This is the normative way to express source-less timeline media such as intro
+cards, outro cards, interstitial title cards, and other non-transcript clips.
+Because renderers MUST walk `segments` in file order, a renderable marker at the
+start of `segments` plays before the first media segment; a renderable marker at
+the end plays after the final media segment.
+
+A marker's renderable b-roll duration is derived from `segment.edit.broll.duration`
+when present; otherwise consumers MAY use marker `duration`. If neither yields a
+positive duration and no other implementation-defined duration can be derived,
+the marker MUST be treated as non-renderable structural metadata.
 
 ## 12. B-roll Object
 
@@ -451,7 +476,14 @@ image to be converted into a synthetic video stream of the requested duration.
 
 If `still` is `true`, `audio` MUST NOT be `"broll"`.
 
-### 12.4 Picture-in-picture positioning
+### 12.4 Replace-mode frame fitting
+
+When `mode` is `"replace"`, renderers MUST preserve the complete b-roll video
+frame. If the b-roll asset aspect ratio differs from the target output aspect
+ratio, the renderer MUST fit the b-roll inside the target frame and pad the
+remaining area. It MUST NOT crop edges merely to fill the target frame.
+
+### 12.5 Picture-in-picture positioning
 
 When `mode` is `"pip"`, `position` MAY contain:
 
@@ -462,7 +494,7 @@ When `mode` is `"pip"`, `position` MAY contain:
 Consumers SHOULD default `x` and `y` to `0.05`, and `width` to `0.3` when
 values are absent.
 
-### 12.5 Time values
+### 12.6 Time values
 
 `segment.edit.broll.start_offset`, `segment.edit.broll.duration`, and marker
 `duration` MAY be expressed as either:
@@ -475,7 +507,7 @@ values are absent.
 
 Consumers MUST interpret these forms as wall-clock durations.
 
-### 12.6 Continuous b-roll chains
+### 12.7 Continuous b-roll chains
 
 If adjacent segments carry equivalent b-roll definitions and the later segment's
 `continue` flag is `true`, a rendering consumer MAY treat the sequence as a
@@ -485,7 +517,7 @@ Equivalence SHOULD be determined by the effective b-roll source, `mode`,
 `audio`, `still`, `position`, and whether the referenced `file` is itself a
 template JSON descriptor.
 
-### 12.7 Template JSON extension
+### 12.8 Template JSON extension
 
 If `segment.edit.broll.file` names a `.json` file, a renderer MAY interpret it
 as a template descriptor rather than as media directly.
@@ -524,6 +556,11 @@ A renderer MUST walk `segments` in file order.
 For a normal media segment, the renderer renders the interval from
 `start_tick` to `end_tick` from the referenced source, optionally modified by
 `segment.edit.broll` and `render.filler_policy`.
+
+For a renderable marker segment, the renderer renders the marker's
+`segment.edit.broll` as its own timeline unit at that exact position in the
+`segments` array. The marker does not need a `source`, `start_tick`, or
+`end_tick` when its b-roll metadata provides enough duration information.
 
 If `segment.edit.deleted` is `true`, the renderer MUST omit that segment from
 rendered output while leaving the manifest entry itself intact.
@@ -579,8 +616,19 @@ behavior stable across runs.
 
 For consumers that derive subtitles from TJM:
 
+- each non-deleted media segment with displayable text defines one caption;
+  consumers MUST NOT silently regroup words into separate caption units;
+- splitting or merging media segments changes the caption units accordingly;
+- captions MAY wrap across multiple lines, but all of a segment's caption text
+  appears together; consumers MUST NOT automatically split the segment or shrink
+  its configured font to fit long text; editors SHOULD warn about captions that
+  exceed the available display area;
+- captions appear only during their segment's rendered interval; preserved gaps
+  between segments MUST NOT extend the preceding caption;
 - subtitle time starts at `0` in rendered timeline space, not source-media time;
 - marker segments do not emit normal subtitle cues;
+- renderable marker segments still occupy subtitle time, so later cues MUST be
+  shifted by the rendered marker duration;
 - preserved short gaps advance subtitle time;
 - segment cue text MUST be determined as follows:
   1. use non-empty `display_text` when present;
@@ -595,6 +643,99 @@ Consumers that separately expose marker annotations MAY map markers into
 timeline-space labels using the accumulated rendered duration at the point where
 the marker appears. When deriving a marker label, consumers SHOULD prefer
 `title`, then `display_text`, then `id`.
+
+### 14.1 Subtitle rendering configuration
+
+The OPTIONAL top-level `subtitles` object specifies subtitle burning and visual
+styling as part of the resulting video. These settings belong to the manifest,
+not to a renderer's or editor's session preferences. Omitting this object does
+not request burned-in subtitles and does not change the cue-generation rules
+above or prevent consumers from exporting separate or embedded subtitle tracks.
+
+When present, `subtitles` has these members:
+
+- `mode`: REQUIRED string, `"burn"`; captions are permanently rendered into the
+  video pixels, independent of player subtitle-track selection;
+- `style`: REQUIRED string, `"plain"` or `"karaoke"`;
+- `reference_canvas`: OPTIONAL object with positive integer `width` and `height`,
+  defaulting to `1920` and `1080` when the object is absent;
+- `font`: REQUIRED object with non-empty string `family`, positive numeric `size`,
+  and boolean `bold`;
+- `placement`: REQUIRED object with `anchor`, whose supported value is
+  `"bottom-center"`, and non-negative numeric `bottom_margin`;
+- `color`: REQUIRED base text color;
+- `outline`: REQUIRED object with `color` and non-negative numeric `width`;
+- `highlight_color`: REQUIRED active-word color when `style` is `"karaoke"`;
+  OPTIONAL otherwise.
+
+Colors MUST use `"#RRGGBB"` notation, with hexadecimal RGB components. Font size
+and outline width, as well as the bottom margin from the output frame's bottom
+edge to the caption block's bottom edge, are measured in pixels on the reference
+canvas. Renderers MUST scale these dimensions uniformly by the smaller of
+output-width/reference-width and output-height/reference-height; changing
+output resolution MUST NOT stretch
+letter shapes or change the intended relative text size.
+
+Example configuration:
+
+```json
+"subtitles": {
+  "mode": "burn",
+  "style": "karaoke",
+  "reference_canvas": { "width": 1920, "height": 1080 },
+  "font": { "family": "Arial", "size": 48, "bold": true },
+  "placement": { "anchor": "bottom-center", "bottom_margin": 60 },
+  "color": "#FFFFFF",
+  "outline": { "color": "#000000", "width": 3 },
+  "highlight_color": "#FFD700"
+}
+```
+
+Producers MUST serialize the selected styling values into the manifest rather
+than rely on private user preferences to reproduce them. Editors MUST preserve
+existing subtitle configuration unless the user changes it. The example values
+are a usable starting configuration, not a requirement that editors replace
+existing choices.
+
+### 14.2 Word-synchronized highlighting
+
+The `"plain"` style uses the base text color throughout each cue. The
+`"karaoke"` style uses `highlight_color` only for the currently spoken word;
+that token's entire display fragment MUST return to the base color when its
+spoken interval ends. If the display fragment contains several written words,
+they highlight together using the original token timing, not invented timings
+for the individual displayed words. No token is highlighted during gaps.
+During a pause within a segment, its caption remains visible in the base color.
+The outline color remains independent of the active-word text color.
+Karaoke MUST NOT progressively recolor already spoken
+words or assign unrelated colors to individual characters.
+
+Highlight intervals MUST derive from authoritative word ticks and source
+timebases, mapped onto the same rendered timeline as the video. Cuts, deleted
+segments and words, dropped fillers, preserved gaps, and renderable markers MUST
+have the same timing effects on video, subtitle cues, and word highlights.
+Removed words MUST NOT emit highlights. Consumers MUST NOT substitute evenly
+spaced or estimated word timings for missing timing or unresolved alignment
+between display text and word objects.
+
+Token display strings provide the binding between caption text and source-word
+timing; consumers MUST NOT infer new bindings from the rewritten text. For
+karaoke, caption text MUST be derived from the surviving tokens' display strings
+using Section 8.4. When `display_text` is supplied, it MUST agree with that derived
+text; producers that maintain it MUST keep it synchronized after token edits.
+Plain captions MAY use arbitrary segment-level `display_text` without timed
+word highlighting.
+
+### 14.3 Subtitle configuration validation
+
+Validators MUST reject invalid types, missing required subtitle members,
+unsupported `mode` or `style` values, invalid colors, non-positive reference
+canvas dimensions or font size, negative outline width or bottom margin, and
+unsupported placement anchors. Renderers MUST report an error rather than
+silently omit burning or requested word highlighting when they cannot honor the
+configuration. If the requested font family or bold face is unavailable,
+renderers MUST report a clear error rather than silently substitute a different
+font. An editor MAY preserve a configuration it cannot render.
 
 ## 15. Producer Requirements
 
@@ -698,7 +839,22 @@ At minimum, a v1.1 implementation SHOULD be tested against these cases:
 - invalid version value;
 - invalid or missing source timebase;
 - invalid filler word timing outside its segment;
-- invalid unsupported render policy or b-roll mode.
+- invalid unsupported render policy or b-roll mode;
+- valid plain and karaoke subtitle burning configurations;
+- omitted subtitle configuration without implicit burning;
+- subtitle size scaling from the default reference canvas;
+- karaoke boundaries after cuts, filler removal, gaps, and renderable markers;
+- karaoke gaps with no active-word highlight;
+- invalid subtitle configuration or unavailable word timing/alignment;
+- bottom-centered placement with reference-scaled bottom margins;
+- one caption per segment, including after segment splitting and merging;
+- multiline wrapping without automatic segmentation or font shrinking;
+- no caption during inter-segment gaps, and visible unhighlighted captions during
+  intra-segment pauses;
+- single-token display rewrites to multiple written words without media or
+  timing changes, with the whole display fragment highlighted together;
+- whole-token media movement and deletion after display rewriting;
+- an unavailable requested font reported without silent substitution.
 
 ## Appendix A. Valid Minimal Manifest
 

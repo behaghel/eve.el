@@ -39,7 +39,23 @@
 (require 'image)
 (require 'outline)
 
+(defvar eve--context-panels-available (require 'context-panels nil t)
+  "Non-nil when optional context-panels support is available.")
+
 (declare-function image-file-name-p "image-mode" (filename))
+(defvar context-panels-side-panel-buffer)
+(defvar context-panels-bottom-panel-buffer)
+(defvar context-panels-source-buffer)
+
+(declare-function context-panels-mode "context-panels" (&optional arg))
+(declare-function context-panels-open "context-panels" (&optional source-buffer))
+(declare-function context-panels-close "context-panels" ())
+(declare-function context-panels-open-bottom-view "context-panels" (view-id &optional source-buffer select))
+(declare-function context-panels-refresh "context-panels" ())
+(declare-function context-panels-refresh-bottom-view "context-panels" ())
+(declare-function context-panels-close-bottom-view "context-panels" ())
+(declare-function context-panels-register-provider "context-panels" (provider))
+(declare-function context-panels-propertize-key "context-panels" (label key &optional face))
 (declare-function dired-get-marked-files "dired"
                   (&optional localp arg filter distinguish-one-marked
                              error-if-none-p))
@@ -103,6 +119,31 @@ meaningful timing inconsistencies."
   :type 'float
   :group 'eve)
 
+(defcustom eve-validation-suspicious-segment-duration 10.0
+  "Segment duration in seconds above which validation flags a warning.
+Set to nil to disable long-segment warnings.  Long transcript segments are often
+ASR failures because normal Eve transcript segments are expected to stay short."
+  :type '(choice (const :tag "Disabled" nil) float)
+  :group 'eve)
+
+(defcustom eve-transcribe-offer-reprocess-suspicious t
+  "Whether to offer retranscription of suspiciously long/gapped regions after transcription."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-transcribe-suspicious-gap-duration 5.0
+  "Source gap duration in seconds above which transcription cleanup is offered.
+Set to nil to disable suspicious-gap reprocessing."
+  :type '(choice (const :tag "Disabled" nil) float)
+  :group 'eve)
+
+(defcustom eve-gap-indicator-duration 5.0
+  "Source gap duration in seconds above which Eve shows gap indicators.
+Gaps are computed from adjacent non-deleted media segments with the same source,
+using source start/end times and ignoring word-level edits."
+  :type '(choice (const :tag "Disabled" nil) float)
+  :group 'eve)
+
 (defcustom eve-show-words-by-default nil
   "If non-nil, show per-word timings when rendering segments."
   :type 'boolean
@@ -126,6 +167,12 @@ meaningful timing inconsistencies."
 (defcustom eve-transcribe-verbatim t
   "Whether `eve transcribe' should preserve verbatim output."
   :type 'boolean
+  :group 'eve)
+
+(defcustom eve-transcribe-hotwords nil
+  "Optional hotwords string passed to `eve transcribe'.
+When nil, the CLI supplies backend-specific defaults for verbatim mode."
+  :type '(choice (const :tag "Use CLI default" nil) string)
   :group 'eve)
 
 (defcustom eve-transcribe-tag-fillers t
@@ -163,9 +210,27 @@ present."
   :type '(repeat regexp)
   :group 'eve)
 
+(defcustom eve-filler-exception-phrases nil
+  "Phrases that should not be auto-tagged as fillers.
+Each entry is a plain string.  Exceptions win over `eve-filler-phrases', so an
+exception such as 'would like' prevents tagging 'like' inside that phrase."
+  :type '(repeat string)
+  :group 'eve)
+
 (defcustom eve-ruler-interval 30.0
   "Interval in seconds between right-margin timestamp ruler markers."
   :type 'float
+  :group 'eve)
+
+(defcustom eve-line-spacing 2
+  "Additional pixel spacing between lines in `eve-mode' buffers."
+  :type 'natnum
+  :group 'eve)
+
+(defcustom eve-context-panels-auto-open nil
+  "When non-nil, open Eve context panels automatically in `eve-mode'.
+Context panels require the optional `context-panels' package."
+  :type 'boolean
   :group 'eve)
 
 (defcustom eve-compile-quality "draft"
@@ -224,6 +289,38 @@ When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
   "Face used for deleted content when shown."
   :group 'eve)
 
+(defface eve-segment-panel-current-word-face
+  '((t :weight bold :underline t :box t))
+  "Face used for the focused word in the Eve segment panel.
+This intentionally avoids warning-like colors so focus is not confused with
+filler syntax highlighting."
+  :group 'eve)
+
+(defface eve-segment-panel-selection-face
+  '((t :inherit region))
+  "Face used for the selected word range in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-label-face
+  '((t :inherit shadow))
+  "Muted face used for labels in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-value-face
+  '((t :inherit font-lock-constant-face))
+  "Face used for values in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-broll-value-face
+  '((t :inherit font-lock-string-face))
+  "Face used for b-roll values in the Eve segment panel."
+  :group 'eve)
+
+(defface eve-segment-panel-action-face
+  '((t :inherit font-lock-doc-face))
+  "Face used for action indicators in the Eve segment panel."
+  :group 'eve)
+
 (defface eve-broll-face
   '((t :inherit font-lock-warning-face :weight bold))
   "Face to highlight segments with b-roll metadata."
@@ -252,6 +349,16 @@ which is typically blue or grey in most themes."
   "Face used for right-margin timestamp ruler markers."
   :group 'eve)
 
+(defface eve-gap-indicator-face
+  '((t :inherit warning :slant italic))
+  "Face used for significant source gap indicators."
+  :group 'eve)
+
+(defface eve-suspicious-segment-face
+  '((t :underline (:style wave :color "orange red")))
+  "Face used to underline suspiciously long transcript segments."
+  :group 'eve)
+
 (defface eve-playback-face
   '((((background dark)) :background "#5c3a00" :foreground "#ffdd88" :extend t :weight bold)
     (t                   :background "#fff3c4" :foreground "#6b4400" :extend t :weight bold))
@@ -261,6 +368,36 @@ which is typically blue or grey in most themes."
 (defvar eve--source-directory
   (file-name-directory (or load-file-name (locate-library "eve") ""))
   "Directory from which `eve' was loaded.")
+
+(defun eve--info-directory ()
+  "Return Eve's Info documentation directory, when available."
+  (let ((docs-dir (expand-file-name "docs" eve--source-directory)))
+    (when (file-readable-p (expand-file-name "eve.info" docs-dir))
+      docs-dir)))
+
+(defun eve--register-info-directory ()
+  "Add Eve's bundled manual to Emacs Info search paths."
+  (when-let* ((docs-dir (eve--info-directory)))
+    ;; `Info-directory-list' is used to build the top-level Info menu from dir
+    ;; files, while `Info-additional-directory-list' supports direct lookup.
+    (when (boundp 'Info-directory-list)
+      (add-to-list 'Info-directory-list docs-dir))
+    (when (boundp 'Info-additional-directory-list)
+      (add-to-list 'Info-additional-directory-list docs-dir))
+    ;; If Info has already built its directory menu, force it to notice Eve.
+    (when (boundp 'Info-dir-contents)
+      (setq Info-dir-contents nil))))
+
+(with-eval-after-load 'info
+  (eve--register-info-directory))
+
+;;;###autoload
+(defun eve-info ()
+  "Open the Eve manual in Info."
+  (interactive)
+  (require 'info)
+  (eve--register-info-directory)
+  (info "(eve)"))
 
 (defun eve--resolve-cli ()
   "Find the eve CLI executable.
@@ -307,9 +444,15 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     (define-key map "j" #'eve-next-segment)
     (define-key map "k" #'eve-previous-segment)
     (define-key map "n" #'eve-next-segment)
-    (define-key map "p" #'eve-previous-segment)
+    (define-key map "p" #'eve-paste-segment)
+    (define-key map "P" #'eve-paste-segment-before)
     (define-key map "J" #'eve-move-segment-down)
     (define-key map "K" #'eve-move-segment-up)
+    (define-key map "{" #'eve-previous-marker)
+    (define-key map "}" #'eve-next-marker)
+    (define-key map (kbd "TAB") #'eve-toggle-marker-fold)
+    (define-key map (kbd "<backtab>") #'eve-toggle-all-marker-folds)
+    (define-key map (kbd "S-TAB") #'eve-toggle-all-marker-folds)
     ;; Editing
     (define-key map "d" #'eve-delete-word)
     (define-key map "D" #'eve-delete-segment)
@@ -319,6 +462,8 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     (define-key map ")" #'eve-merge-with-next)
     (define-key map "u" #'eve-undo)
     (define-key map (kbd "C-r") #'eve-redo)
+    (define-key map "y" #'eve-copy-segment)
+    (define-key map (kbd "C-y") #'eve-paste-segment)
     (define-key map "e" #'eve-dwim-edit)
     (define-key map "o" #'eve-insert-marker)
     ;; Metadata
@@ -330,6 +475,9 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     ;; Fillers
     (define-key map "f" #'eve-dwim-filler)
     (define-key map "F" #'eve-delete-fillers)
+    (define-key map "A" #'eve-accept-filler)
+    (define-key map (kbd "] f") #'eve-next-filler)
+    (define-key map (kbd "[ f") #'eve-previous-filler)
     ;; Playback
     (define-key map (kbd "SPC") #'eve-play-segment)
     (define-key map (kbd "RET") #'eve-play-segment)
@@ -347,13 +495,13 @@ the major-mode binding in `eve-mode-map' and evil state maps."
     ;; Global C-c C-x (convention-compliant)
     (define-key map (kbd "C-c C-c") #'eve-compile)
     (define-key map (kbd "C-c C-v") #'eve-validate)
-    (define-key map (kbd "C-c C-r") #'eve-reload)
+    (define-key map (kbd "C-c C-r") #'eve-play-rendered)
+    (define-key map (kbd "C-c C-p") #'eve-context-panels-open)
     (define-key map (kbd "C-c C-o") #'eve-open-raw-json)
     (define-key map (kbd "C-c C-h") #'eve-hide-deleted-mode)
     (define-key map (kbd "C-c C-w") #'eve-toggle-words)
     (define-key map (kbd "C-c C-l") #'eve-ruler-mode)
     (define-key map (kbd "C-c C-t") #'eve-transcribe)
-    (define-key map (kbd "C-c C-p") #'eve-play-rendered)
     (define-key map (kbd "C-c C-s") #'eve-play-source)
     (define-key map (kbd "C-c SPC") #'eve-play)
     (define-key map (kbd "C-c C-b") #'eve-edit-broll-placeholders)
@@ -388,6 +536,24 @@ Nil when no layout is active.")
 (defvar-local eve--ruler-overlays nil
   "List of right-margin ruler overlays for the current buffer.")
 
+(defvar-local eve--context-tick-overlays nil
+  "List of source tick overlays shown while the context panel is open.")
+
+(defvar-local eve--context-thumbnail-queue nil
+  "Pending context thumbnail jobs for the current Eve buffer.")
+
+(defvar-local eve--context-thumbnail-active 0
+  "Number of active context thumbnail jobs for the current Eve buffer.")
+
+(defvar-local eve--context-thumbnail-pending nil
+  "Hash table of thumbnail cache keys already queued or running.")
+
+(defvar-local eve--context-thumbnail-failed nil
+  "Hash table of thumbnail cache keys that failed this session.")
+
+(defvar-local eve--context-thumbnail-refresh-timer nil
+  "Debounced timer for refreshing context panels after thumbnail generation.")
+
 (defvar-local eve--ruler-total-duration 0.0
   "Cached total rendered duration in seconds, updated by `eve--update-ruler'.")
 
@@ -411,6 +577,9 @@ Nil when no layout is active.")
 
 (defvar-local eve--playback-source-segments nil
   "Source-mode: ordered list of segments from the active source file.")
+
+(defvar-local eve--context-panels-disabled-ruler nil
+  "Non-nil when Eve disabled `eve-ruler-mode' while a context panel is open.")
 
 (defvar-local eve--last-echo-id nil
   "Segment id that was last echoed in the minibuffer.")
@@ -461,6 +630,54 @@ Forward-declared for the byte-compiler.")
 
 (defconst eve--transcribe-buffer-name "*eve transcribe*"
   "Buffer name used for async `eve transcribe` runs.")
+
+(defvar eve--transcribe-mode-line-string nil
+  "Global mode-line indicator for in-flight Eve transcriptions.")
+
+(defvar eve--transcribe-process-count 0
+  "Number of active Eve transcription processes.")
+
+(defvar eve--segment-clipboard nil
+  "Last Eve segment copied for `eve-paste-segment'.")
+
+(defvar-local eve--folded-marker-ids nil
+  "Marker ids whose rendered section bodies are folded.")
+
+(defvar-local eve--fold-overlays nil
+  "Active overlays hiding folded marker section bodies.")
+
+(defvar-local eve--suspicious-segment-overlays nil
+  "Active overlays underlining suspiciously long segments.")
+
+(defconst eve--transcribe-mode-line-entry
+  'eve--transcribe-mode-line-string
+  "Mode-line form used to display global Eve transcription activity.")
+
+(defun eve--ensure-transcribe-mode-line-entry ()
+  "Ensure `global-mode-string' includes the Eve transcription indicator."
+  (unless (member eve--transcribe-mode-line-entry global-mode-string)
+    (setq global-mode-string
+          (append global-mode-string (list eve--transcribe-mode-line-entry)))))
+
+(defun eve--update-transcribe-mode-line ()
+  "Refresh the global mode-line indicator for active Eve transcriptions."
+  (eve--ensure-transcribe-mode-line-entry)
+  (setq eve--transcribe-mode-line-string
+        (when (> eve--transcribe-process-count 0)
+          (propertize " Eve: transcribing…"
+                      'face 'mode-line-emphasis
+                      'help-echo "Eve is transcribing in the background. The manifest opens automatically on success.")))
+  (force-mode-line-update t))
+
+(defun eve--transcribe-started ()
+  "Record that an Eve transcription process has started."
+  (setq eve--transcribe-process-count (1+ eve--transcribe-process-count))
+  (eve--update-transcribe-mode-line))
+
+(defun eve--transcribe-finished-state ()
+  "Record that an Eve transcription process has finished."
+  (setq eve--transcribe-process-count (max 0 (1- eve--transcribe-process-count)))
+  (eve--update-transcribe-mode-line))
 
 (defun eve--default-output-file ()
   "Compute the default output mp4 path for the current TJM buffer."
@@ -597,14 +814,16 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
       (unless (bolp) (insert "\n")))))
 
 (defun eve--section-segments (marker)
-  "Return segments following MARKER until the next marker."
+  "Return MARKER and following segments until the next marker.
+Including MARKER is harmless for plain structural markers (the renderer skips
+non-renderable markers) and required for markers that carry intro/outro b-roll."
   (let* ((segments (eve--segments))
 	 (start (cl-position marker segments :test #'eq)))
     (when start
       (let (result)
-	(cl-loop for idx from (1+ start) below (length segments)
+	(cl-loop for idx from start below (length segments)
 		 for seg = (nth idx segments)
-		 until (eve--marker-p seg)
+		 until (and (> idx start) (eve--marker-p seg))
 		 do (push seg result))
 	(nreverse result)))))
 
@@ -671,14 +890,220 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
     (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
     (message "Playing %s" (file-name-nondirectory abs))))
 
+(defun eve--elapsed-label (start-time)
+  "Return elapsed time since START-TIME as a compact label."
+  (eve--format-time (max 0.0 (- (float-time) start-time))))
+
+(defun eve--progress-message (prefix detail start-time)
+  "Show PREFIX progress DETAIL with elapsed time from START-TIME."
+  (message "%s: %s (%s elapsed)" prefix detail (eve--elapsed-label start-time)))
+
+(defun eve--transcribe-progress-detail (event)
+  "Return human-readable progress detail for transcribe EVENT."
+  (let ((phase (alist-get 'phase event nil nil #'equal))
+        (current (alist-get 'current event nil nil #'equal))
+        (total (alist-get 'total event nil nil #'equal))
+        (file (alist-get 'file event nil nil #'equal))
+        (backend (alist-get 'backend event nil nil #'equal))
+        (model (alist-get 'model event nil nil #'equal))
+        (output (alist-get 'output event nil nil #'equal))
+        (segments (alist-get 'segments event nil nil #'equal)))
+    (pcase phase
+      ("start" (format "queued %s file(s) with %s/%s" total backend model))
+      ("load-model" (format "loading model %s via %s" model backend))
+      ("extract" (format "extracting audio %s/%s — %s" current total (file-name-nondirectory (eve--stringify file))))
+      ("decode" (format "decoding %s/%s — %s" current total (file-name-nondirectory (eve--stringify file))))
+      ("resegment" "resegmenting transcript")
+      ("tag-fillers" "tagging fillers")
+      ("write" (format "writing %s" (file-name-nondirectory (eve--stringify output))))
+      ("done" (format "done, wrote %s segment(s)" segments))
+      (_ (eve--stringify phase)))))
+
+(defun eve--transcribe-process-filter (process chunk)
+  "Handle transcribe PROCESS output CHUNK, parsing JSON progress lines."
+  (when-let* ((buffer (process-buffer process)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (goto-char (point-max))
+        (insert chunk))))
+  (let ((pending (concat (or (process-get process :eve-progress-pending) "") chunk))
+        lines)
+    (setq lines (split-string pending "\n"))
+    (process-put process :eve-progress-pending (car (last lines)))
+    (dolist (line (butlast lines))
+      (when (string-prefix-p "{" line)
+        (condition-case nil
+            (let ((event (json-parse-string line :object-type 'alist)))
+              (when (equal (alist-get 'event event nil nil #'equal) "progress")
+                (eve--progress-message
+                 "Transcribe"
+                 (eve--transcribe-progress-detail event)
+                 (or (process-get process :eve-start-time) (float-time)))))
+          (error nil))))))
+
+(defun eve--suspicious-long-segment-p (segment)
+  "Return non-nil when SEGMENT is suspiciously long."
+  (and eve-validation-suspicious-segment-duration
+       (not (eve--marker-p segment))
+       (let ((start (eve--coerce-number (alist-get 'start segment)))
+             (end (eve--coerce-number (alist-get 'end segment))))
+         (and start end
+              (> (- end start) eve-validation-suspicious-segment-duration)))))
+
+(defun eve--segment-duration-seconds (segment)
+  "Return SEGMENT duration in seconds, or nil."
+  (let ((start (eve--coerce-number (alist-get 'start segment)))
+        (end (eve--coerce-number (alist-get 'end segment))))
+    (and start end (- end start))))
+
+(defun eve--suspicious-long-segments ()
+  "Return non-marker segments longer than the suspicious-duration threshold."
+  (when eve-validation-suspicious-segment-duration
+    (seq-filter #'eve--suspicious-long-segment-p (eve--segments))))
+
+(defun eve--media-segment-for-gap-p (segment)
+  "Return non-nil when SEGMENT can participate in source-gap indicators."
+  (and segment
+       (not (eve--marker-p segment))
+       (not (eve--edit-deleted-p segment))
+       (alist-get 'source segment)
+       (eve--coerce-number (alist-get 'start segment))
+       (eve--coerce-number (alist-get 'end segment))))
+
+(defun eve--source-gap-between (previous next)
+  "Return source gap plist between PREVIOUS and NEXT, or nil."
+  (when (and eve-gap-indicator-duration
+             (eve--media-segment-for-gap-p previous)
+             (eve--media-segment-for-gap-p next)
+             (equal (alist-get 'source previous) (alist-get 'source next)))
+    (let* ((prev-end (eve--coerce-number (alist-get 'end previous)))
+           (next-start (eve--coerce-number (alist-get 'start next)))
+           (duration (- next-start prev-end)))
+      (when (> duration eve-gap-indicator-duration)
+        (list :before previous :after next :duration duration
+              :source (alist-get 'source next)
+              :start prev-end :end next-start)))))
+
+(defun eve--source-gaps ()
+  "Return significant source gaps in manifest order."
+  (let (previous-media gaps)
+    (dolist (segment (eve--segments) (nreverse gaps))
+      (cond
+       ((and (eve--marker-p segment) (eve--segment-broll segment))
+        (setq previous-media nil))
+       ((and (not (eve--marker-p segment)) (eve--edit-deleted-p segment))
+        (setq previous-media nil))
+       ((eve--media-segment-for-gap-p segment)
+        (when-let* ((gap (eve--source-gap-between previous-media segment)))
+          (push gap gaps))
+        (setq previous-media segment))))))
+
+(defun eve--source-gap-before (segment)
+  "Return significant source gap before SEGMENT, if any."
+  (seq-find (lambda (gap) (eq (plist-get gap :after) segment))
+            (eve--source-gaps)))
+
+(defun eve--source-gap-after (segment)
+  "Return significant source gap after SEGMENT, if any."
+  (seq-find (lambda (gap) (eq (plist-get gap :before) segment))
+            (eve--source-gaps)))
+
+(defun eve--suspicious-transcript-intervals ()
+  "Return index intervals needing post-transcription cleanup."
+  (let ((segments (eve--segments))
+        intervals
+        previous
+        previous-index)
+    (cl-loop for segment in segments
+             for index from 0
+             unless (eve--marker-p segment)
+             do (let ((start (eve--coerce-number (alist-get 'start segment)))
+                      (end (eve--coerce-number (alist-get 'end segment))))
+                  (when (and start end eve-validation-suspicious-segment-duration
+                             (> (- end start)
+                                eve-validation-suspicious-segment-duration))
+                    (push (list :start index :end index :kind 'long) intervals))
+                  (when (and previous previous-index start
+                             eve-transcribe-suspicious-gap-duration
+                             (equal (alist-get 'source previous)
+                                    (alist-get 'source segment)))
+                    (let ((previous-end
+                           (eve--coerce-number (alist-get 'end previous))))
+                      (when (and previous-end
+                                 (> (- start previous-end)
+                                    eve-transcribe-suspicious-gap-duration))
+                        (push (list :start previous-index :end index :kind 'gap)
+                              intervals))))
+                  (setq previous segment
+                        previous-index index)))
+    (eve--merge-suspicious-intervals (nreverse intervals))))
+
+(defun eve--merge-suspicious-intervals (intervals)
+  "Merge overlapping suspicious transcript INTERVALS."
+  (let ((sorted (sort (copy-sequence intervals)
+                      (lambda (a b)
+                        (< (plist-get a :start) (plist-get b :start)))))
+        result)
+    (dolist (interval sorted (nreverse result))
+      (let ((last (car result)))
+        (if (and last (<= (plist-get interval :start) (1+ (plist-get last :end))))
+            (progn
+              (setf (plist-get last :end)
+                    (max (plist-get last :end) (plist-get interval :end)))
+              (setf (plist-get last :kind) 'mixed))
+          (push (copy-sequence interval) result))))))
+
+(defun eve--reprocess-suspicious-intervals (intervals backend model)
+  "Retranscribe suspicious index INTERVALS with BACKEND and MODEL."
+  (let ((start-time (float-time))
+        (count 0))
+    (eve--record-state)
+    (dolist (interval (reverse intervals))
+      (let* ((segments (eve--segments))
+             (start-index (plist-get interval :start))
+             (end-index (plist-get interval :end))
+             (start-segment (nth start-index segments))
+             (end-segment (nth end-index segments)))
+        (when (and start-segment end-segment)
+          (eve--progress-message
+           "Transcribe"
+           (format "reprocessing %s through %s"
+                   (eve--stringify (alist-get 'id start-segment))
+                   (eve--stringify (alist-get 'id end-segment)))
+           start-time)
+          (let ((eve-segment-panel-source-buffer (current-buffer)))
+            (eve--regenerate-segment-range
+             start-segment end-segment backend model start-time))
+          (setq count (1+ count)))))
+    (when (> count 0)
+      (eve--mark-dirty)
+      (eve--render t))
+    count))
+
+(defun eve--maybe-offer-reprocess-suspicious-transcripts (backend model)
+  "Offer retranscription for suspicious long/gapped regions using BACKEND and MODEL."
+  (when eve-transcribe-offer-reprocess-suspicious
+    (let ((intervals (eve--suspicious-transcript-intervals)))
+      (when (and intervals
+                 (y-or-n-p
+                  (format "%d suspicious transcript region(s) found. Reprocess now? "
+                          (length intervals))))
+        (let ((count (eve--reprocess-suspicious-intervals intervals backend model)))
+          (message "Reprocessed %d suspicious region(s)" count))))))
+
 (defun eve--transcribe-finished (process event output-path)
   "Handle completion of transcribe PROCESS EVENT for OUTPUT-PATH."
+  (eve--transcribe-finished-state)
   (let ((buffer (process-buffer process)))
     (if (and (eq (process-status process) 'exit)
              (= (process-exit-status process) 0))
         (progn
           (message "eve transcribe finished: %s" output-path)
-          (find-file output-path))
+          (find-file output-path)
+          (when (derived-mode-p 'eve-mode)
+            (eve--maybe-offer-reprocess-suspicious-transcripts
+             (or (process-get process :eve-backend) eve-transcribe-backend)
+             (or (process-get process :eve-model) eve-transcribe-model))))
       (when (buffer-live-p buffer)
         (pop-to-buffer buffer))
       (message "eve transcribe failed: %s" (string-trim event)))))
@@ -697,19 +1122,31 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
                                  "--model" eve-transcribe-model)
                            (when eve-transcribe-verbatim
                              '("--verbatim"))
+                           (when eve-transcribe-hotwords
+                             (list "--hotwords" eve-transcribe-hotwords))
                            (when eve-transcribe-tag-fillers
-                             '("--tag-fillers")))))
+                             '("--tag-fillers"))
+                           '("--progress-json"))))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
         (erase-buffer)))
-    (make-process :name "eve-transcribe"
-                  :buffer buffer
-                  :command command
-                  :noquery t
-                  :sentinel (lambda (process event)
-                              (eve--transcribe-finished
-                               process event output-file)))
-    (message "Started eve transcribe -> %s" output-file)))
+    (let* ((start-time (float-time))
+           (process (make-process :name "eve-transcribe"
+                                  :buffer buffer
+                                  :command command
+                                  :noquery t
+                                  :filter #'eve--transcribe-process-filter
+                                  :sentinel (lambda (process event)
+                                              (eve--transcribe-finished
+                                               process event output-file)))))
+      (when (processp process)
+        (process-put process :eve-start-time start-time)
+        (process-put process :eve-backend eve-transcribe-backend)
+        (process-put process :eve-model eve-transcribe-model))
+      (eve--transcribe-started)
+      (eve--progress-message "Transcribe"
+                             (format "queued %d file(s)" (length files))
+                             start-time))))
 
 (defun eve--compilation-finished (buffer status)
   "Handle completion of an `eve text-edit` BUFFER with STATUS."
@@ -783,6 +1220,7 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
   (setq-local eve--compile-start-time (float-time))
   (force-mode-line-update)
   (let* ((origin-buffer (current-buffer))
+         (play-socket eve--pending-play-socket)
 	 (origin-window (selected-window))
 	 (display-buffer-overriding-action
 	  '((display-buffer-reuse-mode-window display-buffer-in-side-window)
@@ -799,6 +1237,7 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	  (setq-local eve--pending-output (and output (expand-file-name output)))
 	  (setq-local eve--pending-temp temp)
 	  (setq-local eve--pending-origin origin-buffer)
+          (setq-local eve--pending-play-socket play-socket)
 	  (add-hook 'compilation-filter-hook #'eve--compilation-filter nil t)
 	  (add-hook 'compilation-finish-functions #'eve--compilation-finished nil t))))
     (when (window-live-p origin-window)
@@ -903,6 +1342,8 @@ With a prefix argument (\\[universal-argument]), use the opposite quality to
 	 (marker? (and segment (eve--marker-p segment))))
     (when toggle-quality
       (message "Compiling at %s quality" quality))
+    (when (and buffer-file-name (buffer-modified-p))
+      (save-buffer))
     (unless (eve--pre-flight-validate quality)
       (user-error "Compilation aborted due to manifest errors"))
     (if (not marker?)
@@ -928,9 +1369,9 @@ With a prefix argument (\\[universal-argument]), use the opposite quality to
 (defvar-local eve--auto-render-timer nil
   "Idle timer for debouncing speculative renders in the current buffer.")
 
-(defcustom eve-auto-render t
-  "Whether to speculatively pre-render changed segments on save.
-When non-nil (the default), saving a TJM manifest triggers a background
+(defcustom eve-auto-render-default-enabled t
+  "Whether `eve-auto-render-mode' is enabled in new Eve buffers.
+When enabled, saving a TJM manifest triggers a background
 `eve text-edit --segments <changed-ids>' to warm the cache.  The next
 `eve-compile' (\\`C-c C-c') then only needs the final concat."
   :type 'boolean
@@ -941,6 +1382,67 @@ When non-nil (the default), saving a TJM manifest triggers a background
   :type 'float
   :group 'eve)
 
+(defcustom eve-auto-render-all-segments nil
+  "Whether speculative renders should warm every segment cache entry.
+When nil, only segments reported as changed by the dry run are warmed.  When
+non-nil, every segment id is requested with `eve text-edit --segments', relying
+on the CLI cache to skip entries that are already warm."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-auto-render-low-priority t
+  "Whether speculative render processes should run at low CPU priority.
+When non-nil and the `nice' executable is available, background cache warming is
+launched as `nice -n 19 eve text-edit ...'."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-context-thumbnails-enabled t
+  "Whether Eve context-panel timestamp rows show video thumbnails."
+  :type 'boolean
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-width 96
+  "Width in pixels for context-panel timestamp thumbnails."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-height 54
+  "Height in pixels for context-panel timestamp thumbnails."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-source 'best
+  "Preferred source for context-panel timestamp thumbnails.
+`best' uses rendered output when it already exists and is fresh, falling back to
+source media.  `source' uses source media only.  `rendered' uses rendered output
+only and shows text until it is available."
+  :type '(choice (const :tag "Rendered when available, else source" best)
+                 (const :tag "Source media only" source)
+                 (const :tag "Rendered output only" rendered))
+  :group 'eve)
+
+(defcustom eve-context-thumbnail-jobs 1
+  "Maximum concurrent ffmpeg thumbnail extraction jobs per Eve buffer."
+  :type 'integer
+  :group 'eve)
+
+(defcustom eve-segment-panel-height 12
+  "Height of the Eve current-segment bottom panel."
+  :type 'natnum
+  :group 'eve)
+
+(defvar-local eve-auto-render-mode nil
+  "Non-nil when automatic Eve render-cache warming is enabled.")
+
+(defun eve--auto-render-segment-ids ()
+  "Return segment IDs in the current manifest."
+  (delq nil
+        (mapcar (lambda (segment)
+                  (let ((id (alist-get 'id segment)))
+                    (and id (eve--stringify id))))
+                (eve--segments))))
+
 (defun eve--auto-render-changed-segment-ids ()
   "Return a list of segment IDs that differ from the cache, or nil."
   (when (and buffer-file-name (file-exists-p buffer-file-name))
@@ -950,17 +1452,26 @@ When non-nil (the default), saving a TJM manifest triggers a background
           (when (and (arrayp ids) (> (length ids) 0))
             (append ids nil)))))))
 
-(defun eve--auto-render-fire ()
-  "Launch the speculative background render for the current buffer."
+(defun eve--auto-render-command (command)
+  "Return low-priority wrapper for COMMAND when configured."
+  (if (and eve-auto-render-low-priority (executable-find "nice"))
+      (append (list (executable-find "nice") "-n" "19") command)
+    command))
+
+(defun eve--auto-render-fire (&optional all-segments)
+  "Launch a speculative background render for the current buffer.
+When ALL-SEGMENTS is non-nil, ask the CLI to warm every segment id, relying on
+the segment cache to skip already-warm entries."
   (when (and (derived-mode-p 'eve-mode)
-             eve-auto-render
              buffer-file-name
              (file-exists-p buffer-file-name))
     (when (and eve--auto-render-process
                (process-live-p eve--auto-render-process))
       (delete-process eve--auto-render-process)
       (setq eve--auto-render-process nil))
-    (let ((seg-ids (eve--auto-render-changed-segment-ids))
+    (let ((seg-ids (if (or all-segments eve-auto-render-all-segments)
+                       (eve--auto-render-segment-ids)
+                     (eve--auto-render-changed-segment-ids)))
           (buf (current-buffer)))
       (if (null seg-ids)
           (progn
@@ -975,7 +1486,8 @@ When non-nil (the default), saving a TJM manifest triggers a background
                (seg-args (apply #'append
                                 (mapcar (lambda (id) (list "--segments" id))
                                         seg-ids)))
-               (full-cmd (append base-cmd seg-args)))
+               (full-cmd (eve--auto-render-command
+                          (append base-cmd seg-args))))
           (setq eve--auto-render-process
                 (make-process :name "eve-auto-render"
                               :buffer nil
@@ -992,11 +1504,64 @@ When non-nil (the default), saving a TJM manifest triggers a background
 
 (defun eve--auto-render-after-save ()
   "Schedule a speculative render after the buffer is saved."
-  (when eve--auto-render-timer
-    (cancel-timer eve--auto-render-timer))
-  (setq eve--auto-render-timer
-        (run-with-idle-timer eve-auto-render-idle-seconds nil
-                             #'eve--auto-render-fire)))
+  (when eve-auto-render-mode
+    (when eve--auto-render-timer
+      (cancel-timer eve--auto-render-timer))
+    (setq eve--auto-render-timer
+          (run-with-idle-timer eve-auto-render-idle-seconds nil
+                               #'eve--auto-render-fire))))
+
+;;;###autoload
+(define-minor-mode eve-auto-render-mode
+  "Automatically warm Eve's segment render cache after saves.
+The mode is buffer-local.  Automatic renders run in the background and use low
+CPU priority when `eve-auto-render-low-priority' is non-nil."
+  :lighter " EveRender"
+  (if eve-auto-render-mode
+      (add-hook 'after-save-hook #'eve--auto-render-after-save nil t)
+    (remove-hook 'after-save-hook #'eve--auto-render-after-save t)
+    (when eve--auto-render-timer
+      (cancel-timer eve--auto-render-timer)
+      (setq eve--auto-render-timer nil))))
+
+(defun eve-render-cache-changed ()
+  "Warm render cache entries for changed segments now."
+  (interactive)
+  (when (buffer-modified-p)
+    (save-buffer))
+  (eve--auto-render-fire nil))
+
+(defun eve-render-cache-all ()
+  "Warm render cache entries for all segments now at low priority."
+  (interactive)
+  (when (buffer-modified-p)
+    (save-buffer))
+  (eve--auto-render-fire t))
+
+(defun eve--cache-dir ()
+  "Return the render cache directory for the current Eve buffer."
+  (unless buffer-file-name
+    (user-error "Eve buffer is not visiting a file"))
+  (expand-file-name ".eve-cache" (file-name-directory buffer-file-name)))
+
+;;;###autoload
+(defun eve-wipe-cache ()
+  "Delete the `.eve-cache' directory next to the current TJM manifest."
+  (interactive)
+  (let ((cache-dir (eve--cache-dir)))
+    (unless (file-directory-p cache-dir)
+      (user-error "No Eve cache directory: %s" cache-dir))
+    (when (and eve--auto-render-process
+               (process-live-p eve--auto-render-process))
+      (delete-process eve--auto-render-process)
+      (setq eve--auto-render-process nil))
+    (when (yes-or-no-p (format "Delete Eve cache %s? " cache-dir))
+      (delete-directory cache-dir t)
+      (setq eve--render-status nil
+            eve--render-progress nil
+            eve--render-eta nil)
+      (force-mode-line-update)
+      (message "Deleted Eve cache: %s" cache-dir))))
 
 (defun eve--auto-render-teardown ()
   "Clean up speculative render state for the current buffer."
@@ -1006,18 +1571,42 @@ When non-nil (the default), saving a TJM manifest triggers a background
   (when (and eve--auto-render-process
              (process-live-p eve--auto-render-process))
     (delete-process eve--auto-render-process)
-    (setq eve--auto-render-process nil)))
+    (setq eve--auto-render-process nil))
+  (when eve--context-thumbnail-refresh-timer
+    (cancel-timer eve--context-thumbnail-refresh-timer)
+    (setq eve--context-thumbnail-refresh-timer nil)))
+
+(defun eve--play-marker-broll (segment)
+  "Play marker SEGMENT's b-roll directly when it references media."
+  (let* ((broll (eve--segment-broll segment))
+         (file (and broll (eve--stringify (alist-get 'file broll))))
+         (abs-file (and file (not (string-empty-p file))
+                        (not (string-match-p "\\.json\\'" file))
+                        (eve--resolve-relative-path file))))
+    (when (and abs-file (file-exists-p abs-file))
+      (let* ((start (or (eve--time->seconds (alist-get 'start_offset broll)) 0.0))
+             (duration (eve--time->seconds (alist-get 'duration broll)))
+             (end (and duration (+ start duration)))
+             (socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
+        (eve--play-with-mpv abs-file start end socket-path)
+        (setq eve--playback-source-segments (list segment))
+        (setq eve--playback-mode 'source)
+        (eve-playback-mode 1)
+        (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
+        (message "Playing marker b-roll %s" file)
+        t))))
 
 (defun eve--play-marker (segment)
-  "Play the compiled video associated with marker SEGMENT, compiling if needed."
+  "Play marker SEGMENT b-roll or its compiled section."
   (let* ((title (eve--stringify (alist-get 'title segment)))
 	 (slug (eve--slugify title))
 	 (output (eve--output-path slug)))
-    (if (and output (file-exists-p output))
-	(eve--play-file output)
-      (progn
-	(message "No compiled output for '%s'; compiling section..." (or title slug))
-	(eve-compile)))))
+    (or (eve--play-marker-broll segment)
+        (if (and output (file-exists-p output))
+	    (eve--play-file output)
+          (progn
+	    (message "No compiled output for '%s'; compiling section..." (or title slug))
+	    (eve-compile))))))
 
 (when (featurep 'hydra)
   (defhydra eve-hydra (:hint nil :color teal)
@@ -1025,8 +1614,8 @@ When non-nil (the default), saving a TJM manifest triggers a background
 Navigation        Edit              Fillers           Playback
 ──────────────   ──────────────   ──────────────   ──────────────────────
 _j_/_k_  next/prev  _d_ del word      _f_ filler        _SPC_/_RET_ play
-_n_/_p_  next/prev  _D_ del segment   _F_ del fillers   _<left>_/_<right>_ seek ±5s
-_J_/_K_  move up/dn _s_/|  split                        _S-<left>_/_S-<right>_ ±30s/10s
+_n_/_p_  next/prev  _D_ del segment   _F_ del fillers   ]f next filler
+_J_/_K_  move up/dn _s_/|  split      _A_ non-filler _S-<left>_/_S-<right>_ ±30s/10s
                   _m_/_)_ merge                       During playback:
 Metadata          _u_ undo          Structure           _SPC_ pause/resume
 ──────────────   _C-r_ redo         ___  separator       _q_ stop
@@ -1036,9 +1625,9 @@ _B_ b-roll cont   Global C-c C-x
 _i_ speaker       ──────────────
 _r_ timestamps    _C-c C-c_ compile    _C-c C-w_ word timings
                   _C-c C-v_ validate   _C-c C-l_ ruler mode
-_g_ reload        _C-c C-r_ reload     _C-c C-h_ hide deleted
+_g_ reload        _C-c C-r_ play rendered  _C-c C-h_ hide deleted
 _q_ quit          _C-c C-o_ raw JSON   _C-c C-t_ transcribe
-_?_ this help     _C-c C-p_ play rendered  _C-c C-s_ play source
+_?_ this help     _C-c C-p_ panels     _C-c C-s_ play source
                   _C-c C-b_ b-roll placeholders
                   _C-c C-n_ edit notes
 "
@@ -1065,6 +1654,9 @@ _?_ this help     _C-c C-p_ play rendered  _C-c C-s_ play source
     ("r" eve-edit-start-end)
     ("f" eve-dwim-filler)
     ("F" eve-delete-fillers)
+    ("A" eve-accept-filler)
+    ("] f" eve-next-filler)
+    ("[ f" eve-previous-filler)
     ("SPC" eve-play-segment)
     ("RET" eve-play-segment)
     ("<left>" eve-seek-short-backward)
@@ -1076,13 +1668,13 @@ _?_ this help     _C-c C-p_ play rendered  _C-c C-s_ play source
     ("g" eve-reload)
     ("C-c C-c" eve-compile)
     ("C-c C-v" eve-validate)
-    ("C-c C-r" eve-reload)
+    ("C-c C-r" eve-play-rendered)
+    ("C-c C-p" eve-context-panels-open)
     ("C-c C-o" eve-open-raw-json)
     ("C-c C-h" eve-hide-deleted-mode)
     ("C-c C-w" eve-toggle-words)
     ("C-c C-l" eve-ruler-mode)
     ("C-c C-t" eve-transcribe)
-    ("C-c C-p" eve-play-rendered)
     ("C-c C-s" eve-play-source)
     ("C-c C-b" eve-edit-broll-placeholders)
     ("C-c C-n" eve-edit-notes)
@@ -1098,7 +1690,7 @@ summary in the echo area."
       (eve-hydra/body)
     (message
      (concat "eve bindings: j/k nav  d del-word  D del-seg  s split  m merge  "
-             "u undo  C-r redo  f filler  F del-fillers  "
+             "u undo  C-r redo  f filler  F del-fillers  A non-filler  ]f/[f nav  "
              "SPC play  C-c C-c compile  ? (install hydra for full cheatsheet)"))))
 
 (defun eve--snapshot ()
@@ -1193,11 +1785,21 @@ Combines `eve-filler-phrases' with literal-compatible entries from
             (cl-pushnew tokens result :test #'equal)))))
     (sort result (lambda (a b) (> (length a) (length b))))))
 
+(defun eve--filler-exception-phrase-list ()
+  "Return normalized exception phrase-token lists, longest first."
+  (let (result)
+    (dolist (phrase eve-filler-exception-phrases)
+      (let ((tokens (eve--normalize-word-tokens phrase)))
+        (when tokens
+          (cl-pushnew tokens result :test #'equal))))
+    (sort result (lambda (a b) (> (length a) (length b))))))
+
 (defun eve--apply-filler-tags ()
   "Apply filler tags to words in all segments.
 Returns the count of words newly tagged. Does not render, message, mark dirty,
 or record undo state."
   (let ((phrases (eve--filler-phrase-list))
+        (exceptions (eve--filler-exception-phrase-list))
         (tagged 0))
     (dolist (segment (eve--segments))
       (let ((words (alist-get 'words segment)))
@@ -1215,20 +1817,28 @@ or record undo state."
                  (len (length words))
                  (i 0))
             (while (< i len)
-              (let ((match-len
-                     (cl-loop for phrase in phrases
+              (let ((exception-len
+                     (cl-loop for phrase in exceptions
                               when (eve--phrase-matches-at-p normalized-words phrase i)
                               return (length phrase)
                               finally return nil)))
-                (if match-len
-                    (progn
-                      (cl-loop for j from 0 below match-len
-                               do (let ((word (nth (+ i j) words)))
-                                    (unless (equal (eve--edit-kind word) "filler")
-                                      (eve--set-word-edit-kind word "filler")
-                                      (setq tagged (1+ tagged)))))
-                      (setq i (+ i match-len)))
-                  (setq i (1+ i)))))))))
+                (if exception-len
+                    (setq i (+ i exception-len))
+                  (let ((match-len
+                         (cl-loop for phrase in phrases
+                                  when (eve--phrase-matches-at-p normalized-words phrase i)
+                                  return (length phrase)
+                                  finally return nil)))
+                    (if match-len
+                        (progn
+                          (cl-loop for j from 0 below match-len
+                                   do (let ((word (nth (+ i j) words)))
+                                        (unless (or (eve--word-filler-p word)
+                                                    (eve--word-no-filler-p word))
+                                          (eve--mark-word-filler word)
+                                          (setq tagged (1+ tagged)))))
+                          (setq i (+ i match-len)))
+                      (setq i (1+ i)))))))))))
     tagged))
 
 (defun eve--alist-set (alist key value)
@@ -1244,6 +1854,55 @@ or record undo state."
 (defun eve--set-word-edit-kind (word kind)
   "Set WORD's nested edit KIND while preserving other edit members."
   (eve--set-edit-field word 'kind kind))
+
+(defun eve--word-filler-state (word)
+  "Return WORD filler state: `filler', `no-filler', or nil.
+The explicit nested `filler' edit field wins over legacy `kind = filler'."
+  (let ((edit (eve--edit-metadata word)))
+    (cond
+     ((eve--edit-key-present-p 'filler edit)
+      (let ((value (eve--aget 'filler edit)))
+        (cond
+         ((or (eq value t) (equal value "t") (equal value "filler")) 'filler)
+         ((or (eq value :json-false) (null value) (equal value "no-filler"))
+          'no-filler)
+         (t nil))))
+     ((equal (eve--edit-kind word) "filler") 'filler)
+     (t nil))))
+
+(defun eve--word-filler-p (word)
+  "Return non-nil when WORD is marked as a filler."
+  (eq (eve--word-filler-state word) 'filler))
+
+(defun eve--word-no-filler-p (word)
+  "Return non-nil when WORD is explicitly marked as not filler."
+  (eq (eve--word-filler-state word) 'no-filler))
+
+(defun eve--set-word-filler (word value)
+  "Set WORD filler edit field to VALUE and remove legacy filler kind."
+  (eve--remove-word-edit-kind word)
+  (eve--set-edit-field word 'filler value))
+
+(defun eve--mark-word-filler (word)
+  "Mark WORD as a filler."
+  (eve--set-word-filler word t))
+
+(defun eve--mark-word-non-filler (word)
+  "Mark WORD as explicitly not a filler."
+  (eve--set-word-filler word "no-filler"))
+
+(defun eve--remove-edit-field (item key)
+  "Remove ITEM nested edit KEY while preserving other edit members."
+  (let ((edit (copy-tree (eve--edit-metadata item) t)))
+    (when (listp edit)
+      (setq edit (assq-delete-all key edit))
+      (if edit
+          (eve--alist-set item 'edit edit)
+        (eve--alist-set item 'edit nil)))))
+
+(defun eve--remove-word-edit-kind (word)
+  "Remove WORD's nested edit kind while preserving other edit members."
+  (eve--remove-edit-field word 'kind))
 
 (defun eve--set-edit-deleted (item deleted)
   "Set ITEM's nested edit deleted flag while preserving other edit members."
@@ -1321,7 +1980,7 @@ or record undo state."
 
 (defun eve--set-segment-broll (segment broll)
   "Set SEGMENT b-roll metadata inside nested edit metadata."
-  (eve--set-edit-field segment 'broll broll))
+  (eve--set-edit-field segment 'broll (and broll (copy-tree broll t))))
 
 (defun eve--segment-kind (segment)
   (let ((kind (alist-get 'kind segment)))
@@ -1348,7 +2007,7 @@ or record undo state."
      ((string-empty-p trim) nil)
      ((string-match-p "\\`[+-]?[0-9]*\\.?[0-9]+\\'" trim)
       (string-to-number trim))
-     ((string-match-p "\\`[0-9]+:\(?:[0-9]+:\)?[0-9]+\\(?:\\.[0-9]+\\)?\\'" trim)
+     ((string-match-p "\\`[0-9]+:\\(?:[0-9]+:\\)?[0-9]+\\(?:\\.[0-9]+\\)?\\'" trim)
       trim)
      (t (user-error "Invalid time format: %s" input)))))
 
@@ -1557,13 +2216,6 @@ This is a buffer-local mode for `eve-mode' buffers."
   (when (and (derived-mode-p 'eve-mode) eve--data)
     (eve--render t)))
 
-(defun eve--ruler-reapply-margins ()
-  "Reapply right-margin width for the ruler when window configuration changes."
-  (when eve-ruler-mode
-    (set-window-margins (selected-window)
-                        (car (window-margins (selected-window)))
-                        right-margin-width)))
-
 (define-minor-mode eve-ruler-mode
   "Show a right-margin timestamp ruler in `eve-mode' buffers.
 When active, a `[hh:mm:ss]' marker is placed in the right margin next
@@ -1574,15 +2226,1747 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (if eve-ruler-mode
       (progn
         (when (and (derived-mode-p 'eve-mode) eve--data)
-          (eve--update-ruler))
-        (add-hook 'window-configuration-change-hook
-                  #'eve--ruler-reapply-margins nil t))
+          (eve--update-ruler)))
     (eve--ruler-clear-overlays)
     (setq-local right-margin-width 0)
-    (dolist (win (get-buffer-window-list nil nil t))
-      (set-window-margins win (car (window-margins win)) 0))
-    (remove-hook 'window-configuration-change-hook
-                 #'eve--ruler-reapply-margins t)))
+    (eve--apply-visual-wrap)))
+
+(defvar eve-segment-panel-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "w" #'eve-segment-panel-next-word)
+    (define-key map "b" #'eve-segment-panel-previous-word)
+    (define-key map "$" #'eve-segment-panel-last-word)
+    (define-key map "v" #'eve-segment-panel-toggle-selection)
+    (define-key map "j" #'eve-segment-panel-next-segment)
+    (define-key map "n" #'eve-segment-panel-next-segment)
+    (define-key map "k" #'eve-segment-panel-previous-segment)
+    (define-key map "p" #'eve-segment-panel-paste-after)
+    (define-key map "i" #'eve-segment-panel-edit-words)
+    (define-key map "E" #'eve-segment-panel-edit-segment)
+    (define-key map "r" #'eve-segment-panel-regenerate-transcript)
+    (define-key map "U" #'eve-segment-panel-regenerate-until)
+    (define-key map "~" #'eve-segment-panel-capitalize-words)
+    (define-key map "." #'eve-segment-panel-add-dot)
+    (define-key map "," #'eve-segment-panel-add-colon)
+    (define-key map "d" #'eve-segment-panel-delete-words)
+    (define-key map "D" #'eve-segment-panel-delete-segment)
+    (define-key map "f" #'eve-segment-panel-mark-filler)
+    (define-key map "A" #'eve-segment-panel-accept-filler)
+    (define-key map "F" #'eve-segment-panel-delete-fillers)
+    (define-key map "s" #'eve-segment-panel-split)
+    (define-key map "|" #'eve-segment-panel-split)
+    (define-key map "B" #'eve-segment-panel-edit-broll)
+    (define-key map "C" #'eve-segment-panel-toggle-broll-continue)
+    (define-key map "y" #'eve-segment-panel-copy)
+    (define-key map "P" #'eve-segment-panel-paste-before)
+    (define-key map "N" #'eve-segment-panel-edit-notes)
+    (define-key map "T" #'eve-segment-panel-toggle-tag)
+    (define-key map "I" #'eve-segment-panel-edit-speaker)
+    (define-key map "x" #'eve-segment-panel-edit-range)
+    (define-key map (kbd "g g") #'eve-segment-panel-first-segment)
+    (define-key map "G" #'eve-segment-panel-last-segment)
+    (define-key map "{" #'eve-segment-panel-previous-marker)
+    (define-key map "}" #'eve-segment-panel-next-marker)
+    (define-key map (kbd "TAB") #'eve-segment-panel-toggle-marker-fold)
+    (define-key map (kbd "<backtab>") #'eve-segment-panel-toggle-all-marker-folds)
+    (define-key map (kbd "S-TAB") #'eve-segment-panel-toggle-all-marker-folds)
+    (define-key map "O" #'eve-segment-panel-insert-marker)
+    (define-key map (kbd "SPC") #'eve-segment-panel-play-source)
+    (define-key map "R" #'eve-segment-panel-play-rendered)
+    (define-key map "c" #'eve-segment-panel-cache-current)
+    (define-key map "m" #'eve-segment-panel-merge-next)
+    (define-key map "M" #'eve-segment-panel-merge-previous)
+    (define-key map "u" #'eve-segment-panel-undo)
+    (define-key map (kbd "C-r") #'eve-segment-panel-redo)
+    (define-key map (kbd "C-x C-s") #'eve-segment-panel-save)
+    (define-key map (kbd "C-c C-c") #'eve-segment-panel-compile)
+    (define-key map (kbd "C-c C-r") #'eve-segment-panel-play-rendered)
+    (define-key map (kbd "C-c C-s") #'eve-segment-panel-play-source-continuous)
+    (define-key map (kbd "C-c C-v") #'eve-segment-panel-validate)
+    (define-key map "q" #'eve-segment-panel-focus-source)
+    (define-key map "Q" #'eve-segment-panel-close)
+    map)
+  "Keymap for `eve-segment-panel-mode'.")
+
+(defvar-local eve-segment-panel-source-buffer nil
+  "Eve source buffer associated with the current segment panel.")
+
+(defvar-local eve-segment-panel-segment-id nil
+  "Segment id currently displayed by the segment panel.")
+
+(defvar-local eve-segment-panel-word-index 0
+  "Focused canonical word index in the current segment panel.")
+
+(defvar-local eve-segment-panel-selection-anchor nil
+  "Selection anchor word index in the current segment panel, or nil.")
+
+(define-derived-mode eve-segment-panel-mode special-mode "Eve-Segment"
+  "Mode for Eve's current-segment bottom panel."
+  (setq-local truncate-lines nil)
+  (setq-local word-wrap t))
+
+(defun eve--context-panels-available-p ()
+  "Return non-nil when optional context-panel support can be used."
+  (setq eve--context-panels-available
+        (or eve--context-panels-available
+            (require 'context-panels nil t)))
+  (and eve--context-panels-available
+       (fboundp 'context-panels-register-provider)
+       (fboundp 'context-panels-mode)
+       (fboundp 'context-panels-open)))
+
+(defun eve--segment-position (segment-id)
+  "Return buffer position for SEGMENT-ID, or nil."
+  (save-excursion
+    (eve--goto-segment segment-id)))
+
+(defun eve--segment-end-position (segment-id)
+  "Return end buffer position for SEGMENT-ID, or nil."
+  (cdr (eve--segment-bounds segment-id)))
+
+(defun eve--segment-by-id (segment-id &optional segments)
+  "Return segment SEGMENT-ID from SEGMENTS or current manifest."
+  (seq-find (lambda (segment)
+              (equal (eve--stringify (alist-get 'id segment))
+                     (eve--stringify segment-id)))
+            (or segments (eve--segments))))
+
+(defun eve--segment-panel-source-buffer ()
+  "Return the Eve source buffer associated with the current segment panel."
+  (or eve-segment-panel-source-buffer
+      (and (boundp 'context-panels-source-buffer)
+           (buffer-live-p context-panels-source-buffer)
+           context-panels-source-buffer)
+      (user-error "No Eve source buffer for segment panel")))
+
+(defun eve--segment-panel-key-label (label key)
+  "Return LABEL with KEY highlighted when context-panels provides a helper."
+  (if (fboundp 'context-panels-propertize-key)
+      (context-panels-propertize-key label key)
+    label))
+
+(defun eve--segment-panel-action (label key)
+  "Return action LABEL with KEY highlighted and action face applied."
+  (eve--segment-panel-key-label
+   (propertize label 'face 'eve-segment-panel-action-face)
+   key))
+
+(defun eve--segment-panel-action-with-key (label key)
+  "Return action LABEL followed by parenthesized KEY.
+The label uses `eve-segment-panel-action-face', parentheses use the muted label
+face, and KEY uses the normal context-panel key-hint face."
+  (concat (propertize label 'face 'eve-segment-panel-action-face)
+          (propertize "(" 'face 'eve-segment-panel-label-face)
+          (eve--segment-panel-key-label key key)
+          (propertize ")" 'face 'eve-segment-panel-label-face)))
+
+(defun eve--segment-panel-header-label (label)
+  "Return muted header LABEL."
+  (propertize label 'face 'eve-segment-panel-label-face))
+
+(defun eve--segment-panel-header-value (value)
+  "Return header VALUE using the segment-panel value face."
+  (propertize (eve--stringify value) 'face 'eve-segment-panel-value-face))
+
+(defun eve--segment-panel-segment-id (source-buffer)
+  "Return segment id the panel should display for SOURCE-BUFFER."
+  (if (eq (window-buffer (selected-window)) source-buffer)
+      (with-current-buffer source-buffer
+        (or (eve--segment-id-at-point)
+            (alist-get 'id (car (eve--segments)))))
+    (or eve-segment-panel-segment-id
+        (with-current-buffer source-buffer
+          (or (eve--segment-id-at-point)
+              (alist-get 'id (car (eve--segments))))))))
+
+(defun eve--segment-panel-visible-words (segment source-buffer)
+  "Return visible words for SEGMENT as (INDEX WORD TEXT) using SOURCE-BUFFER state."
+  (let ((hide-deleted (buffer-local-value 'eve-hide-deleted-mode source-buffer)))
+    (cl-loop for word in (or (alist-get 'words segment) '())
+             for index from 0
+             unless (and hide-deleted (eve--edit-deleted-p word))
+             collect (list index word (string-trim (eve--word-render-text word))))))
+
+(defun eve--segment-panel-clamp-word-index (visible-words)
+  "Clamp `eve-segment-panel-word-index' to VISIBLE-WORDS."
+  (let ((indices (mapcar #'car visible-words)))
+    (setq eve-segment-panel-word-index
+          (cond
+           ((null indices) 0)
+           ((member eve-segment-panel-word-index indices)
+            eve-segment-panel-word-index)
+           ((seq-find (lambda (idx) (> idx eve-segment-panel-word-index)) indices))
+           (t (car (last indices)))))))
+
+(defun eve--segment-panel-selection-range ()
+  "Return selected word range as (START . END), or nil."
+  (when eve-segment-panel-selection-anchor
+    (cons (min eve-segment-panel-selection-anchor eve-segment-panel-word-index)
+          (max eve-segment-panel-selection-anchor eve-segment-panel-word-index))))
+
+(defun eve--segment-panel-word-face (word index)
+  "Return face for WORD at INDEX in the segment panel."
+  (eve--merge-faces
+   (when-let* ((range (eve--segment-panel-selection-range)))
+     (when (and (<= (car range) index) (<= index (cdr range)))
+       'eve-segment-panel-selection-face))
+   (when (= index eve-segment-panel-word-index)
+     'eve-segment-panel-current-word-face)
+   (when (eve--word-filler-p word)
+     'eve-filler-face)
+   (when (eve--edit-deleted-p word)
+     'eve-deleted-face)))
+
+(defun eve--segment-panel-insert-words (visible-words)
+  "Insert VISIBLE-WORDS into the current segment panel."
+  (let ((first t))
+    (dolist (entry visible-words)
+      (pcase-let ((`(,index ,word ,text) entry))
+        (unless first (insert " "))
+        (setq first nil)
+        (let ((start (point)))
+          (insert text)
+          (add-text-properties
+           start (point)
+           (list 'eve-segment-panel-word-index index
+                 'face (eve--segment-panel-word-face word index))))))))
+
+(defun eve--segment-panel-broll-summary (segment)
+  "Return bottom-panel b-roll summary for SEGMENT."
+  (if-let* ((broll (eve--segment-broll segment)))
+      (eve--context-panel-broll-label broll)
+    "none"))
+
+(defun eve--segment-panel-cache-summary (source-buffer)
+  "Return cheap cache/dirty summary for SOURCE-BUFFER."
+  (with-current-buffer source-buffer
+    (if (buffer-modified-p)
+        "Modified"
+      "Saved")))
+
+(defun eve--segment-panel-render (source-buffer _view)
+  "Render Eve current-segment bottom panel for SOURCE-BUFFER."
+  (setq-local eve-segment-panel-source-buffer source-buffer)
+  (let* ((segment-id (eve--segment-panel-segment-id source-buffer))
+         (segment (with-current-buffer source-buffer
+                    (eve--segment-by-id segment-id)))
+         (inhibit-read-only t))
+    (unless segment
+      (setq segment (with-current-buffer source-buffer (car (eve--segments)))
+            segment-id (alist-get 'id segment)))
+    (setq-local eve-segment-panel-segment-id (eve--stringify segment-id))
+    (let* ((visible-words (and segment
+                               (eve--segment-panel-visible-words segment source-buffer)))
+           (start (alist-get 'start segment))
+           (end (alist-get 'end segment))
+           (duration (max 0.0 (- (or end 0.0) (or start 0.0))))
+           (speaker (or (eve--aget 'speaker segment) "—"))
+           (tags (or (eve--segment-tags segment) '())))
+      (eve--segment-panel-clamp-word-index visible-words)
+      (insert (propertize eve-segment-panel-segment-id 'face 'eve-heading-face))
+      (when (eve--suspicious-long-segment-p segment)
+        (insert "  " (propertize (format "⚠ long %.1fs" duration)
+                                  'face 'eve-gap-indicator-face)))
+      (when-let* ((gap (with-current-buffer source-buffer
+                         (or (eve--source-gap-after segment)
+                             (eve--source-gap-before segment)))))
+        (insert "  " (propertize (format "⏱ gap %.1fs" (plist-get gap :duration))
+                                  'face 'eve-gap-indicator-face)))
+      (insert "  " (eve--segment-panel-header-value (format "%.1fs" duration))
+              "  " (eve--segment-panel-header-label "Time: ")
+              (eve--segment-panel-header-value
+               (format "%s–%s" (eve--format-time start) (eve--format-time end)))
+              "  " (eve--segment-panel-header-label "Speaker: ")
+              (eve--segment-panel-header-value speaker)
+              "  " (eve--segment-panel-header-label "Tags: ")
+              (eve--segment-panel-header-value
+               (if tags (string-join (mapcar #'eve--stringify tags) ",") "—"))
+              "  " (eve--segment-panel-header-value
+                     (eve--segment-panel-cache-summary source-buffer))
+              "\n\n")
+      (insert (eve--segment-panel-key-label "Transcript" "T") "  ")
+      (eve--segment-panel-insert-words visible-words)
+      (insert "\n\n  "
+              (string-join
+               (list (eve--segment-panel-action-with-key "edit" "i")
+                     (eve--segment-panel-action "sEgment" "E")
+                     (eve--segment-panel-action-with-key "regen" "r")
+                     (eve--segment-panel-action-with-key "until" "U")
+                     (eve--segment-panel-action-with-key "capitalize" "~")
+                     (eve--segment-panel-action-with-key "dot" ".")
+                     (eve--segment-panel-action-with-key "colon" ",")
+                     (eve--segment-panel-action "delete" "d")
+                     (eve--segment-panel-action-with-key "segment" "D")
+                     (eve--segment-panel-action "filler" "f")
+                     (eve--segment-panel-action-with-key "non-filler" "A")
+                     (eve--segment-panel-action "Fillers" "F")
+                     (eve--segment-panel-action-with-key "split" "|"))
+               "  ")
+              "\n")
+      (when (eve--suspicious-long-segment-p segment)
+        (insert "  " (propertize "⚠ suspiciously long — r regen segment"
+                                  'face 'eve-gap-indicator-face)
+                "\n"))
+      (when-let* ((gap (with-current-buffer source-buffer
+                         (or (eve--source-gap-after segment)
+                             (eve--source-gap-before segment)))))
+        (let* ((after (eq (plist-get gap :before) segment))
+               (target (if after (plist-get gap :after) (plist-get gap :before))))
+          (insert "  " (propertize
+                         (format "⏱ gap %s — U regen %s %s"
+                                 (if after "after" "before")
+                                 (if after "through" "from")
+                                 (eve--stringify (alist-get 'id target)))
+                         'face 'eve-gap-indicator-face)
+                  "\n")))
+      (insert "\n")
+      (insert (eve--segment-panel-key-label "B-roll" "B")
+              ": " (propertize (eve--segment-panel-broll-summary segment)
+                                'face 'eve-segment-panel-broll-value-face)
+              "\n  "
+              (string-join
+               (list (eve--segment-panel-action-with-key "edit" "B")
+                     (eve--segment-panel-action-with-key "continue" "C")
+                     (eve--segment-panel-action-with-key "preview" "P"))
+               "  ")
+              "\n\n")
+      (insert (eve--segment-panel-header-label "Other")
+              "  "
+              (string-join
+               (list (eve--segment-panel-action "Notes" "N")
+                     (eve--segment-panel-action "Tags" "T")
+                     (eve--segment-panel-action-with-key "speaker" "I")
+                     (eve--segment-panel-action-with-key "range" "x")
+                     (eve--segment-panel-action-with-key "first" "gg")
+                     (eve--segment-panel-action-with-key "last" "G")
+                     (eve--segment-panel-action-with-key "marker" "O")
+                     (eve--segment-panel-action-with-key "Source" "SPC")
+                     (eve--segment-panel-action "Rendered" "R")
+                     (eve--segment-panel-action "merge" "m")
+                     (eve--segment-panel-action-with-key "prev" "M")
+                     (eve--segment-panel-action "undo" "u")
+                     (eve--segment-panel-action-with-key "save" "C-x C-s")
+                     (eve--segment-panel-action "cache" "c"))
+               "  ")
+              "\n")
+      (when-let* ((pos (text-property-any (point-min) (point-max)
+                                          'eve-segment-panel-word-index
+                                          eve-segment-panel-word-index)))
+        (goto-char pos)))))
+
+(defun eve--segment-panel-refresh ()
+  "Refresh the current Eve segment panel without replacing panel-local state."
+  (let ((source (eve--segment-panel-source-buffer))
+        (inhibit-read-only t))
+    (erase-buffer)
+    (eve--segment-panel-render source nil)))
+
+(defun eve--segment-panel-move-word (delta)
+  "Move focused panel word by DELTA visible words."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (segment (with-current-buffer source
+                    (eve--segment-by-id segment-id)))
+         (visible (eve--segment-panel-visible-words segment source))
+         (indices (mapcar #'car visible))
+         (pos (or (cl-position eve-segment-panel-word-index indices) 0))
+         (target (nth (min (max 0 (+ pos delta)) (max 0 (1- (length indices))))
+                      indices)))
+    (when target
+      (setq eve-segment-panel-word-index target)
+      (eve--segment-panel-refresh))))
+
+(defun eve-segment-panel-next-word ()
+  "Move to the next visible word in the segment panel."
+  (interactive)
+  (eve--segment-panel-move-word 1))
+
+(defun eve-segment-panel-previous-word ()
+  "Move to the previous visible word in the segment panel."
+  (interactive)
+  (eve--segment-panel-move-word -1))
+
+(defun eve-segment-panel-last-word ()
+  "Move focus to the last visible word in the segment panel."
+  (interactive)
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (segment (with-current-buffer source
+                    (eve--segment-by-id segment-id)))
+         (visible (eve--segment-panel-visible-words segment source)))
+    (if-let* ((last-index (caar (last visible))))
+        (progn
+          (setq eve-segment-panel-word-index last-index)
+          (setq eve-segment-panel-selection-anchor nil)
+          (eve--segment-panel-refresh)
+          (message "Focused last word"))
+      (user-error "No visible words in segment"))))
+
+(defun eve-segment-panel-toggle-selection ()
+  "Toggle the segment panel word-selection anchor."
+  (interactive)
+  (setq eve-segment-panel-selection-anchor
+        (unless eve-segment-panel-selection-anchor
+          eve-segment-panel-word-index))
+  (eve--segment-panel-refresh))
+
+(defun eve--segment-panel-goto-segment-id (target-id)
+  "Move the segment panel and source buffer to TARGET-ID."
+  (let ((panel (current-buffer))
+        (source (eve--segment-panel-source-buffer)))
+    (when target-id
+      (with-current-buffer source
+        (eve--goto-segment target-id)
+        (eve--update-focus-overlay)
+        (when-let* ((window (get-buffer-window source t)))
+          (set-window-point window (point))))
+      (with-current-buffer panel
+        (setq eve-segment-panel-segment-id (eve--stringify target-id))
+        (setq eve-segment-panel-word-index 0)
+        (setq eve-segment-panel-selection-anchor nil)
+        (eve--segment-panel-refresh)))))
+
+(defun eve--segment-panel-move-segment (delta)
+  "Move the segment panel by DELTA visible segments, keeping panel focus.
+Navigation is based on manifest order instead of rendered source positions so it
+still works when the current segment has no visible words."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (target-id
+          (with-current-buffer source
+            (eve--segment-navigation-target-id
+             (eve--segments) segment-id delta eve-hide-deleted-mode))))
+    (if target-id
+        (eve--segment-panel-goto-segment-id target-id)
+      (message (if (> delta 0)
+                   "Already at last segment"
+                 "Already at first segment")))))
+
+(defun eve--segment-panel-move-marker (delta)
+  "Move the segment panel by DELTA marker segments, keeping panel focus."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (target-id
+          (with-current-buffer source
+            (eve--marker-navigation-target-id
+             (eve--segments) segment-id delta eve-hide-deleted-mode))))
+    (if target-id
+        (eve--segment-panel-goto-segment-id target-id)
+      (message (if (> delta 0)
+                   "Already at last marker"
+                 "Already at first marker")))))
+
+(defun eve-segment-panel-next-marker ()
+  "Move the segment panel to the next marker."
+  (interactive)
+  (eve--segment-panel-move-marker 1))
+
+(defun eve-segment-panel-previous-marker ()
+  "Move the segment panel to the previous marker."
+  (interactive)
+  (eve--segment-panel-move-marker -1))
+
+(defun eve-segment-panel-toggle-marker-fold ()
+  "Toggle source-buffer folding for the current panel marker."
+  (interactive)
+  (eve--segment-panel-run-source-command #'eve-toggle-marker-fold))
+
+(defun eve-segment-panel-toggle-all-marker-folds ()
+  "Toggle source-buffer folding for all markers from the segment panel."
+  (interactive)
+  (let ((source (eve--segment-panel-source-buffer)))
+    (with-current-buffer source
+      (call-interactively #'eve-toggle-all-marker-folds))))
+
+(defun eve-segment-panel-next-segment ()
+  "Move the segment panel to the next segment."
+  (interactive)
+  (eve--segment-panel-move-segment 1))
+
+(defun eve-segment-panel-previous-segment ()
+  "Move the segment panel to the previous segment."
+  (interactive)
+  (eve--segment-panel-move-segment -1))
+
+(defun eve-segment-panel-first-segment ()
+  "Move the segment panel to the first visible segment or marker."
+  (interactive)
+  (let ((source (eve--segment-panel-source-buffer)))
+    (eve--segment-panel-goto-segment-id
+     (with-current-buffer source
+       (alist-get 'id
+                  (seq-find (lambda (segment)
+                              (eve--navigable-segment-p segment eve-hide-deleted-mode))
+                            (eve--segments)))))))
+
+(defun eve-segment-panel-last-segment ()
+  "Move the segment panel to the last visible segment or marker."
+  (interactive)
+  (let ((source (eve--segment-panel-source-buffer)))
+    (eve--segment-panel-goto-segment-id
+     (with-current-buffer source
+       (alist-get 'id
+                  (seq-find (lambda (segment)
+                              (eve--navigable-segment-p segment eve-hide-deleted-mode))
+                            (reverse (eve--segments))))))))
+
+(defun eve-segment-panel-focus-source ()
+  "Return focus to the Eve source buffer."
+  (interactive)
+  (pop-to-buffer (eve--segment-panel-source-buffer)))
+
+(defun eve-segment-panel-close ()
+  "Close the Eve segment panel."
+  (interactive)
+  (if (fboundp 'context-panels-close-bottom-view)
+      (context-panels-close-bottom-view)
+    (quit-window t)))
+
+(defun eve--segment-panel-segment ()
+  "Return the current panel segment."
+  (let ((source (eve--segment-panel-source-buffer))
+        (segment-id eve-segment-panel-segment-id))
+    (or (with-current-buffer source
+          (eve--segment-by-id segment-id))
+        (user-error "No current segment"))))
+
+(defun eve--segment-panel-word-index-at-point ()
+  "Return the panel word index under point, or nil."
+  (or (get-text-property (point) 'eve-segment-panel-word-index)
+      (when (> (point) (point-min))
+        (get-text-property (1- (point)) 'eve-segment-panel-word-index))))
+
+(defun eve--segment-panel-word-range ()
+  "Return active word range as (START . END).
+When point is on a rendered word, make that word the panel focus before
+computing the range so action keys operate on the visibly focused word."
+  (when-let* ((index (eve--segment-panel-word-index-at-point)))
+    (setq eve-segment-panel-word-index index))
+  (or (eve--segment-panel-selection-range)
+      (cons eve-segment-panel-word-index eve-segment-panel-word-index)))
+
+(defun eve--segment-panel-visible-range-after-change (segment preferred)
+  "Return nearest visible word index in SEGMENT around PREFERRED."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (visible (eve--segment-panel-visible-words segment source))
+         (indices (mapcar #'car visible)))
+    (cond
+     ((null indices) 0)
+     ((member preferred indices) preferred)
+     ((seq-find (lambda (idx) (> idx preferred)) indices))
+     (t (car (last indices))))))
+
+(defun eve--segment-panel-record-state ()
+  "Record undo state in the source buffer for a segment-panel edit."
+  (with-current-buffer (eve--segment-panel-source-buffer)
+    (eve--record-state)))
+
+(defun eve--segment-panel-after-edit (&optional preferred-index)
+  "Mark source dirty, render it, and refresh the segment panel."
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (preferred (or preferred-index eve-segment-panel-word-index)))
+    (with-current-buffer source
+      (eve--mark-dirty)
+      (eve--render t)
+      (eve--goto-segment segment-id))
+    (let ((segment (eve--segment-panel-segment)))
+      (setq eve-segment-panel-word-index
+            (eve--segment-panel-visible-range-after-change segment preferred)))
+    (setq eve-segment-panel-selection-anchor nil)
+    (eve--segment-panel-refresh)))
+
+(defun eve--segment-panel-retokenize (text)
+  "Return non-empty whitespace tokens from TEXT."
+  (mapcar #'substring-no-properties
+          (split-string (string-trim text) "[[:space:]]+" t)))
+
+(defun eve--segment-panel-copy-word-with-token (word token)
+  "Return copy of WORD with visible TOKEN updated."
+  (let ((copy (copy-tree word t)))
+    (if (alist-get 'spoken copy)
+        (setf (alist-get 'spoken copy) token)
+      (setf (alist-get 'token copy) token))
+    copy))
+
+(defun eve--segment-panel-word-start (word)
+  "Return WORD start time."
+  (or (eve--coerce-number (alist-get 'start word))
+      (eve--coerce-number (alist-get 'start_tick word))
+      0.0))
+
+(defun eve--segment-panel-word-end (word)
+  "Return WORD end time."
+  (or (eve--coerce-number (alist-get 'end word))
+      (eve--coerce-number (alist-get 'end_tick word))
+      (eve--segment-panel-word-start word)))
+
+(defun eve--segment-panel-replacement-word (token start end)
+  "Return a new replacement word TOKEN from START to END."
+  (list (cons 'start start)
+        (cons 'end end)
+        (cons 'token token)))
+
+(defun eve--segment-panel-rephrase-range (segment start-index end-index replacement)
+  "Replace SEGMENT words from START-INDEX to END-INDEX with REPLACEMENT text."
+  (let* ((tokens (eve--segment-panel-retokenize replacement))
+         (words (copy-sequence (alist-get 'words segment)))
+         (range-len (1+ (- end-index start-index))))
+    (when (null tokens)
+      (user-error "Replacement cannot be empty; use delete instead"))
+    (unless (and (<= 0 start-index) (< end-index (length words)))
+      (user-error "Invalid word range"))
+    (let* ((before (cl-subseq words 0 start-index))
+           (after (nthcdr (1+ end-index) words))
+           (old-range (cl-subseq words start-index (1+ end-index)))
+           (new-range
+            (if (= (length tokens) range-len)
+                (cl-mapcar #'eve--segment-panel-copy-word-with-token old-range tokens)
+              (let* ((span-start (eve--segment-panel-word-start (car old-range)))
+                     (span-end (eve--segment-panel-word-end (car (last old-range))))
+                     (step (/ (max 0.0 (- span-end span-start))
+                              (float (length tokens))))
+                     (idx 0)
+                     result)
+                (dolist (token tokens (nreverse result))
+                  (let ((start (+ span-start (* idx step)))
+                        (end (+ span-start (* (1+ idx) step))))
+                    (push (eve--segment-panel-replacement-word token start end)
+                          result)
+                    (setq idx (1+ idx)))))))
+           (merged (append before new-range after)))
+      (setf (alist-get 'words segment) merged)
+      (setf (alist-get 'text segment)
+            (string-join (mapcar #'eve--word-render-text merged) " "))
+      (setf (alist-get 'start segment)
+            (eve--segment-panel-word-start (car merged)))
+      (setf (alist-get 'end segment)
+            (eve--segment-panel-word-end (car (last merged))))
+      start-index)))
+
+(defun eve-segment-panel-edit-words ()
+  "Rephrase the focused word or selected range in the panel."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (alist-get 'words segment))
+         (current (string-join
+                   (mapcar #'eve--word-render-text
+                           (cl-subseq words (car range) (1+ (cdr range))))
+                   " "))
+         (replacement (read-string "Rephrase words: " current)))
+    (eve--segment-panel-record-state)
+    (eve--segment-panel-rephrase-range segment (car range) (cdr range) replacement)
+    (eve--segment-panel-after-edit (car range))
+    (message "Rephrased '%s' → '%s'" current replacement)))
+
+(defun eve-segment-panel-edit-segment ()
+  "Rephrase the whole current segment in the panel."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (words (alist-get 'words segment))
+         (current (string-join (mapcar #'eve--word-render-text words) " "))
+         (replacement (read-string "Rephrase segment: " current)))
+    (eve--segment-panel-record-state)
+    (eve--segment-panel-rephrase-range segment 0 (1- (length words)) replacement)
+    (eve--segment-panel-after-edit 0)
+    (message "Rephrased segment '%s' → '%s'" current replacement)))
+
+(defun eve--segment-source-file (segment)
+  "Return absolute source media file for SEGMENT."
+  (let* ((source-id (alist-get 'source segment))
+         (source (and source-id (eve--source-by-id source-id)))
+         (file (and source (alist-get 'file source))))
+    (unless source
+      (user-error "Unknown source id: %s" source-id))
+    (let ((abs-file (expand-file-name file (if buffer-file-name
+                                               (file-name-directory buffer-file-name)
+                                             default-directory))))
+      (unless (file-exists-p abs-file)
+        (user-error "Source file not found: %s" abs-file))
+      abs-file)))
+
+(defun eve--segment-panel-transcribe-command (media output backend model)
+  "Return `eve transcribe' command for MEDIA to OUTPUT using BACKEND and MODEL."
+  (let ((program (or (eve--resolve-cli)
+                     (user-error "Cannot find eve CLI executable: %s"
+                                 eve-cli-program))))
+    (append (list program "transcribe" media "--output" output
+                  "--backend" backend "--model" model)
+            (when eve-transcribe-verbatim
+              '("--verbatim"))
+            (when eve-transcribe-hotwords
+              (list "--hotwords" eve-transcribe-hotwords))
+            (when eve-transcribe-tag-fillers
+              '("--tag-fillers")))))
+
+(defun eve--segment-panel-run-command (command buffer-name)
+  "Run COMMAND synchronously, writing output to BUFFER-NAME."
+  (let ((buffer (get-buffer-create buffer-name)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)))
+    (let ((exit-code (apply #'call-process (car command) nil buffer nil (cdr command))))
+      (unless (and (integerp exit-code) (= exit-code 0))
+        (pop-to-buffer buffer)
+        (user-error "Command failed: %s" (string-join command " "))))))
+
+(defun eve--segment-panel-offset-word-times (word offset)
+  "Return WORD copy with start/end offset by OFFSET seconds."
+  (let ((copy (copy-tree word t)))
+    (dolist (key '(start end))
+      (when-let* ((value (eve--coerce-number (alist-get key copy))))
+        (setf (alist-get key copy) (+ offset value))))
+    copy))
+
+(defun eve--segment-panel-transcribed-words (segment offset)
+  "Return transcribed words from SEGMENT offset by OFFSET seconds."
+  (mapcar (lambda (word)
+            (eve--segment-panel-offset-word-times word offset))
+          (alist-get 'words segment)))
+
+(defun eve--segment-panel-generated-segment (original transcribed id offset)
+  "Return replacement for ORIGINAL from TRANSCRIBED with ID offset by OFFSET."
+  (let* ((copy (copy-tree original t))
+         (words (eve--segment-panel-transcribed-words transcribed offset)))
+    (unless words
+      (user-error "Regenerated transcript contained a segment without word timings"))
+    (setf (alist-get 'id copy) id)
+    (setf (alist-get 'source copy) (alist-get 'source original))
+    (setf (alist-get 'words copy) words)
+    (setf (alist-get 'text copy)
+          (or (let ((text (string-trim (eve--stringify (alist-get 'text transcribed)))))
+                (unless (string-empty-p text) text))
+              (string-join (mapcar #'eve--word-render-text words) " ")))
+    (setf (alist-get 'start copy)
+          (or (eve--coerce-number (alist-get 'start (car words)))
+              (alist-get 'start original)))
+    (setf (alist-get 'end copy)
+          (or (eve--coerce-number (alist-get 'end (car (last words))))
+              (alist-get 'end original)))
+    (when-let* ((edit (alist-get 'edit copy)))
+      (setf (alist-get 'deleted edit) nil))
+    copy))
+
+(defun eve--segment-panel-regenerated-segments (original manifest &optional removed-ids)
+  "Return replacement segments for ORIGINAL from transcribed MANIFEST.
+REMOVED-IDS are ignored when generating replacement ids because those segments
+will be replaced by the regenerated transcript."
+  (let* ((transcribed (seq-filter
+                       (lambda (segment) (alist-get 'words segment))
+                       (alist-get 'segments manifest)))
+         (offset (or (eve--coerce-number (alist-get 'start original)) 0.0))
+         (base-id (eve--stringify (alist-get 'id original)))
+         (ignored-ids (cons base-id removed-ids))
+         (existing-ids (seq-remove (lambda (id) (member id ignored-ids))
+                                   (eve--segment-id-list)))
+         result)
+    (unless transcribed
+      (user-error "Regenerated transcript contained no word timings"))
+    (cl-loop for segment in transcribed
+             for index from 0
+             for requested-id = (if (= index 0)
+                                    base-id
+                                  (format "%s-regen-%d" base-id index))
+             for id = (eve--unique-id requested-id existing-ids)
+             do (push id existing-ids)
+             collect (eve--segment-panel-generated-segment
+                      original segment id offset))))
+
+(defun eve--segment-panel-apply-regenerated-transcript (segment manifest)
+  "Replace SEGMENT with one or more segments from transcribed MANIFEST."
+  (eve--apply-regenerated-segment-range segment segment manifest))
+
+(defun eve--apply-regenerated-segment-range (start-segment end-segment manifest)
+  "Replace START-SEGMENT through END-SEGMENT with transcribed MANIFEST."
+  (let ((source-buffer (eve--segment-panel-source-buffer)))
+    (with-current-buffer source-buffer
+      (let* ((segments (eve--segments))
+             (start-index (cl-position start-segment segments :test #'eq))
+             (end-index (cl-position end-segment segments :test #'eq)))
+        (unless (and start-index end-index (<= start-index end-index))
+          (user-error "Segment range no longer exists"))
+        (let* ((removed (cl-subseq segments start-index (1+ end-index)))
+               (removed-ids (mapcar (lambda (segment)
+                                      (eve--stringify (alist-get 'id segment)))
+                                    removed))
+               (replacements
+                (eve--segment-panel-regenerated-segments
+                 start-segment manifest removed-ids)))
+          (setf (alist-get 'segments eve--data)
+                (append (cl-subseq segments 0 start-index)
+                        replacements
+                        (nthcdr (1+ end-index) segments))))))))
+
+(defun eve--regenerate-segment-range (start-segment end-segment backend model start-time)
+  "Regenerate START-SEGMENT through END-SEGMENT using BACKEND and MODEL.
+START-TIME is used for minibuffer elapsed-time feedback."
+  (let* ((source-buffer (eve--segment-panel-source-buffer))
+         (source-file (with-current-buffer source-buffer
+                        (eve--segment-source-file start-segment)))
+         (start-source (alist-get 'source start-segment))
+         (end-source (alist-get 'source end-segment))
+         (_ (unless (equal start-source end-source)
+              (user-error "Cannot regenerate across different source clips")))
+         (start (or (eve--coerce-number (alist-get 'start start-segment))
+                    (user-error "Start segment has no start time")))
+         (end (or (eve--coerce-number (alist-get 'end end-segment))
+                  (user-error "End segment has no end time")))
+         (_ (when (<= end start)
+              (user-error "Invalid regeneration range")))
+         (start-id (eve--stringify (alist-get 'id start-segment)))
+         (end-id (eve--stringify (alist-get 'id end-segment)))
+         (range-label (if (equal start-id end-id)
+                          start-id
+                        (format "%s–%s" start-id end-id)))
+         (wav-file (make-temp-file "eve-segment-" nil ".wav"))
+         (json-file (make-temp-file "eve-segment-" nil ".tjm.json"))
+         (ffmpeg (or (executable-find "ffmpeg")
+                     (user-error "Cannot find ffmpeg executable"))))
+    (unwind-protect
+        (progn
+          (eve--progress-message
+           "Regenerate"
+           (format "%s: extracting %.1fs segment audio"
+                   range-label (max 0.0 (- end start)))
+           start-time)
+          (eve--segment-panel-run-command
+           (list ffmpeg "-y" "-ss" (number-to-string start)
+                 "-to" (number-to-string end) "-i" source-file
+                 "-vn" "-ac" "1" "-ar" "16000" wav-file)
+           "*eve-segment-regenerate*")
+          (eve--progress-message
+           "Regenerate"
+           (format "%s: transcribing with %s/%s" range-label backend model)
+           start-time)
+          (eve--segment-panel-run-command
+           (with-current-buffer source-buffer
+             (eve--segment-panel-transcribe-command wav-file json-file backend model))
+           "*eve-segment-regenerate*")
+          (eve--progress-message
+           "Regenerate" (format "%s: applying transcript" range-label) start-time)
+          (eve--apply-regenerated-segment-range
+           start-segment end-segment
+           (json-parse-string
+            (with-temp-buffer
+              (insert-file-contents json-file)
+              (buffer-string))
+            :object-type 'alist :array-type 'list
+            :null-object nil :false-object nil)))
+      (ignore-errors (delete-file wav-file))
+      (ignore-errors (delete-file json-file)))))
+
+(defun eve--segment-panel-regenerate-transcript (segment backend model start-time)
+  "Regenerate SEGMENT transcript using BACKEND and MODEL.
+START-TIME is used for minibuffer elapsed-time feedback."
+  (eve--regenerate-segment-range segment segment backend model start-time))
+
+(defun eve-segment-panel-regenerate-transcript (backend model)
+  "Regenerate the current segment transcript with BACKEND and MODEL."
+  (interactive
+   (list (read-string "Backend: " eve-transcribe-backend)
+         (read-string "Model: " eve-transcribe-model)))
+  (let ((segment (eve--segment-panel-segment))
+        (start-time (float-time)))
+    (eve--segment-panel-record-state)
+    (eve--segment-panel-regenerate-transcript segment backend model start-time)
+    (eve--segment-panel-after-edit 0)
+    (eve--progress-message
+     "Regenerate"
+     (format "%s: done with %s/%s"
+             (eve--stringify (alist-get 'id segment)) backend model)
+     start-time)))
+
+(defun eve--segment-panel-next-segment-id ()
+  "Return the default target id for panel range regeneration.
+Adjacent source gaps take precedence so `U' repairs the gap range."
+  (let ((source (eve--segment-panel-source-buffer))
+        (current-id eve-segment-panel-segment-id))
+    (with-current-buffer source
+      (let ((current (eve--segment-by-id current-id)))
+        (or (when-let* ((gap (and current (eve--source-gap-after current))))
+              (alist-get 'id (plist-get gap :after)))
+            (when-let* ((gap (and current (eve--source-gap-before current))))
+              (alist-get 'id (plist-get gap :after)))
+            (let* ((segments (eve--segments))
+                   (count (length segments))
+                   (index (or (eve--segment-index current-id segments) -1))
+                   target-id)
+              (while (and (null target-id)
+                          (setq index (1+ index))
+                          (< index count))
+                (let ((segment (nth index segments)))
+                  (when (and (not (eve--marker-p segment))
+                             (eve--navigable-segment-p segment eve-hide-deleted-mode))
+                    (setq target-id (alist-get 'id segment)))))
+              target-id))))))
+
+(defun eve--segment-panel-regenerate-start-segment (target-id)
+  "Return the start segment for range regeneration ending at TARGET-ID."
+  (let ((source (eve--segment-panel-source-buffer))
+        (segment (eve--segment-panel-segment)))
+    (with-current-buffer source
+      (if-let* ((gap (eve--source-gap-before segment)))
+          (let ((after-id (eve--stringify (alist-get 'id (plist-get gap :after)))))
+            (if (string= (eve--stringify target-id) after-id)
+                (plist-get gap :before)
+              segment))
+        segment))))
+
+(defun eve-segment-panel-regenerate-until (target-id backend model)
+  "Regenerate from the current segment through TARGET-ID, inclusive."
+  (interactive
+   (let* ((default (eve--segment-panel-next-segment-id))
+          (target (read-string "Regenerate until segment id: " default)))
+     (list target
+           (read-string "Backend: " eve-transcribe-backend)
+           (read-string "Model: " eve-transcribe-model))))
+  (let* ((source (eve--segment-panel-source-buffer))
+         (start-segment (eve--segment-panel-regenerate-start-segment target-id))
+         (end-segment (with-current-buffer source
+                        (or (eve--segment-by-id target-id)
+                            (user-error "Unknown target segment: %s" target-id))))
+         (start-time (float-time)))
+    (when (eve--marker-p end-segment)
+      (user-error "Cannot regenerate until marker segment"))
+    (eve--segment-panel-record-state)
+    (eve--regenerate-segment-range start-segment end-segment backend model start-time)
+    (eve--segment-panel-after-edit 0)
+    (eve--progress-message
+     "Regenerate"
+     (format "%s–%s: done with %s/%s"
+             (eve--stringify (alist-get 'id start-segment))
+             (eve--stringify target-id)
+             backend model)
+     start-time)))
+
+(defun eve--segment-panel-words-in-range (segment range)
+  "Return words in SEGMENT RANGE."
+  (cl-subseq (alist-get 'words segment) (car range) (1+ (cdr range))))
+
+(defun eve--segment-panel-words-label (words)
+  "Return a compact display label for WORDS."
+  (string-join (mapcar #'eve--word-render-text words) " "))
+
+(defun eve--segment-panel-set-word-token (word token)
+  "Set WORD's visible TOKEN in place."
+  (if (alist-get 'spoken word)
+      (setf (alist-get 'spoken word) token)
+    (setf (alist-get 'token word) token)))
+
+(defun eve--capitalize-token (token)
+  "Return TOKEN with its first word character capitalized."
+  (if (string-match "[[:alpha:]]" token)
+      (replace-match (upcase (match-string 0 token)) t t token)
+    token))
+
+(defun eve--segment-panel-refresh-segment-text (segment)
+  "Refresh SEGMENT text from its rendered words."
+  (setf (alist-get 'text segment)
+        (string-join (mapcar #'eve--word-render-text (alist-get 'words segment)) " ")))
+
+(defun eve-segment-panel-capitalize-words ()
+  "Capitalize the focused word or selected range in the panel."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (eve--segment-panel-words-in-range segment range))
+         (before (eve--segment-panel-words-label words)))
+    (eve--segment-panel-record-state)
+    (dolist (word words)
+      (eve--segment-panel-set-word-token
+       word (eve--capitalize-token (eve--word-render-text word))))
+    (eve--segment-panel-refresh-segment-text segment)
+    (eve--segment-panel-after-edit (car range))
+    (message "Capitalized '%s'" before)))
+
+(defun eve--segment-panel-add-suffix (suffix label)
+  "Add SUFFIX to the focused word or selected range and report LABEL."
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (eve--segment-panel-words-in-range segment range))
+         (before (eve--segment-panel-words-label words)))
+    (eve--segment-panel-record-state)
+    (dolist (word words)
+      (eve--segment-panel-set-word-token
+       word (concat (eve--word-render-text word) suffix)))
+    (eve--segment-panel-refresh-segment-text segment)
+    (eve--segment-panel-after-edit (car range))
+    (message "Added %s to '%s'" label before)))
+
+(defun eve-segment-panel-add-dot ()
+  "Add a dot at the end of the focused word or selected range."
+  (interactive)
+  (eve--segment-panel-add-suffix "." "dot"))
+
+(defun eve-segment-panel-add-colon ()
+  "Add a colon at the end of the focused word or selected range."
+  (interactive)
+  (eve--segment-panel-add-suffix ":" "colon"))
+
+(defun eve-segment-panel-add-comma ()
+  "Add a comma at the end of the focused word or selected range."
+  (interactive)
+  (eve--segment-panel-add-suffix "," "comma"))
+
+(defun eve--segment-all-words-deleted-p (segment)
+  "Return non-nil when SEGMENT has words and every word is deleted."
+  (let ((words (alist-get 'words segment)))
+    (and words (seq-every-p #'eve--edit-deleted-p words))))
+
+(defun eve-segment-panel-delete-words ()
+  "Delete the focused word or selected range in the panel.
+When this deletes every word in the segment, delete the whole segment instead
+of leaving an empty visible-word state behind."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (eve--segment-panel-words-in-range segment range))
+         (label (eve--segment-panel-words-label words)))
+    (eve--segment-panel-record-state)
+    (dolist (word words)
+      (eve--set-edit-deleted word t))
+    (let ((segment-deleted (eve--segment-all-words-deleted-p segment)))
+      (when segment-deleted
+        (eve--set-edit-deleted segment t))
+      (eve--segment-panel-after-edit (car range))
+      (if segment-deleted
+          (message "Deleted segment")
+        (message "Deleted '%s'" label)))))
+
+(defun eve-segment-panel-delete-segment ()
+  "Toggle deletion of the current segment in the panel."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (segment-id (eve--stringify (alist-get 'id segment))))
+    (when (or (eve--edit-deleted-p segment)
+              (yes-or-no-p (format "Delete segment %s? " segment-id)))
+      (eve--segment-panel-record-state)
+      (let ((deleted (eve--toggle-edit-deleted segment)))
+        (eve--segment-panel-after-edit eve-segment-panel-word-index)
+        (message "Segment %s" (if deleted "deleted" "restored"))))))
+
+(defun eve--customize-save-variable-preserving-windows (symbol value)
+  "Save SYMBOL as VALUE without letting Customize alter visible windows."
+  (save-window-excursion
+    (customize-save-variable symbol value)))
+
+(defun eve--segment-panel-learn-filler-phrase (phrase)
+  "Prompt to add PHRASE to `eve-filler-phrases'."
+  (unless (member phrase eve-filler-phrases)
+    (when (y-or-n-p (format "Add filler phrase '%s' for future sessions? " phrase))
+      (setq eve-filler-phrases (append eve-filler-phrases (list phrase)))
+      (eve--customize-save-variable-preserving-windows
+       'eve-filler-phrases eve-filler-phrases))))
+
+(defun eve-segment-panel-mark-filler ()
+  "Mark focused word/range as filler and optionally learn the phrase."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (eve--segment-panel-words-in-range segment range))
+         (phrase (eve--segment-panel-words-label words)))
+    (eve--segment-panel-record-state)
+    (dolist (word words)
+      (eve--mark-word-filler word))
+    (eve--segment-panel-learn-filler-phrase phrase)
+    (eve--segment-panel-after-edit (car range))
+    (message "Marked filler '%s'" phrase)))
+
+(defun eve-segment-panel-accept-filler ()
+  "Mark focused filler word/range as explicitly not filler."
+  (interactive)
+  (let* ((segment (eve--segment-panel-segment))
+         (range (eve--segment-panel-word-range))
+         (words (eve--segment-panel-words-in-range segment range))
+         (label (eve--segment-panel-words-label words))
+         (count 0))
+    (eve--segment-panel-record-state)
+    (dolist (word words)
+      (when (eve--word-filler-p word)
+        (setq count (1+ count))
+        (eve--mark-word-non-filler word)))
+    (eve--segment-panel-after-edit (car range))
+    (if (> count 0)
+        (message "Marked non-filler '%s'" label)
+      (message "'%s' was not marked as filler" label))))
+
+(defun eve-segment-panel-delete-fillers ()
+  "Delete fillers in the current segment only."
+  (interactive)
+  (let ((segment (eve--segment-panel-segment))
+        (count 0))
+    (eve--segment-panel-record-state)
+    (dolist (word (alist-get 'words segment))
+      (when (eve--word-filler-p word)
+        (setq count (1+ count))
+        (eve--set-edit-deleted word t)))
+    (eve--segment-panel-after-edit eve-segment-panel-word-index)
+    (message "Deleted %d filler word%s in current segment"
+             count (if (= count 1) "" "s"))))
+
+(defun eve--segment-panel-run-source-command (function &rest args)
+  "Run source-buffer FUNCTION with ARGS on the current panel segment, then refresh."
+  (let* ((panel (current-buffer))
+         (source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id))
+    (with-current-buffer source
+      (eve--goto-segment segment-id)
+      (apply function args))
+    (when (buffer-live-p panel)
+      (with-current-buffer panel
+        (eve--segment-panel-refresh)))))
+
+(defun eve-segment-panel-split ()
+  "Split current segment at focused word."
+  (interactive)
+  (let* ((source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         (word-index eve-segment-panel-word-index)
+         (panel (current-buffer)))
+    (with-current-buffer source
+      (eve--goto-word-by-index segment-id word-index)
+      (call-interactively #'eve-split-segment))
+    (with-current-buffer panel
+      (setq eve-segment-panel-segment-id
+            (with-current-buffer source (eve--segment-id-at-point)))
+      (setq eve-segment-panel-word-index 0)
+      (setq eve-segment-panel-selection-anchor nil)
+      (eve--segment-panel-refresh))))
+
+(defun eve-segment-panel-edit-broll ()
+  "Edit b-roll for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-broll))
+
+(defun eve-segment-panel-toggle-broll-continue ()
+  "Toggle b-roll continue for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-toggle-broll-continue))
+
+(defun eve-segment-panel-preview ()
+  "Preview current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-play-segment))
+
+(defun eve--segment-panel-run-source-returning-segment (function &rest args)
+  "Run source-buffer FUNCTION with ARGS and focus the returned segment id."
+  (let* ((panel (current-buffer))
+         (source (eve--segment-panel-source-buffer))
+         (segment-id eve-segment-panel-segment-id)
+         pasted-id)
+    (with-current-buffer source
+      (eve--goto-segment segment-id)
+      (setq pasted-id (apply function args)))
+    (when (buffer-live-p panel)
+      (with-current-buffer panel
+        (when pasted-id
+          (setq eve-segment-panel-segment-id pasted-id)
+          (setq eve-segment-panel-word-index 0))
+        (setq eve-segment-panel-selection-anchor nil)
+        (eve--segment-panel-refresh)))
+    pasted-id))
+
+(defun eve-segment-panel-copy ()
+  "Copy the current panel segment or marker."
+  (interactive)
+  (eve--segment-panel-run-source-command #'eve-copy-segment))
+
+(defun eve-segment-panel-paste-after ()
+  "Paste the copied segment or marker after the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-returning-segment #'eve-paste-segment))
+
+(defun eve-segment-panel-paste-before ()
+  "Paste the copied segment or marker before the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-returning-segment #'eve-paste-segment-before))
+
+(defun eve-segment-panel-edit-notes ()
+  "Edit notes for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-notes))
+
+(defun eve-segment-panel-toggle-tag ()
+  "Toggle a tag for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-toggle-tag))
+
+(defun eve-segment-panel-edit-speaker ()
+  "Edit speaker for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-speaker))
+
+(defun eve-segment-panel-edit-range ()
+  "Edit time range for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-edit-start-end))
+
+(defun eve-segment-panel-insert-marker ()
+  "Insert a marker before the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-insert-marker))
+
+(defun eve-segment-panel-play-source ()
+  "Play source for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-play-segment))
+
+(defun eve-segment-panel-play-rendered ()
+  "Play rendered output for the current panel segment."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-play-rendered))
+
+(defun eve-segment-panel-play-source-continuous ()
+  "Play source media from the current panel segment onward."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-play-source))
+
+(defun eve-segment-panel-compile ()
+  "Compile the source TJM buffer from the segment panel."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-compile))
+
+(defun eve-segment-panel-validate ()
+  "Validate the source TJM buffer from the segment panel."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-validate))
+
+(defun eve-segment-panel-cache-current ()
+  "Warm render cache for the current panel segment."
+  (interactive)
+  (let ((segment-id eve-segment-panel-segment-id))
+    (with-current-buffer (eve--segment-panel-source-buffer)
+      (if (not buffer-file-name)
+          (message "Cannot cache unsaved Eve buffer")
+        (when (buffer-modified-p)
+          (save-buffer))
+        (let* ((output (eve--default-output-file))
+               (base-cmd (split-string
+                          (eve--text-edit-command buffer-file-name output)
+                          " " t))
+               (full-cmd (eve--auto-render-command
+                          (append base-cmd (list "--segments" segment-id)))))
+          (setq eve--render-status 'speculative)
+          (force-mode-line-update)
+          (make-process :name "eve-panel-cache"
+                        :buffer nil
+                        :command full-cmd
+                        :noquery t))))))
+
+(defun eve-segment-panel-undo ()
+  "Undo Eve edit from the segment panel."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-undo))
+
+(defun eve-segment-panel-redo ()
+  "Redo Eve edit from the segment panel."
+  (interactive)
+  (eve--segment-panel-run-source-command #'call-interactively #'eve-redo))
+
+(defun eve-segment-panel-save ()
+  "Save the source TJM buffer from the segment panel."
+  (interactive)
+  (let ((source (eve--segment-panel-source-buffer)))
+    (with-current-buffer source
+      (save-buffer))
+    (eve--segment-panel-refresh)))
+
+(defun eve-segment-panel-merge-next (&optional force)
+  "Merge current panel segment with the next segment."
+  (interactive "P")
+  (let ((panel (current-buffer)))
+    (eve--segment-panel-run-source-command #'eve-merge-with-next force)
+    (when (buffer-live-p panel)
+      (with-current-buffer panel
+        (setq eve-segment-panel-selection-anchor nil)
+        (eve--segment-panel-refresh)))))
+
+(defun eve-segment-panel-merge-previous (&optional force)
+  "Merge previous segment with the current panel segment."
+  (interactive "P")
+  (let ((panel (current-buffer)))
+    (eve--segment-panel-run-source-command #'eve-merge-with-previous force)
+    (when (buffer-live-p panel)
+      (with-current-buffer panel
+        (setq eve-segment-panel-segment-id
+              (with-current-buffer (eve--segment-panel-source-buffer)
+                (eve--segment-id-at-point)))
+        (setq eve-segment-panel-selection-anchor nil)
+        (eve--segment-panel-refresh)))))
+
+(defun eve--context-panel-compact-duration (duration)
+  "Return compact text for b-roll DURATION."
+  (when-let* ((seconds (eve--time->seconds duration)))
+    (if (= seconds (floor seconds))
+        (format "%ds" (floor seconds))
+      (format "%.1fs" seconds))))
+
+(defun eve--context-panel-broll-glyphs (broll)
+  "Return compact configuration glyphs for BROLL."
+  (let (glyphs)
+    (push (pcase (downcase (eve--stringify (eve--aget 'mode broll)))
+            ("replace" "▣")
+            ("overlay" "⊕")
+            ("pip" "◱")
+            (_ nil))
+          glyphs)
+    (push (pcase (downcase (eve--stringify (eve--aget 'audio broll)))
+            ("source" "🎙")
+            ("broll" "♪")
+            ("mute" "🔇")
+            (_ nil))
+          glyphs)
+    (when (eve--aget 'continue broll) (push "→" glyphs))
+    (when (eve--aget 'still broll) (push "▧" glyphs))
+    (when (eve--aget 'placeholders broll) (push "{…}" glyphs))
+    (when (eve--aget 'overlays broll) (push "▭" glyphs))
+    (string-join (delq nil (nreverse glyphs)) " ")))
+
+(defun eve--context-panel-broll-label (broll)
+  "Return compact side-panel label for BROLL."
+  (let* ((file (eve--stringify (eve--aget 'file broll)))
+         (basename (if (string-empty-p file)
+                       "<no file>"
+                     (file-name-nondirectory file)))
+         (duration (eve--context-panel-compact-duration (eve--aget 'duration broll)))
+         (glyphs (eve--context-panel-broll-glyphs broll)))
+    (string-join (delq nil (list "🎞"
+                                 basename
+                                 duration
+                                 (unless (string-empty-p glyphs) glyphs)))
+                 " ")))
+
+(defun eve--context-thumbnail-cache-dir ()
+  "Return the thumbnail cache directory for the current TJM buffer."
+  (let* ((base (file-name-directory (or buffer-file-name default-directory)))
+         (dir (expand-file-name ".eve-cache/thumbnails" base)))
+    (make-directory dir t)
+    dir))
+
+(defun eve--context-thumbnail-time-from-label (label)
+  "Return seconds represented by timestamp LABEL like [HH:MM:SS]."
+  (when (and (stringp label)
+             (string-match "\\`\\[\\([0-9]+\\):\\([0-9]+\\):\\([0-9]+\\)\\]\\'" label))
+    (+ (* 3600.0 (string-to-number (match-string 1 label)))
+       (* 60.0 (string-to-number (match-string 2 label)))
+       (string-to-number (match-string 3 label)))))
+
+(defun eve--context-thumbnail-rendered-output-fresh-p (output)
+  "Return non-nil when rendered OUTPUT exists and is fresh for this TJM file."
+  (and output buffer-file-name
+       (file-exists-p output)
+       (not (time-less-p (nth 5 (file-attributes output))
+                         (nth 5 (file-attributes buffer-file-name))))))
+
+(defun eve--context-thumbnail-segment-render-starts (cumulative-times)
+  "Return alist of segment id to rendered start time from CUMULATIVE-TIMES."
+  (let ((prev 0.0)
+        starts)
+    (dolist (entry cumulative-times)
+      (push (cons (car entry) prev) starts)
+      (setq prev (cdr entry)))
+    (nreverse starts)))
+
+(defun eve--context-thumbnail-source-candidate (segment rendered-time rendered-start)
+  "Return source thumbnail candidate for SEGMENT at RENDERED-TIME.
+RENDERED-START is SEGMENT's start time in the rendered timeline."
+  (let ((delta (max 0.0 (- rendered-time rendered-start))))
+    (if (eve--marker-p segment)
+        (let* ((broll (eve--segment-broll segment))
+               (file (and broll (eve--stringify (alist-get 'file broll)))))
+          (when (and file (not (string-empty-p file))
+                     (not (string-match-p "\\.json\\'" file)))
+            (list :kind 'source
+                  :file (eve--resolve-relative-path file)
+                  :time (+ (or (eve--time->seconds
+                                (alist-get 'start_offset broll))
+                               0.0)
+                           delta))))
+      (when-let* ((source-id (alist-get 'source segment))
+                  (source (eve--source-by-id source-id))
+                  (file (alist-get 'file source)))
+        (list :kind 'source
+              :file (eve--resolve-relative-path file)
+              :time (+ (or (alist-get 'start segment) 0.0) delta))))))
+
+(defun eve--context-thumbnail-candidates (item)
+  "Return thumbnail candidates for timestamp ITEM in preferred order."
+  (let* ((rendered-time (plist-get item :rendered-time))
+         (rendered-output (eve--default-output-file))
+         (rendered-fresh (eve--context-thumbnail-rendered-output-fresh-p
+                          rendered-output))
+         (segments (eve--segments))
+         (segment-id (plist-get item :segment-id))
+         (segment (seq-find (lambda (candidate)
+                              (equal (eve--stringify (alist-get 'id candidate))
+                                     (eve--stringify segment-id)))
+                            segments))
+         (cumulative (eve--rendered-cumulative-times
+                      segments eve-hide-deleted-mode))
+         (starts (eve--context-thumbnail-segment-render-starts cumulative))
+         (rendered-start (or (alist-get segment-id starts nil nil #'equal) 0.0))
+         (source-candidate (and segment
+                                rendered-time
+                                (eve--context-thumbnail-source-candidate
+                                 segment rendered-time rendered-start)))
+         (rendered-candidate (and rendered-fresh rendered-time
+                                  (list :kind 'rendered
+                                        :file rendered-output
+                                        :time rendered-time))))
+    (pcase eve-context-thumbnail-source
+      ('source (delq nil (list source-candidate)))
+      ('rendered (delq nil (list rendered-candidate)))
+      (_ (delq nil (list rendered-candidate source-candidate))))))
+
+(defun eve--context-thumbnail-cache-path (candidate)
+  "Return cache path for thumbnail CANDIDATE."
+  (let* ((file (plist-get candidate :file))
+         (time (plist-get candidate :time))
+         (kind (plist-get candidate :kind))
+         (signature (format "%s|%s|%.3f|%dx%d|%s"
+                            kind file time
+                            eve-context-thumbnail-width
+                            eve-context-thumbnail-height
+                            (nth 5 (file-attributes file))))
+         (name (concat (secure-hash 'sha1 signature) ".jpg")))
+    (expand-file-name name (eve--context-thumbnail-cache-dir))))
+
+(defun eve--context-thumbnail-fresh-p (candidate path)
+  "Return non-nil when thumbnail PATH is fresh for CANDIDATE."
+  (and path (file-exists-p path)
+       (not (time-less-p (nth 5 (file-attributes path))
+                         (nth 5 (file-attributes
+                                 (plist-get candidate :file)))))))
+
+(defun eve--context-thumbnail-state (item)
+  "Return (:path PATH) for ITEM, enqueueing generation when needed."
+  (when (and eve-context-thumbnails-enabled
+             (display-images-p)
+             (executable-find "ffmpeg"))
+    (catch 'found
+      (dolist (candidate (eve--context-thumbnail-candidates item))
+        (let* ((file (plist-get candidate :file))
+               (path (and file (file-exists-p file)
+                          (eve--context-thumbnail-cache-path candidate))))
+          (when path
+            (if (eve--context-thumbnail-fresh-p candidate path)
+                (throw 'found (list :path path))
+              (eve--context-thumbnail-enqueue candidate path))))))))
+
+(defun eve--context-thumbnail-ensure-tables ()
+  "Initialise thumbnail bookkeeping tables for the current buffer."
+  (unless (hash-table-p eve--context-thumbnail-pending)
+    (setq eve--context-thumbnail-pending (make-hash-table :test #'equal)))
+  (unless (hash-table-p eve--context-thumbnail-failed)
+    (setq eve--context-thumbnail-failed (make-hash-table :test #'equal))))
+
+(defun eve--context-thumbnail-enqueue (candidate path)
+  "Queue thumbnail generation for CANDIDATE into PATH."
+  (eve--context-thumbnail-ensure-tables)
+  (let ((key path))
+    (unless (or (gethash key eve--context-thumbnail-pending)
+                (gethash key eve--context-thumbnail-failed))
+      (puthash key t eve--context-thumbnail-pending)
+      (setq eve--context-thumbnail-queue
+            (append eve--context-thumbnail-queue
+                    (list (list :candidate candidate :path path))))
+      (eve--context-thumbnail-pump))))
+
+(defun eve--context-thumbnail-command (candidate path)
+  "Return ffmpeg command to write thumbnail CANDIDATE to PATH."
+  (let* ((cmd (list (executable-find "ffmpeg") "-y"
+                    "-ss" (format "%.3f" (plist-get candidate :time))
+                    "-i" (plist-get candidate :file)
+                    "-frames:v" "1"
+                    "-vf" (format "scale=%d:%d:force_original_aspect_ratio=decrease"
+                                   eve-context-thumbnail-width
+                                   eve-context-thumbnail-height)
+                    path)))
+    (if (and eve-auto-render-low-priority (executable-find "nice"))
+        (append (list (executable-find "nice") "-n" "19") cmd)
+      cmd)))
+
+(defun eve--context-thumbnail-pump ()
+  "Start queued thumbnail jobs up to `eve-context-thumbnail-jobs'."
+  (eve--context-thumbnail-ensure-tables)
+  (while (and eve--context-thumbnail-queue
+              (< eve--context-thumbnail-active
+                 (max 1 eve-context-thumbnail-jobs)))
+    (let* ((job (pop eve--context-thumbnail-queue))
+           (candidate (plist-get job :candidate))
+           (path (plist-get job :path))
+           (source-buffer (current-buffer)))
+      (setq eve--context-thumbnail-active (1+ eve--context-thumbnail-active))
+      (make-process
+       :name "eve-thumbnail"
+       :buffer nil
+       :command (eve--context-thumbnail-command candidate path)
+       :noquery t
+       :sentinel
+       (lambda (proc _event)
+         (when (memq (process-status proc) '(exit signal))
+           (when (buffer-live-p source-buffer)
+             (with-current-buffer source-buffer
+               (setq eve--context-thumbnail-active
+                     (max 0 (1- eve--context-thumbnail-active)))
+               (remhash path eve--context-thumbnail-pending)
+               (unless (and (eq (process-status proc) 'exit)
+                            (= (process-exit-status proc) 0)
+                            (file-exists-p path))
+                 (puthash path t eve--context-thumbnail-failed)
+                 (message "eve thumbnail failed: %s @ %.3fs"
+                          (file-name-nondirectory
+                           (plist-get candidate :file))
+                          (plist-get candidate :time)))
+               (eve--context-thumbnail-schedule-refresh)
+               (eve--context-thumbnail-pump)))))))))
+
+(defun eve--context-thumbnail-schedule-refresh ()
+  "Debounce context-panel refresh after a thumbnail finishes."
+  (when eve--context-thumbnail-refresh-timer
+    (cancel-timer eve--context-thumbnail-refresh-timer))
+  (let ((source-buffer (current-buffer)))
+    (setq eve--context-thumbnail-refresh-timer
+          (run-with-idle-timer
+           0.1 nil
+           (lambda ()
+             (when (buffer-live-p source-buffer)
+               (with-current-buffer source-buffer
+                 (setq eve--context-thumbnail-refresh-timer nil)
+                 (when (and (eve--context-panels-available-p)
+                            (buffer-live-p context-panels-side-panel-buffer)
+                            (get-buffer-window context-panels-side-panel-buffer t))
+                   (context-panels-refresh)))))))))
+
+(defun eve--context-panel-timestamp-items (milestones)
+  "Return context-panel timestamp items from MILESTONES."
+  (delq nil
+        (mapcar (lambda (milestone)
+                  (let* ((segment-id (car milestone))
+                         (label (cdr milestone))
+                         (anchor (eve--segment-position segment-id))
+                         (rendered-time
+                          (eve--context-thumbnail-time-from-label label)))
+                    (when anchor
+                      (list :id (format "timestamp:%s:%s" segment-id label)
+                            :kind 'timestamp
+                            :label label
+                            :rendered-time rendered-time
+                            :segment-id segment-id
+                            :anchor-pos anchor
+                            :source-start anchor
+                            :source-end (eve--segment-end-position segment-id)))))
+                milestones)))
+
+(defun eve--context-panel-broll-items (segments)
+  "Return context-panel b-roll items for SEGMENTS."
+  (delq nil
+        (mapcar (lambda (segment)
+                  (when-let* ((broll (eve--segment-broll segment))
+                              (segment-id (eve--aget 'id segment))
+                              (anchor (eve--segment-position segment-id)))
+                    (list :id (format "broll:%s" segment-id)
+                          :kind 'broll
+                          :label (eve--context-panel-broll-label broll)
+                          :segment-id segment-id
+                          :anchor-pos anchor
+                          :source-start anchor
+                          :source-end (eve--segment-end-position segment-id))))
+                segments)))
+
+(defun eve--context-panel-gap-items ()
+  "Return side-panel source gap items."
+  (mapcar (lambda (gap)
+            (let* ((before (plist-get gap :before))
+                   (after (plist-get gap :after))
+                   (before-id (alist-get 'id before))
+                   (after-id (alist-get 'id after)))
+              (list :id (format "gap:%s:%s" before-id after-id)
+                    :kind 'gap
+                    :label (format "⏱ gap %.1fs after %s"
+                                   (plist-get gap :duration)
+                                   (eve--stringify before-id))
+                    :segment-id after-id
+                    :anchor-pos (eve--segment-position after-id)
+                    :active-source-range nil
+                    :before-segment-id before-id
+                    :after-segment-id after-id)))
+          (eve--source-gaps)))
+
+(defun eve--context-panel-long-segment-items (segments)
+  "Return side-panel suspicious long segment items for SEGMENTS."
+  (delq nil
+        (mapcar (lambda (segment)
+                  (when (eve--suspicious-long-segment-p segment)
+                    (let ((id (alist-get 'id segment))
+                          (duration (eve--segment-duration-seconds segment)))
+                      (list :id (format "long:%s" id)
+                            :kind 'long-segment
+                            :label (format "⚠ long %.1fs %s"
+                                           (or duration 0.0)
+                                           (eve--stringify id))
+                            :segment-id id
+                            :anchor-pos (eve--segment-position id)))))
+                segments)))
+
+(defun eve--context-panel-side-items (&optional source-buffer)
+  "Return Eve side-panel items for SOURCE-BUFFER."
+  (with-current-buffer (or source-buffer (current-buffer))
+    (let* ((segments (eve--segments))
+           (cumulative-times (eve--rendered-cumulative-times
+                              segments eve-hide-deleted-mode))
+           (milestones (eve--ruler-milestones cumulative-times eve-ruler-interval)))
+      (append (eve--context-panel-timestamp-items milestones)
+              (eve--context-panel-gap-items)
+              (eve--context-panel-long-segment-items segments)
+              (eve--context-panel-broll-items segments)))))
+
+(defun eve--context-panel-render-side-item (source-buffer item)
+  "Render Eve side-panel ITEM."
+  (let ((label (or (plist-get item :label) "")))
+    (if (eq (plist-get item :kind) 'timestamp)
+        (let ((thumb (with-current-buffer source-buffer
+                       (eve--context-thumbnail-state item))))
+          (when-let* ((path (plist-get thumb :path))
+                      (image (create-image
+                              path 'jpeg nil
+                              :width eve-context-thumbnail-width
+                              :height eve-context-thumbnail-height)))
+            (insert-image image)
+            (insert " "))
+          (insert (propertize label 'face 'eve-ruler-face) "\n"))
+      (insert (propertize label
+                          'face (if (memq (plist-get item :kind)
+                                          '(gap long-segment))
+                                    'eve-gap-indicator-face
+                                  'default))
+              "\n"))))
+
+(defun eve--context-panel-jump-side-item (source-buffer item)
+  "Jump from an Eve side-panel ITEM to SOURCE-BUFFER."
+  (pop-to-buffer source-buffer)
+  (eve--goto-segment (plist-get item :segment-id)))
+
+(defun eve--context-panel-buffer-name (_source-buffer)
+  "Return the Eve context side-panel buffer name."
+  "*Eve Context*")
+
+(defun eve--context-panel-bottom-views (_source-buffer)
+  "Return Eve bottom views for `context-panels'."
+  (list (list :id 'segment-editor
+              :label "Segment editor"
+              :height eve-segment-panel-height
+              :mode #'eve-segment-panel-mode
+              :render #'eve--segment-panel-render
+              :select t)))
+
+(defun eve--context-panels-provider ()
+  "Return the Eve provider descriptor for `context-panels'."
+  (list :name 'eve
+        :collect-side-items #'eve--context-panel-side-items
+        :render-side-item #'eve--context-panel-render-side-item
+        :jump-side-item #'eve--context-panel-jump-side-item
+        :collect-bottom-views #'eve--context-panel-bottom-views
+        :side-panel-buffer-name #'eve--context-panel-buffer-name
+        :side-panel-width 42))
+
+(defun eve--context-tick-clear-overlays ()
+  "Remove source tick overlays used by the Eve context panel."
+  (mapc #'delete-overlay eve--context-tick-overlays)
+  (setq eve--context-tick-overlays nil))
+
+(defun eve--context-tick-refresh-overlays ()
+  "Render source tick overlays for context-panel timestamp targets."
+  (eve--context-tick-clear-overlays)
+  (let* ((segments (eve--segments))
+         (cumulative-times (eve--rendered-cumulative-times
+                            segments eve-hide-deleted-mode))
+         (milestones (eve--ruler-milestones cumulative-times eve-ruler-interval))
+         (seen nil))
+    (dolist (milestone milestones)
+      (let* ((segment-id (car milestone))
+             (pos (and (not (member segment-id seen))
+                       (eve--segment-position segment-id))))
+        (when pos
+          (push segment-id seen)
+          (let ((overlay (make-overlay pos (min (point-max) (1+ pos)) nil t nil)))
+            (overlay-put overlay 'before-string
+                         (propertize "| "
+                                     'face 'eve-ruler-face
+                                     'display '(height 1.0)))
+            (push overlay eve--context-tick-overlays)))))))
+
+(defun eve--context-panels-after-open ()
+  "Disable legacy ruler and show source ticks while the context panel is open."
+  (when (derived-mode-p 'eve-mode)
+    (when eve-ruler-mode
+      (setq eve--context-panels-disabled-ruler t)
+      (eve-ruler-mode -1))
+    (eve--context-tick-refresh-overlays)))
+
+(defun eve--context-panels-before-close ()
+  "Clean up context ticks and restore the legacy ruler if Eve disabled it."
+  (when (derived-mode-p 'eve-mode)
+    (eve--context-tick-clear-overlays)
+    (when eve--context-panels-disabled-ruler
+      (setq eve--context-panels-disabled-ruler nil)
+      (eve-ruler-mode 1))))
+
+(defun eve--context-panels-setup ()
+  "Register Eve context-panel support for the current buffer when available."
+  (when (eve--context-panels-available-p)
+    (context-panels-mode 1)
+    (context-panels-register-provider (eve--context-panels-provider))
+    (add-hook 'context-panels-after-side-panel-open-hook
+              #'eve--context-panels-after-open nil t)
+    (add-hook 'context-panels-before-side-panel-close-hook
+              #'eve--context-panels-before-close nil t)))
+
+(defun eve--context-panels-command-source-buffer ()
+  "Return the Eve source buffer for a context-panel command."
+  (cond
+   ((derived-mode-p 'eve-mode) (current-buffer))
+   ((and (boundp 'context-panels-source-buffer)
+         (buffer-live-p context-panels-source-buffer)
+         (with-current-buffer context-panels-source-buffer
+           (derived-mode-p 'eve-mode)))
+    context-panels-source-buffer)
+   (t (user-error "No Eve source buffer for context panels"))))
+
+(defun eve--context-panels-visible-p (source)
+  "Return non-nil when SOURCE already has visible context panels."
+  (or (when-let* ((side (buffer-local-value 'context-panels-side-panel-buffer
+                                            source)))
+        (get-buffer-window side t))
+      (when-let* ((bottom (buffer-local-value 'context-panels-bottom-panel-buffer
+                                              source)))
+        (get-buffer-window bottom t))))
+
+(defun eve--context-panels-close (source)
+  "Close Eve context panels for SOURCE."
+  (with-current-buffer source
+    (context-panels-close)
+    (when (fboundp 'context-panels-close-bottom-view)
+      (context-panels-close-bottom-view)))
+  (message "Closed Eve context panels"))
+
+(defun eve-context-panels-open ()
+  "Toggle Eve context panels for the current buffer.
+Open the side and bottom panels when absent; close visible context panels when
+already open.  This command requires the optional `context-panels' package."
+  (interactive)
+  (unless (eve--context-panels-available-p)
+    (user-error "Optional context-panels package is unavailable"))
+  (eve--context-panels-setup)
+  (let ((source (eve--context-panels-command-source-buffer)))
+    (if (eve--context-panels-visible-p source)
+        (eve--context-panels-close source)
+      (let ((side-buffer (context-panels-open source)))
+        (when (fboundp 'context-panels-open-bottom-view)
+          (context-panels-open-bottom-view 'segment-editor source t))
+        (message "Opened Eve context panel")
+        side-buffer))))
 
 ;;;###autoload
 (define-derived-mode eve-mode special-mode "EVE"
@@ -1592,6 +3976,7 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (setq-local buffer-read-only t)
   (setq-local truncate-lines nil)
   (setq-local word-wrap t)
+  (setq-local line-spacing eve-line-spacing)
   (setq-local revert-buffer-function #'eve--revert)
   (setq-local write-contents-functions (list #'eve--write-file))
   (setq-local eve--visual-separators nil)
@@ -1602,11 +3987,16 @@ The milestone interval is controlled by `eve-ruler-interval'."
   (when (boundp 'auto-save-visited-predicate)
     (setq-local auto-save-visited-predicate #'eve--auto-save-blocker))
   (add-hook 'post-command-hook #'eve--post-command nil t)
-  (add-hook 'window-configuration-change-hook #'eve--apply-visual-wrap nil t)
+  ;; `window-size-change-functions' is buffer-local-aware and runs only for
+  ;; windows showing this buffer when it is displayed or resized.  This keeps
+  ;; Eve's visual wrapping out of users' global window-change hooks.
+  (add-hook 'window-size-change-functions #'eve--apply-visual-wrap nil t)
   (add-hook 'kill-buffer-hook #'eve--remove-wrap nil t)
+  (add-hook 'kill-buffer-hook #'eve--context-tick-clear-overlays nil t)
   (add-hook 'kill-buffer-hook #'eve--ipc-teardown nil t)
   (add-hook 'kill-buffer-hook #'eve--auto-render-teardown nil t)
-  (add-hook 'after-save-hook #'eve--auto-render-after-save nil t)
+  (when eve-auto-render-default-enabled
+    (eve-auto-render-mode 1))
   (eve-hide-deleted-mode 1)
   (eve-ruler-mode 1)
   (setq-local mode-line-format
@@ -1618,6 +4008,9 @@ The milestone interval is controlled by `eve-ruler-interval'."
                     (setq fmt (append fmt (list status)))))
                 fmt))
   (eve-reload)
+  (eve--context-panels-setup)
+  (when eve-context-panels-auto-open
+    (eve-context-panels-open))
   (eve--apply-visual-wrap))
 
 ;;;###autoload
@@ -1682,10 +4075,18 @@ The milestone interval is controlled by `eve-ruler-interval'."
       (let ((segments '()))
 	(setf (alist-get 'segments eve--data) segments))))
 
-(defun eve--source-by-id (source-id)
+(defun eve--sources ()
+  "Return the manifest source list, initializing it when absent."
+  (or (alist-get 'sources eve--data)
+      (let ((sources '()))
+        (setf (alist-get 'sources eve--data) sources))))
+
+(defun eve--source-by-id (source-id &optional sources)
+  "Return the source descriptor with SOURCE-ID from SOURCES or current data."
   (seq-find (lambda (item)
-	      (string= (alist-get 'id item) source-id))
-	    (alist-get 'sources eve--data)))
+	      (string= (eve--stringify (eve--aget 'id item))
+                       (eve--stringify source-id)))
+	    (or sources (eve--sources))))
 
 (defun eve--format-time (seconds)
   (let* ((tot (or (eve--coerce-number seconds) 0.0))
@@ -1789,49 +4190,97 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
                   "")
           :word-spans (nreverse word-spans))))
 
+(defun eve--rendered-marker-duration (segment)
+  "Return rendered duration in seconds for marker SEGMENT, or 0.0."
+  (let* ((broll (eve--segment-broll segment))
+         (broll-duration (and broll (eve--aget 'duration broll)))
+         (duration (or (eve--time->seconds broll-duration)
+                       (eve--time->seconds (alist-get 'duration segment))
+                       0.0)))
+    (if (and broll (eve--aget 'file broll) (> duration 0.0))
+        duration
+      0.0)))
+
+(defun eve--segment-has-deleted-words-p (segment)
+  "Return non-nil if SEGMENT has any deleted words."
+  (seq-some #'eve--edit-deleted-p (or (alist-get 'words segment) '())))
+
+(defun eve--rendered-word-ranges (segment hide-deleted)
+  "Return rendered word ranges for SEGMENT."
+  (let ((words (or (alist-get 'words segment) '())))
+    (delq nil
+          (mapcar (lambda (word)
+                    (unless (and hide-deleted (eve--edit-deleted-p word))
+                      (let ((start (alist-get 'start word))
+                            (end (alist-get 'end word)))
+                        (when (and (numberp start) (numberp end) (> end start))
+                          (cons start end)))))
+                  words))))
+
+(defun eve--rendered-segment-gap-bounds (segment hide-deleted)
+  "Return rendered source-media bounds for gap calculations."
+  (if (and hide-deleted (eve--segment-has-deleted-words-p segment))
+      (when-let* ((ranges (eve--rendered-word-ranges segment hide-deleted)))
+        (cons (caar ranges) (cdar (last ranges))))
+    (let ((start (alist-get 'start segment))
+          (end (alist-get 'end segment)))
+      (when (and (numberp start) (numberp end) (> end start))
+        (cons start end)))))
+
+(defun eve--rendered-preserved-gap-duration (previous current hide-deleted)
+  "Return rendered preserved-gap duration between PREVIOUS and CURRENT."
+  (let ((previous-source (alist-get 'source previous))
+        (current-source (alist-get 'source current)))
+    (if (not (and previous-source current-source
+                  (equal previous-source current-source)))
+        0.0
+      (let ((previous-bounds (eve--rendered-segment-gap-bounds previous hide-deleted))
+            (current-bounds (eve--rendered-segment-gap-bounds current hide-deleted)))
+        (if (not (and previous-bounds current-bounds))
+            0.0
+          (let* ((gap (- (car current-bounds) (cdr previous-bounds)))
+                 (threshold (or eve-preserve-gaps-max 0.0)))
+            (if (and (> gap 0.0) (<= gap threshold)) gap 0.0)))))))
+
 (defun eve--rendered-segment-duration (segment hide-deleted)
   "Return rendered duration in seconds for SEGMENT."
-  (if (or (eve--marker-p segment)
-          (and hide-deleted (eve--edit-deleted-p segment)))
-      0.0
-    (let* ((words (or (alist-get 'words segment) '()))
-           (visible-words (if hide-deleted
-                              (seq-remove #'eve--edit-deleted-p words)
-                            words)))
-      (if (null visible-words)
-          0.0
-        (let* ((first-word (car visible-words))
-               (last-word (car (last visible-words)))
-               (first-start (or (alist-get 'start first-word) 0.0))
-               (last-end (or (alist-get 'end last-word) 0.0))
-               (raw-duration (max 0.0 (- last-end first-start)))
-               (max-gap (or eve-preserve-gaps-max 0.0))
-               (seg-start (or (alist-get 'start segment) first-start))
-               (leading-gap (- first-start seg-start))
-               (seg-end (or (alist-get 'end segment) last-end))
-               (trailing-gap (- seg-end last-end)))
-          (when (> leading-gap max-gap)
-            (setq raw-duration (- raw-duration (- leading-gap max-gap))))
-          (when (> trailing-gap max-gap)
-            (setq raw-duration (- raw-duration (- trailing-gap max-gap))))
-          (max 0.0 raw-duration))))))
+  (cond
+   ((and hide-deleted (eve--edit-deleted-p segment)) 0.0)
+   ((eve--marker-p segment) (eve--rendered-marker-duration segment))
+   ((and hide-deleted (eve--segment-has-deleted-words-p segment))
+    (cl-reduce #'+ (mapcar (lambda (range) (- (cdr range) (car range)))
+                           (eve--rendered-word-ranges segment hide-deleted))
+               :initial-value 0.0))
+   (t
+    (let ((start (alist-get 'start segment))
+          (end (alist-get 'end segment)))
+      (if (and (numberp start) (numberp end) (> end start))
+          (- end start)
+        0.0)))))
 
 (defun eve--rendered-total-duration (segments hide-deleted)
   "Return total rendered duration in seconds for SEGMENTS."
-  (cl-reduce #'+ (mapcar (lambda (seg)
-                           (eve--rendered-segment-duration seg hide-deleted))
-                         segments)
-             :initial-value 0.0))
+  (or (cdr (car (last (eve--rendered-cumulative-times segments hide-deleted))))
+      0.0))
 
 (defun eve--rendered-cumulative-times (segments hide-deleted)
   "Return alist of (ID . cumulative-end-time) for each segment."
   (let ((cumulative 0.0)
+        (previous-source-segment nil)
         result)
     (dolist (segment segments)
-      (let ((id (alist-get 'id segment)))
+      (unless (eve--marker-p segment)
         (setq cumulative (+ cumulative
-                            (eve--rendered-segment-duration segment hide-deleted)))
-        (push (cons id cumulative) result)))
+                            (if previous-source-segment
+                                (eve--rendered-preserved-gap-duration
+                                 previous-source-segment segment hide-deleted)
+                              0.0))))
+      (let ((id (alist-get 'id segment))
+            (duration (eve--rendered-segment-duration segment hide-deleted)))
+        (setq cumulative (+ cumulative duration))
+        (push (cons id cumulative) result)
+        (when (and (not (eve--marker-p segment)) (> duration 0.0))
+          (setq previous-source-segment segment))))
     (nreverse result)))
 
 (defun eve--format-ruler-time (seconds)
@@ -1911,6 +4360,8 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 				  (equal id (alist-get 'id segment)))
 				segments))
 			    eve--visual-separators))
+    (eve--clear-fold-overlays)
+    (eve--clear-suspicious-segment-overlays)
     (erase-buffer)
     (let ((previous-id nil)
 	  (previous-marker nil)
@@ -1935,7 +4386,9 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		   (word-spans (and render-data (plist-get render-data :word-spans)))
 		   (base-face (if broll 'eve-broll-face 'eve-text-face))
 		   (segment-face (eve--merge-faces (when segment-deleted 'eve-deleted-face)
-					      (if markerp 'eve-marker-face base-face)))
+					      (if markerp 'eve-marker-face base-face)
+                                      (when (eve--suspicious-long-segment-p segment)
+                                        'eve-suspicious-segment-face)))
 		   (segment-visible
 		    (and (not (and eve-hide-deleted-mode segment-deleted))
 			 (or markerp
@@ -1952,6 +4405,16 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		    (insert "\n"))
 		   (t
 		    (insert " "))))
+                (when-let* ((gap (and (not markerp)
+                                      (eve--source-gap-before segment))))
+                  (insert (propertize
+                           (format "[⏱ gap %.1fs] " (plist-get gap :duration))
+                           'face 'eve-gap-indicator-face
+                           'eve-source-gap gap
+                           'eve-segment nil
+                           'eve-segment-id nil
+                           'rear-nonsticky t
+                           'front-sticky nil)))
 		(when (and markerp
 			   (> (point) (point-min)))
 		  (let* ((start (max (point-min) (- (point) 2)))
@@ -1995,7 +4458,7 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 			(let* ((word (nth 2 span))
 			       (word-face
 				(eve--merge-faces
-				 (when (equal (eve--edit-kind word) "filler")
+				 (when (eve--word-filler-p word)
 				   'eve-filler-face)
 				 (when (eve--edit-deleted-p word)
 				   'eve-deleted-face)
@@ -2021,6 +4484,10 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
     (eve--update-focus-overlay)
     (when eve-ruler-mode
       (eve--update-ruler))
+    (when eve--context-tick-overlays
+      (eve--context-tick-refresh-overlays))
+    (eve--apply-fold-overlays)
+    (eve--apply-suspicious-segment-overlays)
     (eve--apply-visual-wrap))))
 
 (defun eve--format-words (words)
@@ -2259,23 +4726,32 @@ Returns non-nil when a summary was inserted."
 	 (right (or (cdr margins) 0)))
     (+ (window-width window) left right)))
 
-(defun eve--apply-visual-wrap (&rest _ignore)
-  (when (derived-mode-p 'eve-mode)
-    (let ((fill (or fill-column (default-value 'fill-column))))
-      (dolist (window (get-buffer-window-list (current-buffer) nil t))
-	(let* ((margins (window-margins window))
-	       (left (or (car margins) 0))
-	       (right (or (cdr margins) 0))
-	       (total (eve--window-total-width window))
-	       (desired (if (> total fill) (- total fill) 0))
-	       (current-right right))
-	  (unless (= desired current-right)
-	    (unless (window-parameter window 'eve--saved-margins)
-	      (set-window-parameter window 'eve--saved-margins
-				    (cons left right)))
-	    (set-window-margins window left desired)
-	    (set-window-parameter window 'eve--wrapped t)))
-	(eve--apply-fringe-width window 0 0)))))
+(defun eve--apply-visual-wrap (&optional changed-window)
+  "Apply Eve wrapping to visible windows showing the current buffer.
+When CHANGED-WINDOW is non-nil, update only that window.  This matches the
+calling convention of `window-size-change-functions'."
+  (dolist (window (if (window-live-p changed-window)
+                      (list changed-window)
+                    (get-buffer-window-list (current-buffer) nil t)))
+    (when (window-live-p window)
+      (with-current-buffer (window-buffer window)
+        (when (derived-mode-p 'eve-mode)
+          (let ((fill (or fill-column (default-value 'fill-column)))
+                (minimum-right-margin (or right-margin-width 0)))
+            (let* ((margins (window-margins window))
+                   (left (or (car margins) 0))
+                   (right (or (cdr margins) 0))
+                   (total (eve--window-total-width window))
+                   (wrap-margin (if (> total fill) (- total fill) 0))
+                   (desired (max minimum-right-margin wrap-margin))
+                   (current-right right))
+              (unless (= desired current-right)
+                (unless (window-parameter window 'eve--saved-margins)
+                  (set-window-parameter window 'eve--saved-margins
+                                        (cons left right)))
+                (set-window-margins window left desired)
+                (set-window-parameter window 'eve--wrapped t)))
+            (eve--apply-fringe-width window 0 0)))))))
 
 (defun eve--apply-fringe-width (window left right)
   "Adjust WINDOW fringes, saving the original values when first changed."
@@ -2298,16 +4774,6 @@ Returns non-nil when a summary was inserted."
   (set-window-parameter window 'eve--saved-fringes nil)
   (set-window-parameter window 'eve--wrapped nil))
 
-(defun eve--cleanup-wrap ()
-  (dolist (window (window-list))
-    (unless (with-current-buffer (window-buffer window)
-	      (derived-mode-p 'eve-mode))
-      (when (or (window-parameter window 'eve--saved-margins)
-		(window-parameter window 'eve--saved-fringes))
-	(eve--restore-wrap window)))))
-
-(add-hook 'window-configuration-change-hook #'eve--cleanup-wrap)
-
 (defun eve--segment-index (segment-id segments)
   "Return the index of SEGMENT-ID within SEGMENTS."
   (when segment-id
@@ -2316,24 +4782,314 @@ Returns non-nil when a summary was inserted."
 		 :key (lambda (segment)
 			(alist-get 'id segment)))))
 
+(defun eve--segment-id-list (&optional segments)
+  "Return all segment ids in SEGMENTS or current data."
+  (delq nil (mapcar (lambda (segment)
+                      (eve--aget 'id segment))
+                    (or segments (eve--segments)))))
+
+(defun eve--navigable-segment-p (segment hide-deleted)
+  "Return non-nil when SEGMENT should be reachable by segment navigation.
+When HIDE-DELETED is non-nil, deleted segments and markers are skipped because
+they are not rendered in the source buffer or bottom panel."
+  (not (and hide-deleted (eve--edit-deleted-p segment))))
+
+(defun eve--segment-navigation-target-index (segments current-id delta hide-deleted)
+  "Return index DELTA navigable positions from CURRENT-ID in SEGMENTS."
+  (let* ((count (length segments))
+         (step (if (> delta 0) 1 -1))
+         (remaining (abs delta))
+         (index (or (eve--segment-index current-id segments)
+                    (if (> delta 0) -1 count)))
+         target-index)
+    (while (and (null target-index)
+                (setq index (+ index step))
+                (<= 0 index)
+                (< index count))
+      (let ((segment (nth index segments)))
+        (when (eve--navigable-segment-p segment hide-deleted)
+          (setq remaining (1- remaining))
+          (when (zerop remaining)
+            (setq target-index index)))))
+    target-index))
+
+(defun eve--segment-navigation-target-id (segments current-id delta hide-deleted)
+  "Return segment id DELTA navigable positions from CURRENT-ID in SEGMENTS."
+  (when-let* ((index (eve--segment-navigation-target-index
+                      segments current-id delta hide-deleted)))
+    (alist-get 'id (nth index segments))))
+
+(defun eve--marker-navigation-target-id (segments current-id delta hide-deleted)
+  "Return marker id DELTA marker positions from CURRENT-ID in SEGMENTS."
+  (let* ((count (length segments))
+         (step (if (> delta 0) 1 -1))
+         (remaining (abs delta))
+         (index (or (eve--segment-index current-id segments)
+                    (if (> delta 0) -1 count)))
+         target-id)
+    (while (and (null target-id)
+                (setq index (+ index step))
+                (<= 0 index)
+                (< index count))
+      (let ((segment (nth index segments)))
+        (when (and (eve--marker-p segment)
+                   (eve--navigable-segment-p segment hide-deleted))
+          (setq remaining (1- remaining))
+          (when (zerop remaining)
+            (setq target-id (alist-get 'id segment))))))
+    target-id))
+
+(defun eve--unique-id (base existing-ids)
+  "Return a unique id based on BASE not present in EXISTING-IDS."
+  (let* ((root (if (and base (not (string-empty-p (eve--stringify base))))
+                   (eve--stringify base)
+                 "segment"))
+         (candidate root)
+         (n 1))
+    (while (member candidate existing-ids)
+      (setq candidate (format "%s-copy-%d" root n))
+      (setq n (1+ n)))
+    candidate))
+
+(defun eve--source-equal-p (a b)
+  "Return non-nil when source descriptors A and B point at the same source."
+  (and a b
+       (equal (eve--stringify (eve--aget 'file a))
+              (eve--stringify (eve--aget 'file b)))))
+
+(defun eve--import-source-for-segment (segment source)
+  "Import SOURCE for SEGMENT if needed, rewriting SEGMENT's source id on conflict."
+  (when source
+    (let* ((sources (eve--sources))
+           (source-id (eve--aget 'id source))
+           (existing (eve--source-by-id source-id sources)))
+      (cond
+       ((null existing)
+        (setf (alist-get 'sources eve--data)
+              (append sources (list (copy-tree source t)))))
+       ((eve--source-equal-p existing source) nil)
+       (t
+        (let* ((new-source (copy-tree source t))
+               (new-id (eve--unique-id source-id
+                                       (delq nil
+                                             (mapcar (lambda (item)
+                                                       (eve--aget 'id item))
+                                                     sources)))))
+          (setf (alist-get 'id new-source) new-id)
+          (setf (alist-get 'source segment) new-id)
+          (setf (alist-get 'sources eve--data)
+                (append sources (list new-source)))))))))
+
+(defun eve-copy-segment ()
+  "Copy the segment or marker at point for later `eve-paste-segment'.
+The copied data includes edit metadata such as b-roll.  When pasted into another
+TJM buffer, the referenced source descriptor is copied when needed."
+  (interactive)
+  (let* ((segment (or (eve--segment-at-point)
+                      (user-error "No segment at point")))
+         (source-id (eve--aget 'source segment))
+         (source (and source-id (eve--source-by-id source-id))))
+    (setq eve--segment-clipboard
+          (list :segment (copy-tree segment t)
+                :source (and source (copy-tree source t))))
+    (message "Copied %s" (or (eve--aget 'id segment) "segment"))))
+
+(defun eve--paste-segment-at-point (&optional before)
+  "Paste the copied Eve segment near point.
+When BEFORE is non-nil, paste before the segment at point; otherwise paste
+after it.  Return the pasted segment id."
+  (unless eve--segment-clipboard
+    (user-error "No copied Eve segment"))
+  (let* ((segment (copy-tree (plist-get eve--segment-clipboard :segment) t))
+         (source (copy-tree (plist-get eve--segment-clipboard :source) t))
+         (segments (eve--segments))
+         (current (eve--segment-at-point))
+         (current-index (and current (cl-position current segments :test #'eq)))
+         (insert-index (cond
+                        ((and before current-index) current-index)
+                        (current-index (1+ current-index))
+                        (t (length segments))))
+         (new-id (eve--unique-id (eve--aget 'id segment) (eve--segment-id-list segments))))
+    (eve--record-state)
+    (setf (alist-get 'id segment) new-id)
+    (eve--import-source-for-segment segment source)
+    (setf (alist-get 'segments eve--data)
+          (append (cl-subseq segments 0 insert-index)
+                  (list segment)
+                  (nthcdr insert-index segments)))
+    (eve--mark-dirty)
+    (eve--render t)
+    (eve--goto-segment new-id)
+    (eve--update-focus-overlay)
+    (message "Pasted %s" new-id)
+    new-id))
+
+(defun eve-paste-segment ()
+  "Paste the last copied Eve segment or marker after the segment at point.
+The pasted segment receives a fresh id when needed.  Source descriptors are
+copied across TJM buffers when required, and b-roll metadata is preserved."
+  (interactive)
+  (eve--paste-segment-at-point))
+
+(defun eve-paste-segment-before ()
+  "Paste the last copied Eve segment or marker before the segment at point.
+The pasted segment receives a fresh id when needed.  Source descriptors are
+copied across TJM buffers when required, and b-roll metadata is preserved."
+  (interactive)
+  (eve--paste-segment-at-point t))
+
 (defun eve--move-by-segments (delta)
-  "Move point DELTA segments forward (or backward when negative)."
-  (let* ((segments (eve--segments))
-	 (count (length segments)))
+  "Move point DELTA visible segments forward (or backward when negative)."
+  (let ((segments (eve--segments)))
     (unless segments
       (user-error "No segments available"))
-    (let* ((current-id (eve--segment-id-at-point))
-	   (current-index (or (eve--segment-index current-id segments)
-			      (if (> delta 0) -1 count)))
-	   (target-index (+ current-index delta)))
-      (if (or (< target-index 0) (>= target-index count))
-	  (message (if (> delta 0)
-		       "Already at last segment"
-		     "Already at first segment"))
-	(eve--goto-segment (alist-get 'id (nth target-index segments)))
-	(eve--update-focus-overlay)
-	(eve--echo-segment-info)
-	t))))
+    (if-let* ((target-id (eve--segment-navigation-target-id
+                          segments (eve--segment-id-at-point) delta
+                          eve-hide-deleted-mode)))
+        (progn
+          (eve--goto-segment target-id)
+          (eve--update-focus-overlay)
+          (eve--echo-segment-info)
+          t)
+      (message (if (> delta 0)
+                   "Already at last segment"
+                 "Already at first segment")))))
+
+(defun eve--move-by-markers (delta)
+  "Move point DELTA markers forward or backward."
+  (let ((segments (eve--segments)))
+    (unless segments
+      (user-error "No segments available"))
+    (if-let* ((target-id (eve--marker-navigation-target-id
+                          segments (eve--segment-id-at-point) delta
+                          eve-hide-deleted-mode)))
+        (progn
+          (eve--goto-segment target-id)
+          (eve--update-focus-overlay)
+          (eve--echo-segment-info)
+          t)
+      (message (if (> delta 0)
+                   "Already at last marker"
+                 "Already at first marker")))))
+
+(defun eve-next-marker (&optional count)
+  "Move point to the next marker segment.
+With prefix COUNT, move that many markers."
+  (interactive "p")
+  (eve--move-by-markers (or count 1)))
+
+(defun eve-previous-marker (&optional count)
+  "Move point to the previous marker segment.
+With prefix COUNT, move that many markers."
+  (interactive "p")
+  (eve--move-by-markers (- (or count 1))))
+
+(defun eve--clear-fold-overlays ()
+  "Remove all active marker fold overlays in the current buffer."
+  (mapc #'delete-overlay eve--fold-overlays)
+  (setq eve--fold-overlays nil))
+
+(defun eve--clear-suspicious-segment-overlays ()
+  "Remove suspicious segment underline overlays in the current buffer."
+  (mapc #'delete-overlay eve--suspicious-segment-overlays)
+  (setq eve--suspicious-segment-overlays nil))
+
+(defun eve--apply-suspicious-segment-overlays ()
+  "Underline suspiciously long rendered segments with dedicated overlays."
+  (eve--clear-suspicious-segment-overlays)
+  (dolist (segment (eve--suspicious-long-segments))
+    (when-let* ((id (alist-get 'id segment))
+                (bounds (eve--segment-bounds id)))
+      (let ((overlay (make-overlay (car bounds) (cdr bounds) nil t nil)))
+        (overlay-put overlay 'face 'eve-suspicious-segment-face)
+        (overlay-put overlay 'priority 20)
+        (push overlay eve--suspicious-segment-overlays)))))
+
+(defun eve--marker-render-ranges ()
+  "Return rendered marker ranges as (ID START END)."
+  (let ((pos (point-min))
+        (limit (point-max))
+        ranges)
+    (while (< pos limit)
+      (let ((next (next-single-property-change pos 'eve-marker nil limit)))
+        (when (get-text-property pos 'eve-marker)
+          (let ((id (get-text-property pos 'eve-segment-id)))
+            (push (list (eve--stringify id) pos next) ranges)))
+        (setq pos next)))
+    (nreverse ranges)))
+
+(defun eve--marker-ids-rendered ()
+  "Return marker ids currently rendered in the buffer."
+  (mapcar #'car (eve--marker-render-ranges)))
+
+(defun eve--apply-fold-overlays ()
+  "Apply fold overlays for ids in `eve--folded-marker-ids'."
+  (eve--clear-fold-overlays)
+  (add-to-invisibility-spec '(eve-fold . t))
+  (let ((ranges (eve--marker-render-ranges)))
+    (setq eve--folded-marker-ids
+          (seq-filter (lambda (id)
+                        (member id (mapcar #'car ranges)))
+                      eve--folded-marker-ids))
+    (cl-loop for (id _start marker-end) in ranges
+             for rest on ranges
+             for next-start = (cadr (cadr rest))
+             for fold-end = (or next-start (point-max))
+             when (and (member id eve--folded-marker-ids)
+                       (< marker-end fold-end))
+             do (let ((overlay (make-overlay marker-end fold-end nil t nil)))
+                  (overlay-put overlay 'invisible 'eve-fold)
+                  (overlay-put overlay 'isearch-open-invisible #'delete-overlay)
+                  (overlay-put overlay 'before-string
+                               (propertize " …\n\n" 'face 'eve-meta-face))
+                  (push overlay eve--fold-overlays)))))
+
+(defun eve--refold ()
+  "Reapply marker folds after changing `eve--folded-marker-ids'."
+  (eve--apply-fold-overlays)
+  (eve--update-focus-overlay)
+  (when eve-ruler-mode
+    (eve--update-ruler))
+  (when eve--context-tick-overlays
+    (eve--context-tick-refresh-overlays))
+  (when (and (eve--context-panels-available-p)
+             (boundp 'context-panels-side-panel-buffer)
+             (buffer-live-p context-panels-side-panel-buffer)
+             (get-buffer-window context-panels-side-panel-buffer t))
+    (context-panels-refresh)))
+
+(defun eve-toggle-marker-fold ()
+  "Toggle folding for the marker section at point."
+  (interactive)
+  (let* ((segment (or (eve--segment-at-point)
+                      (user-error "No segment at point")))
+         (id (eve--stringify (alist-get 'id segment))))
+    (unless (eve--marker-p segment)
+      (user-error "Not on a marker"))
+    (if (member id eve--folded-marker-ids)
+        (progn
+          (setq eve--folded-marker-ids
+                (delete id eve--folded-marker-ids))
+          (eve--refold)
+          (message "Expanded %s" id))
+      (push id eve--folded-marker-ids)
+      (eve--refold)
+      (message "Folded %s" id))))
+
+(defun eve-toggle-all-marker-folds ()
+  "Toggle folding for all rendered marker sections."
+  (interactive)
+  (let ((marker-ids (eve--marker-ids-rendered)))
+    (if (and marker-ids
+             (seq-every-p (lambda (id) (member id eve--folded-marker-ids))
+                          marker-ids))
+        (progn
+          (setq eve--folded-marker-ids nil)
+          (eve--refold)
+          (message "Expanded all markers"))
+      (setq eve--folded-marker-ids marker-ids)
+      (eve--refold)
+      (message "Folded all markers"))))
 
 (defun eve-next-segment (&optional count)
   "Move point to the next TJM segment.
@@ -2404,6 +5160,28 @@ Optional COUNT moves backward multiple segments."
 	(eve--echo-segment-info)
 	(message "Segment %s" (if deleted "deleted" "restored"))))))
 
+(defun eve--word-data-at-point ()
+  "Return plist containing mutable word data for the word at point."
+  (let* ((info (eve--word-info-at-point))
+         (segment (plist-get info :segment))
+         (word-index (plist-get info :word-index))
+         (word-text (plist-get info :word-text))
+         (words (alist-get 'words segment))
+         (token-index (eve--find-word-token-index words word-text word-index))
+         (fallback-token-index (and words (numberp word-index)
+                                    (<= 0 word-index)
+                                    (< word-index (length words))
+                                    word-index))
+         (effective-token-index (or token-index fallback-token-index))
+         (word (and words
+                    (numberp effective-token-index)
+                    (<= 0 effective-token-index)
+                    (< effective-token-index (length words))
+                    (nth effective-token-index words))))
+    (unless word
+      (user-error "Segment has no word timings"))
+    (plist-put info :word word)))
+
 (defun eve-delete-word ()
   "Toggle the deleted flag on the word at point."
   (interactive)
@@ -2437,6 +5215,77 @@ Optional COUNT moves backward multiple segments."
       (eve--update-focus-overlay)
       (eve--echo-segment-info)
       (message "Word '%s' %s" word-text (if deleted "deleted" "restored")))))
+
+(defun eve--filler-word-positions ()
+  "Return visible filler word positions as (POSITION SEGMENT-ID WORD-INDEX WORD)."
+  (let (positions)
+    (dolist (segment (eve--segments) (nreverse positions))
+      (unless (eve--marker-p segment)
+        (let* ((id (alist-get 'id segment))
+               (bounds (and id (eve--segment-bounds id)))
+               (render-data (and bounds (eve--segment-render-data segment)))
+               (spans (plist-get render-data :word-spans))
+               (words (alist-get 'words segment)))
+          (when bounds
+            (cl-loop for span in spans
+                     for word = (nth 2 span)
+                     for index = (cl-position word words :test #'eq)
+                     when (and index (eve--word-filler-p word))
+                     do (push (list (+ (car bounds) (nth 0 span)) id index word)
+                              positions))))))))
+
+(defun eve--goto-filler (direction)
+  "Move to the next filler in DIRECTION, either `next' or `previous'."
+  (let* ((here (point))
+         (positions (eve--filler-word-positions))
+         (candidate
+          (pcase direction
+            ('next
+             (car (seq-sort-by #'car #'<
+                               (seq-filter (lambda (item) (> (car item) here))
+                                           positions))))
+            ('previous
+             (car (seq-sort-by #'car #'>
+                               (seq-filter (lambda (item) (< (car item) here))
+                                           positions)))))))
+    (unless candidate
+      (user-error "No %s filler word" (symbol-name direction)))
+    (goto-char (car candidate))
+    (eve--update-focus-overlay)
+    (eve--echo-segment-info)
+    candidate))
+
+(defun eve-next-filler ()
+  "Move point to the next visible word tagged as filler."
+  (interactive)
+  (eve--goto-filler 'next))
+
+(defun eve-previous-filler ()
+  "Move point to the previous visible word tagged as filler."
+  (interactive)
+  (eve--goto-filler 'previous))
+
+(defun eve-accept-filler ()
+  "Mark the filler word at point as explicitly not filler.
+This keeps the word in the transcript and prevents future auto-tagging from
+marking it as filler again in this TJM file."
+  (interactive)
+  (let* ((info (eve--word-data-at-point))
+         (segment-id (plist-get info :segment-id))
+         (word-index (plist-get info :word-index))
+         (word-text (plist-get info :word-text))
+         (word (plist-get info :word)))
+    (unless (eve--word-filler-p word)
+      (user-error "Word is not marked as filler"))
+    (eve--record-state)
+    (eve--mark-word-non-filler word)
+    (eve--mark-dirty)
+    (eve--render t)
+    (or (eve--goto-word-by-index segment-id word-index)
+        (eve--goto-segment segment-id))
+    (eve--update-focus-overlay)
+    (eve--echo-segment-info)
+    (message "Marked non-filler word '%s'" word-text)))
 
 (defun eve-split-segment ()
   "Split the current segment at point, creating a new segment
@@ -2538,109 +5387,152 @@ that starts at the word under point."
 	(eve--echo-segment-info)
 	(message "Split segment %s" segment-id)))))
 
-(defun eve-merge-with-next ()
-  "Merge the segment at point with the next segment in the manifest."
-  (interactive)
-  (let* ((segment (or (eve--segment-at-point)
-		      (user-error "No segment at point")))
-	 (segments (eve--segments))
-	 (idx (cl-position segment segments :test #'eq)))
-    (unless idx
-      (error "Unable to determine segment index"))
+(defun eve--merge-conflicts (segment other)
+  "Return strict merge conflicts between SEGMENT and OTHER."
+  (let (conflicts)
+    (let ((source-a (eve--stringify (alist-get 'source segment)))
+          (source-b (eve--stringify (alist-get 'source other))))
+      (when (and (not (string-empty-p source-a))
+                 (not (string-empty-p source-b))
+                 (not (string= source-a source-b)))
+        (push "source" conflicts)))
+    (let ((speaker-a (eve--stringify (alist-get 'speaker segment)))
+          (speaker-b (eve--stringify (alist-get 'speaker other))))
+      (when (and (not (string-empty-p speaker-a))
+                 (not (string-empty-p speaker-b))
+                 (not (string= speaker-a speaker-b)))
+        (push "speaker" conflicts)))
+    (let ((broll-a (eve--segment-broll segment))
+          (broll-b (eve--segment-broll other)))
+      (when (and broll-a broll-b (not (equal broll-a broll-b)))
+        (push "b-roll" conflicts)))
+    (nreverse conflicts)))
+
+(defun eve--merge-segments-at-index (idx &optional force next-idx)
+  "Merge segment at IDX with NEXT-IDX, optionally FORCE conflicts.
+When NEXT-IDX is nil, merge with the immediately following segment."
+  (let* ((segments (eve--segments))
+         (segment (nth idx segments))
+         (next-index (or next-idx (1+ idx)))
+         (next (nth next-index segments)))
+    (unless segment
+      (user-error "No segment at point"))
     (when (eve--marker-p segment)
       (user-error "Cannot merge marker segments"))
-    (let ((next (nth (1+ idx) segments)))
-      (unless next
-	(user-error "Already at last segment"))
-      (when (eve--marker-p next)
-	(user-error "Cannot merge into a marker segment"))
-      (let* ((source (alist-get 'source segment))
-	     (next-source (alist-get 'source next))
-	     (source-str (eve--stringify source))
-	     (next-source-str (eve--stringify next-source)))
-	(when (and source-str next-source-str
-		   (not (string= source-str next-source-str)))
-	  (user-error "Segments use different sources (%s vs %s)" source-str next-source-str))
-	(when (and (null source) next-source)
-	  (setf (alist-get 'source segment) next-source)))
-      (eve--record-state)
-      (let* ((text-a (eve--stringify (alist-get 'text segment)))
-	     (text-b (eve--stringify (alist-get 'text next)))
-	     (combined-text
-	      (string-trim
-	       (string-join
-		(seq-filter (lambda (chunk)
-			      (and chunk (not (string-empty-p chunk))))
-			    (list text-a text-b))
-		" ")))
-	     (words-a (copy-sequence (alist-get 'words segment)))
-	     (words-b (copy-sequence (alist-get 'words next)))
-	     (merged-words (append words-a words-b))
-	     (start-a (eve--coerce-number (alist-get 'start segment)))
-	     (end-a (eve--coerce-number (alist-get 'end segment)))
-	     (start-b (eve--coerce-number (alist-get 'start next)))
-	     (end-b (eve--coerce-number (alist-get 'end next)))
-	     (note-a (eve--stringify (eve--segment-notes segment)))
-	     (note-b (eve--stringify (eve--segment-notes next)))
-	     (tag-a (copy-sequence (eve--segment-tags segment)))
-	     (tag-b (copy-sequence (eve--segment-tags next)))
-	     (next-id (alist-get 'id next))
-	     (next-had-broll (eve--segment-broll next)))
-	(setf (alist-get 'text segment)
-	      (and (not (string-empty-p combined-text)) combined-text))
-	(setf (alist-get 'words segment) (and merged-words merged-words))
-	(let ((notes (seq-filter (lambda (chunk)
-				   (and chunk (not (string-empty-p chunk))))
-				 (list note-a note-b))))
-	  (eve--set-segment-notes
-	   segment
-	   (cond
-	    ((null notes) nil)
-	    ((= (length notes) 1) (car notes))
-	    (t (mapconcat #'identity notes "\n\n")))))
-	(let* ((combined-tags (append tag-a tag-b))
-	       (clean-tags
-		(seq-filter (lambda (tag)
-			      (let ((as-string (eve--stringify tag)))
-				(and as-string (not (string-empty-p as-string)))))
-			    combined-tags)))
-	  (eve--set-segment-tags
-	   segment
-	   (when clean-tags
-	     (cl-delete-duplicates clean-tags
-				   :test #'string=
-				   :key #'eve--stringify))))
-	(if merged-words
-	    (let ((first-word (car merged-words))
-		  (last-word (car (last merged-words))))
-	      (setf (alist-get 'start segment)
-		    (eve--coerce-number (alist-get 'start first-word)))
-	      (setf (alist-get 'end segment)
-		    (eve--coerce-number (alist-get 'end last-word))))
-	  (let ((starts (seq-filter #'numberp (list start-a start-b)))
-		(ends (seq-filter #'numberp (list end-a end-b))))
-	    (when starts
-	      (setf (alist-get 'start segment) (apply #'min starts)))
-	    (when ends
-	      (setf (alist-get 'end segment) (apply #'max ends)))))
-	(setq eve--visual-separators
-	      (cl-remove (eve--stringify next-id) eve--visual-separators
-			 :test #'string= :count 1))
-	(setf (alist-get 'segments eve--data)
-	      (cl-remove next segments :test #'eq :count 1))
-	(eve--mark-dirty)
-	(let ((merged-id (alist-get 'id segment)))
-	  (eve--render t)
-	  (when merged-id
-	    (eve--goto-segment merged-id)
-	    (eve--update-focus-overlay)
-	    (eve--echo-segment-info))
-	  (message "Merged segment %s with %s%s"
-		   merged-id
-		   (eve--stringify next-id)
-		   (if next-had-broll
-		       " (review b-roll metadata)"
-		     "")))))))
+    (unless next
+      (user-error "Already at last segment"))
+    (when (<= next-index idx)
+      (user-error "Merge target must follow current segment"))
+    (when (eve--marker-p next)
+      (user-error "Cannot merge across marker segments"))
+    (let ((conflicts (eve--merge-conflicts segment next)))
+      (when (and conflicts
+                 (not force)
+                 (not (y-or-n-p (format "Merge conflicts (%s). Force merge? "
+                                        (string-join conflicts ", ")))))
+        (user-error "Merge conflicts: %s" (string-join conflicts ", "))))
+    (eve--record-state)
+    (let* ((text-a (eve--stringify (alist-get 'text segment)))
+           (text-b (eve--stringify (alist-get 'text next)))
+           (combined-text
+            (string-trim
+             (string-join
+              (seq-filter (lambda (chunk)
+                            (and chunk (not (string-empty-p chunk))))
+                          (list text-a text-b))
+              " ")))
+           (words-a (copy-sequence (alist-get 'words segment)))
+           (words-b (copy-sequence (alist-get 'words next)))
+           (merged-words (append words-a words-b))
+           (note-a (eve--stringify (eve--segment-notes segment)))
+           (note-b (eve--stringify (eve--segment-notes next)))
+           (tag-a (copy-sequence (eve--segment-tags segment)))
+           (tag-b (copy-sequence (eve--segment-tags next)))
+           (next-id (alist-get 'id next))
+           (merged-id (alist-get 'id segment)))
+      (when (and (null (alist-get 'source segment)) (alist-get 'source next))
+        (setf (alist-get 'source segment) (alist-get 'source next)))
+      (when (and (string-empty-p (eve--stringify (alist-get 'speaker segment)))
+                 (not (string-empty-p (eve--stringify (alist-get 'speaker next)))))
+        (setf (alist-get 'speaker segment) (alist-get 'speaker next)))
+      (when (and (null (eve--segment-broll segment)) (eve--segment-broll next))
+        (eve--set-segment-broll segment (copy-tree (eve--segment-broll next) t)))
+      (setf (alist-get 'text segment)
+            (and (not (string-empty-p combined-text)) combined-text))
+      (setf (alist-get 'words segment) (and merged-words merged-words))
+      (let ((notes (seq-filter (lambda (chunk)
+                                 (and chunk (not (string-empty-p chunk))))
+                               (list note-a note-b))))
+        (eve--set-segment-notes
+         segment
+         (cond
+          ((null notes) nil)
+          ((= (length notes) 1) (car notes))
+          (t (mapconcat #'identity notes "\n\n")))))
+      (let* ((combined-tags (append tag-a tag-b))
+             (clean-tags
+              (seq-filter (lambda (tag)
+                            (let ((as-string (eve--stringify tag)))
+                              (and as-string (not (string-empty-p as-string)))))
+                          combined-tags)))
+        (eve--set-segment-tags
+         segment
+         (when clean-tags
+           (cl-delete-duplicates clean-tags
+                                 :test #'string=
+                                 :key #'eve--stringify))))
+      (if merged-words
+          (let ((first-word (car merged-words))
+                (last-word (car (last merged-words))))
+            (setf (alist-get 'start segment)
+                  (eve--coerce-number (alist-get 'start first-word)))
+            (setf (alist-get 'end segment)
+                  (eve--coerce-number (alist-get 'end last-word))))
+        (setf (alist-get 'end segment) (alist-get 'end next)))
+      (setq eve--visual-separators
+            (cl-remove (eve--stringify next-id) eve--visual-separators
+                       :test #'string= :count 1))
+      (setf (alist-get 'segments eve--data)
+            (cl-remove next segments :test #'eq :count 1))
+      (eve--mark-dirty)
+      (eve--render t)
+      (when merged-id
+        (eve--goto-segment merged-id)
+        (eve--update-focus-overlay)
+        (eve--echo-segment-info))
+      (message "Merged segment %s with %s" merged-id (eve--stringify next-id)))))
+
+(defun eve-merge-with-next (&optional force)
+  "Merge the segment at point with the next visible segment.
+With prefix FORCE, merge despite metadata conflicts."
+  (interactive "P")
+  (let* ((segment (or (eve--segment-at-point)
+                      (user-error "No segment at point")))
+         (segments (eve--segments))
+         (idx (cl-position segment segments :test #'eq)))
+    (unless idx
+      (error "Unable to determine segment index"))
+    (if-let* ((next-idx (eve--segment-navigation-target-index
+                         segments (alist-get 'id segment) 1
+                         eve-hide-deleted-mode)))
+        (eve--merge-segments-at-index idx force next-idx)
+      (user-error "Already at last segment"))))
+
+(defun eve-merge-with-previous (&optional force)
+  "Merge the previous visible segment with the segment at point.
+With prefix FORCE, merge despite metadata conflicts."
+  (interactive "P")
+  (let* ((segment (or (eve--segment-at-point)
+                      (user-error "No segment at point")))
+         (segments (eve--segments))
+         (idx (cl-position segment segments :test #'eq)))
+    (unless idx
+      (error "Unable to determine segment index"))
+    (if-let* ((previous-idx (eve--segment-navigation-target-index
+                             segments (alist-get 'id segment) -1
+                             eve-hide-deleted-mode)))
+        (eve--merge-segments-at-index previous-idx force idx)
+      (user-error "Already at first segment"))))
 
 (defun eve-move-segment-up ()
   "Move the current segment up by one position."
@@ -2771,19 +5663,40 @@ that starts at the word under point."
     (eve--mark-dirty)
     (eve--render t)))
 
+(defun eve--read-choice (prompt choices default)
+  "Read one of CHOICES with PROMPT, using DEFAULT as the initial choice."
+  (let* ((default-string (eve--stringify default))
+         (choice (completing-read prompt choices nil t nil nil default-string)))
+    (if (string-empty-p choice) default-string choice)))
+
+(defun eve--read-yes-no-choice (prompt default)
+  "Read a y/n answer with PROMPT and boolean DEFAULT."
+  (let* ((default-string (if default "y" "n"))
+         (choice (completing-read
+                  (format "%s [%s]: " prompt default-string)
+                  '("y" "n" "yes" "no") nil t nil nil default-string)))
+    (cond
+     ((member choice '("y" "yes")) t)
+     ((member choice '("n" "no")) nil)
+     ((string-empty-p choice) default)
+     (t (user-error "Enter y or n")))))
+
 (defun eve-edit-broll (segment)
   "Edit b-roll metadata for SEGMENT."
   (interactive (list (or (eve--segment-at-point)
 			 (user-error "No segment at point"))))
   (eve--record-state)
-  (let* ((broll (copy-alist (eve--segment-broll segment)))
+  (let* ((broll (copy-tree (eve--segment-broll segment) t))
 	 (file (read-string "B-roll file (blank to clear): "
 			    (eve--stringify (alist-get 'file broll))))
-	 (mode (read-string "Mode (overlay/replace/pip): "
-			    (alist-get 'mode broll)))
+	 (mode (eve--read-choice "Mode: "
+				 '("overlay" "replace" "pip")
+				 (or (alist-get 'mode broll) "overlay")))
 	 (audio-default (or (eve--stringify (alist-get 'audio broll))
 			    "source"))
-	 (audio (read-string "Audio (source/mute/broll): " audio-default))
+	 (audio (eve--read-choice "Audio: "
+				  '("source" "mute" "broll")
+				  audio-default))
 	 (offset-existing (alist-get 'start_offset broll))
 	 (offset-default (cond
 			  ((stringp offset-existing) offset-existing)
@@ -2806,34 +5719,13 @@ that starts at the word under point."
 			 ((and file (not (string-empty-p file))
 			       (image-file-name-p file)))
 			 (t nil)))
-	 (still-input (if (string-empty-p file)
-			  nil
-			(string-trim (downcase
-				      (read-string
-				       (format "Treat as still image? (y/n) [%s]: "
-					       (if still-default "y" "n"))
-				       (if still-default "y" "n"))))))
-	 (still (cond
-		 ((null still-input) still-default)
-		 ((member still-input '("y" "yes")) t)
-		 ((member still-input '("n" "no")) nil)
-		 ((string-empty-p still-input) still-default)
-		 (t (user-error "Enter y or n for still image"))))
+	 (still (and (not (string-empty-p file))
+		     (eve--read-yes-no-choice "Treat as still image?" still-default)))
 	 (continue-existing (alist-get 'continue broll))
 	 (continue-default (and continue-existing t))
-	 (continue-input (if (string-empty-p file)
-			     nil
-			   (string-trim (downcase
-					 (read-string
-					  (format "Continue from previous segment? (y/n) [%s]: "
-						  (if continue-default "y" "n"))
-					  (if continue-default "y" "n"))))))
-	 (continue (cond
-		    ((null continue-input) continue-default)
-		    ((member continue-input '("y" "yes")) t)
-		    ((member continue-input '("n" "no")) nil)
-		    ((string-empty-p continue-input) continue-default)
-		    (t (user-error "Enter y or n for continue flag"))))
+	 (continue (and (not (string-empty-p file))
+			(eve--read-yes-no-choice
+			 "Continue from previous segment?" continue-default)))
 	 (template (unless (string-empty-p file)
 		     (eve--broll-template-data (list (cons 'file file))))))
     (when (and still (string= (downcase audio) "broll"))
@@ -2934,7 +5826,8 @@ that starts at the word under point."
     (unless (member phrase eve-filler-phrases)
       (setq eve-filler-phrases (append eve-filler-phrases (list phrase)))
       (condition-case nil
-          (customize-save-variable 'eve-filler-phrases eve-filler-phrases)
+          (eve--customize-save-variable-preserving-windows
+           'eve-filler-phrases eve-filler-phrases)
         (error nil)))
     (eve--record-state)
     (let ((tagged (eve--apply-filler-tags)))
@@ -2942,6 +5835,68 @@ that starts at the word under point."
         (eve--mark-dirty)))
     (eve--render t)
     (message "Added filler phrase: %s" phrase)))
+
+(defun eve--save-filler-exception-phrase (phrase)
+  "Persist PHRASE in `eve-filler-exception-phrases'."
+  (unless (member phrase eve-filler-exception-phrases)
+    (setq eve-filler-exception-phrases
+          (append eve-filler-exception-phrases (list phrase)))
+    (condition-case nil
+        (eve--customize-save-variable-preserving-windows
+         'eve-filler-exception-phrases eve-filler-exception-phrases)
+      (error nil))))
+
+(defun eve-add-filler-exception-region (start end)
+  "Add region text START..END as a future filler exception phrase."
+  (interactive "r")
+  (let* ((raw (buffer-substring-no-properties start end))
+         (tokens (eve--normalize-word-tokens raw))
+         (phrase (and tokens (string-join tokens " "))))
+    (when (or (null phrase) (string-empty-p phrase))
+      (user-error "Region normalizes to empty string"))
+    (eve--save-filler-exception-phrase phrase)
+    (eve--record-state)
+    (let ((start-pos (min start end))
+          (end-pos (max start end)))
+      (dolist (segment (eve--segments))
+        (unless (eve--marker-p segment)
+          (let* ((bounds (eve--segment-bounds (alist-get 'id segment)))
+                 (render-data (and bounds (eve--segment-render-data segment)))
+                 (spans (plist-get render-data :word-spans)))
+            (when bounds
+              (cl-loop for span in spans
+                       for word = (nth 2 span)
+                       for abs-start = (+ (car bounds) (nth 0 span))
+                       for abs-end = (+ (car bounds) (nth 1 span))
+                       when (and (< abs-start end-pos) (> abs-end start-pos))
+                       do (eve--mark-word-non-filler word)))))))
+    (eve--mark-dirty)
+    (eve--render t)
+    (message "Added filler exception phrase: %s" phrase)))
+
+(defun eve-add-filler-exception-at-point ()
+  "Add the word at point as a future filler exception phrase."
+  (interactive)
+  (let* ((info (eve--word-info-at-point))
+         (word (plist-get info :word))
+         (word-text (plist-get info :word-text))
+         (tokens (eve--normalize-word-tokens word-text))
+         (phrase (and tokens (string-join tokens " "))))
+    (when (or (null phrase) (string-empty-p phrase))
+      (user-error "No word at point"))
+    (eve--save-filler-exception-phrase phrase)
+    (eve--record-state)
+    (eve--mark-word-non-filler word)
+    (eve--mark-dirty)
+    (eve--render t)
+    (message "Added filler exception phrase: %s" phrase)))
+
+(defun eve-add-filler-exception ()
+  "Add region or word at point as a future filler exception phrase."
+  (interactive)
+  (if (use-region-p)
+      (call-interactively #'eve-add-filler-exception-region)
+    (call-interactively #'eve-add-filler-exception-at-point)))
 
 (defun eve-add-filler-region (start end)
   "Add region text START..END to `eve-filler-phrases', then re-tag and render."
@@ -2954,7 +5909,8 @@ that starts at the word under point."
     (unless (member phrase eve-filler-phrases)
       (setq eve-filler-phrases (append eve-filler-phrases (list phrase)))
       (condition-case nil
-          (customize-save-variable 'eve-filler-phrases eve-filler-phrases)
+          (eve--customize-save-variable-preserving-windows
+           'eve-filler-phrases eve-filler-phrases)
         (error nil)))
     (eve--record-state)
     (let ((tagged (eve--apply-filler-tags)))
@@ -2980,7 +5936,7 @@ that starts at the word under point."
         (when (listp words)
           (dolist (word words)
             (when (and (listp word)
-                       (equal (eve--edit-kind word) "filler")
+                       (eve--word-filler-p word)
                        (not (eve--edit-deleted-p word)))
               (setq count (1+ count))
               (eve--set-edit-deleted word t))))))
@@ -3072,30 +6028,28 @@ that starts at the word under point."
 (defun eve-play-segment (&optional segment)
   "Play SEGMENT using `eve-play-program', or the rendered section when on a marker."
   (interactive)
-  (let* ((seg (or segment (eve--segment-at-point)
-		  (user-error "No segment at point")))
-	 (marker? (eve--marker-p seg)))
-    (when marker?
-      (eve--play-marker seg)
-      (cl-return-from eve-play-segment nil))
-    (let* ((source (alist-get 'source seg))
-	   (start (alist-get 'start seg))
-	   (end (alist-get 'end seg))
-	   (source-entry (eve--source-by-id source)))
-      (unless source-entry
-	(user-error "Unknown source id: %s" source))
-      (let* ((file (alist-get 'file source-entry))
-	     (abs-file (expand-file-name file (file-name-directory buffer-file-name))))
-	(unless (file-exists-p abs-file)
-	  (user-error "Source file not found: %s" abs-file))
-	(let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
-	  (eve--play-with-mpv abs-file start end socket-path)
-	  ;; Set state AFTER eve--play-with-mpv (teardown clears these)
-	  (setq eve--playback-source-segments (list seg))
-	  (setq eve--playback-mode 'source)
-	  (eve-playback-mode 1)
-	  (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
-	  (message "Playing %s [%s-%s]" file start end))))))
+  (let ((seg (or segment (eve--segment-at-point)
+                 (user-error "No segment at point"))))
+    (if (eve--marker-p seg)
+        (eve--play-marker seg)
+      (let* ((source (alist-get 'source seg))
+             (start (alist-get 'start seg))
+             (end (alist-get 'end seg))
+             (source-entry (eve--source-by-id source)))
+        (unless source-entry
+          (user-error "Unknown source id: %s" source))
+        (let* ((file (alist-get 'file source-entry))
+               (abs-file (expand-file-name file (file-name-directory buffer-file-name))))
+          (unless (file-exists-p abs-file)
+            (user-error "Source file not found: %s" abs-file))
+          (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock")))
+            (eve--play-with-mpv abs-file start end socket-path)
+            ;; Set state AFTER eve--play-with-mpv (teardown clears these)
+            (setq eve--playback-source-segments (list seg))
+            (setq eve--playback-mode 'source)
+            (eve-playback-mode 1)
+            (add-hook 'post-command-hook #'eve--playback-seek-hook nil t)
+            (message "Playing %s [%s-%s]" file start end)))))))
 
 (defun eve-play (&optional rendered)
   "Play source media, or with prefix arg play the rendered output.
@@ -3605,6 +6559,13 @@ If SILENT is non-nil, only produce messages when failures occur."
 	    (push (format "%s: missing start/end" (or id "<no-id>")) issues))
 	  (when (and start end (<= (- end start) (- tolerance)))
 	    (push (format "%s: start >= end (Δ%.2fs)" (or id "<no-id>") (- end start)) issues))
+          (when (and start end eve-validation-suspicious-segment-duration
+                     (> (- end start) eve-validation-suspicious-segment-duration))
+            (push (format "%s: suspiciously long segment (%.1fs > %.1fs)"
+                          (or id "<no-id>")
+                          (- end start)
+                          eve-validation-suspicious-segment-duration)
+                  issues))
 	  (dolist (word words)
 	    (let ((w-start (eve--coerce-number (alist-get 'start word)))
 		  (w-end (eve--coerce-number (alist-get 'end word)))
@@ -3732,8 +6693,7 @@ joined into a single annotation."
     (force-mode-line-update)
     (when milestones
       (setq-local right-margin-width 12)
-      (dolist (win (get-buffer-window-list nil nil t))
-        (set-window-margins win (car (window-margins win)) 12))
+      (eve--apply-visual-wrap)
       (eve--ruler-create-overlays milestones))))
 
 (defun eve--ruler-mode-line-string ()
@@ -3804,9 +6764,28 @@ Shows duration and render state right after the buffer name."
       (let (message-log-max)
         (message "%s" (eve--segment-summary segment))))))
 
+(defun eve--context-panels-sync-bottom-panel ()
+  "Keep the segment bottom panel aligned with source-buffer point."
+  (when (and (derived-mode-p 'eve-mode)
+             (boundp 'context-panels-bottom-panel-buffer)
+             (buffer-live-p context-panels-bottom-panel-buffer)
+             (get-buffer-window context-panels-bottom-panel-buffer t))
+    (when-let* ((segment-id (eve--segment-id-at-point)))
+      (let ((source (current-buffer))
+            (bottom context-panels-bottom-panel-buffer))
+        (with-current-buffer bottom
+          (when (and (derived-mode-p 'eve-segment-panel-mode)
+                     (not (equal eve-segment-panel-segment-id segment-id)))
+            (setq eve-segment-panel-source-buffer source)
+            (setq eve-segment-panel-segment-id (eve--stringify segment-id))
+            (setq eve-segment-panel-word-index 0)
+            (setq eve-segment-panel-selection-anchor nil)
+            (eve--segment-panel-refresh)))))))
+
 (defun eve--post-command ()
   (eve--update-focus-overlay)
-  (eve--echo-segment-info))
+  (eve--echo-segment-info)
+  (eve--context-panels-sync-bottom-panel))
 
 (defun eve--display-validation (issues)
   (let ((buf (get-buffer-create "*TJM Validation*")))
