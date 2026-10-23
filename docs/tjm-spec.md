@@ -306,30 +306,39 @@ Conforming word objects use:
 
 `end_tick` MUST be strictly greater than `start_tick`.
 
-The canonical home for filler classification is `word.edit.kind`.
+The canonical home for editable filler classification is `word.edit.filler`.
+It records explicit local editorial intent for this TJM file:
 
-If a producer or editor encounters a legacy top-level `word.kind`, it SHOULD
-normalize that value into `word.edit.kind`. When both are present and differ,
-`word.edit.kind` wins and the top-level `kind` remains compatibility input only.
+- `true`: the word is explicitly marked as filler;
+- `"no-filler"`: the word is explicitly marked as not filler and SHOULD NOT be
+  auto-tagged as filler by phrase-based editor workflows;
+- absent: the word has no explicit local filler decision.
 
-If neither `word.edit.kind` nor legacy top-level `kind` is present, consumers
-MUST treat the word as if its effective kind were `"lexical"`.
+When an editor user marks words as filler and confirms saving the phrase for
+future sessions, the editor MUST also scan all segments in the current file
+and tag matching occurrences. This scan MUST preserve explicit `"no-filler"`
+decisions and configured exception phrases. Declining to save the phrase MUST
+leave other occurrences unchanged.
 
-The interoperable effective word-kind values in TJM v1.1 are:
+For compatibility, producers and consumers MAY also encounter legacy
+`word.edit.kind = "filler"` or top-level `word.kind = "filler"`. These legacy
+forms MUST be interpreted as an effective filler mark when `word.edit.filler` is
+absent. When `word.edit.filler` is present, it wins over both legacy locations.
 
-- `lexical`: an ordinary spoken word;
-- `filler`: a spoken filler or disfluency such as `um` or `uh`.
+If none of `word.edit.filler`, `word.edit.kind`, or legacy top-level `kind` is
+present, consumers MUST treat the word as if it were lexical / not filler.
 
 Editors SHOULD preserve recognized and unrecognized kind values when
-round-tripping. Renderers MUST reject unknown effective kind values.
+round-tripping. Renderers MUST reject unknown legacy effective kind values.
 
-Word kind is descriptive metadata. It does not itself delete or rewrite the
-word.
+Filler classification is descriptive metadata. It does not itself delete or
+rewrite the word.
 
 When present, `word.edit` MUST be an object. The following interoperable
 `word.edit` members are defined in TJM v1.1:
 
-- `kind`: OPTIONAL string;
+- `filler`: OPTIONAL boolean or the string `"no-filler"`;
+- `kind`: OPTIONAL legacy compatibility string;
 - `deleted`: OPTIONAL boolean.
 
 When `word.edit.deleted` is `true`, that word's content is marked for removal
@@ -403,9 +412,18 @@ ignored for normal segment rendering.
 Markers MAY still contribute structure to downstream consumers, such as section
 labels or subtitle annotations.
 
-If a marker includes renderable `segment.edit.broll` metadata, a renderer MAY
-treat it as a timeline unit only when enough information exists to derive
-duration.
+If a marker includes renderable `segment.edit.broll` metadata, a renderer MUST
+treat it as a timeline unit when enough information exists to derive duration.
+This is the normative way to express source-less timeline media such as intro
+cards, outro cards, interstitial title cards, and other non-transcript clips.
+Because renderers MUST walk `segments` in file order, a renderable marker at the
+start of `segments` plays before the first media segment; a renderable marker at
+the end plays after the final media segment.
+
+A marker's renderable b-roll duration is derived from `segment.edit.broll.duration`
+when present; otherwise consumers MAY use marker `duration`. If neither yields a
+positive duration and no other implementation-defined duration can be derived,
+the marker MUST be treated as non-renderable structural metadata.
 
 ## 12. B-roll Object
 
@@ -451,7 +469,14 @@ image to be converted into a synthetic video stream of the requested duration.
 
 If `still` is `true`, `audio` MUST NOT be `"broll"`.
 
-### 12.4 Picture-in-picture positioning
+### 12.4 Replace-mode frame fitting
+
+When `mode` is `"replace"`, renderers MUST preserve the complete b-roll video
+frame. If the b-roll asset aspect ratio differs from the target output aspect
+ratio, the renderer MUST fit the b-roll inside the target frame and pad the
+remaining area. It MUST NOT crop edges merely to fill the target frame.
+
+### 12.5 Picture-in-picture positioning
 
 When `mode` is `"pip"`, `position` MAY contain:
 
@@ -462,7 +487,7 @@ When `mode` is `"pip"`, `position` MAY contain:
 Consumers SHOULD default `x` and `y` to `0.05`, and `width` to `0.3` when
 values are absent.
 
-### 12.5 Time values
+### 12.6 Time values
 
 `segment.edit.broll.start_offset`, `segment.edit.broll.duration`, and marker
 `duration` MAY be expressed as either:
@@ -475,7 +500,7 @@ values are absent.
 
 Consumers MUST interpret these forms as wall-clock durations.
 
-### 12.6 Continuous b-roll chains
+### 12.7 Continuous b-roll chains
 
 If adjacent segments carry equivalent b-roll definitions and the later segment's
 `continue` flag is `true`, a rendering consumer MAY treat the sequence as a
@@ -485,7 +510,7 @@ Equivalence SHOULD be determined by the effective b-roll source, `mode`,
 `audio`, `still`, `position`, and whether the referenced `file` is itself a
 template JSON descriptor.
 
-### 12.7 Template JSON extension
+### 12.8 Template JSON extension
 
 If `segment.edit.broll.file` names a `.json` file, a renderer MAY interpret it
 as a template descriptor rather than as media directly.
@@ -524,6 +549,11 @@ A renderer MUST walk `segments` in file order.
 For a normal media segment, the renderer renders the interval from
 `start_tick` to `end_tick` from the referenced source, optionally modified by
 `segment.edit.broll` and `render.filler_policy`.
+
+For a renderable marker segment, the renderer renders the marker's
+`segment.edit.broll` as its own timeline unit at that exact position in the
+`segments` array. The marker does not need a `source`, `start_tick`, or
+`end_tick` when its b-roll metadata provides enough duration information.
 
 If `segment.edit.deleted` is `true`, the renderer MUST omit that segment from
 rendered output while leaving the manifest entry itself intact.
@@ -581,6 +611,8 @@ For consumers that derive subtitles from TJM:
 
 - subtitle time starts at `0` in rendered timeline space, not source-media time;
 - marker segments do not emit normal subtitle cues;
+- renderable marker segments still occupy subtitle time, so later cues MUST be
+  shifted by the rendered marker duration;
 - preserved short gaps advance subtitle time;
 - segment cue text MUST be determined as follows:
   1. use non-empty `display_text` when present;

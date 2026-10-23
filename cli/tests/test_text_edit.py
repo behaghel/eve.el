@@ -115,6 +115,41 @@ def test_build_subtitle_cues_and_markers_preserve_short_gaps() -> None:
     assert markers == [("Break", 1.5)]
 
 
+def test_renderable_marker_broll_shifts_subtitle_timeline() -> None:
+    manifest = {
+        "version": 1,
+        "sources": [{"id": "clip01", "file": "sample.mp4"}],
+        "segments": [
+            {
+                "id": "intro",
+                "kind": "marker",
+                "title": "Intro",
+                "edit": {
+                    "broll": {
+                        "file": "intro.mp4",
+                        "mode": "replace",
+                        "audio": "broll",
+                        "duration": 10.0,
+                    }
+                },
+            },
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 0.0,
+                "end": 2.0,
+                "text": "after intro",
+            },
+        ],
+    }
+
+    cues = text_edit.build_subtitle_cues(manifest)
+    markers = text_edit.collect_markers(manifest)
+
+    assert cues == [(10.0, 12.0, "after intro")]
+    assert markers == [("Intro", 0.0)]
+
+
 def test_run_orchestrates_render_subtitles_and_manifest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -550,7 +585,15 @@ def test_prepare_broll_media_and_build_commands(
     source.touch()
     calls: list[list[str]] = []
 
-    def fake_probe(_path: Path) -> dict[str, Any]:
+    def fake_probe(path: Path) -> dict[str, Any]:
+        if path == still:
+            return {
+                "width": 1280,
+                "height": 720,
+                "fps": 24.0,
+                "fps_str": "24/1",
+                "pix_fmt": "yuv420p",
+            }
         return {
             "width": 320,
             "height": 240,
@@ -596,8 +639,15 @@ def test_prepare_broll_media_and_build_commands(
     assert prepared_path.suffix == ".mp4"
     assert pix_fmt == "yuv420p"
     assert calls and calls[0][0] == text_edit.FFMPEG
+    prepared_cmd = " ".join(calls[0])
+    assert "force_original_aspect_ratio=decrease" in prepared_cmd
+    assert "pad=320:240" in prepared_cmd
+    assert "crop=320:240" not in prepared_cmd
     assert "overlay=" in " ".join(pip_cmd)
     assert replace_cmd[0] == text_edit.FFMPEG
+    assert "-af" in replace_cmd
+    assert "afade=t=in" in replace_cmd[replace_cmd.index("-af") + 1]
+    assert "aresample=async=1:first_pts=0" in replace_cmd[replace_cmd.index("-af") + 1]
 
     with pytest.raises(ValueError, match="pip width"):
         text_edit.build_broll_command(
@@ -669,13 +719,46 @@ def test_render_concat_and_marker_helpers(
     markers = text_edit.collect_markers(manifest, preserve_gap_threshold=0.3)
     text_edit.write_manifest(manifest, tmp_path / "pretty.json")
 
+    concat_cmd = next(
+        cmd for cmd, context in commands if context == "concatenating rendered segments"
+    )
+
     assert rendered
     assert any("preserving gap" in (context or "") for _, context in commands)
-    assert any("concatenating rendered segments" == context for _, context in commands)
+    assert "-c:v" in concat_cmd
+    assert "copy" == concat_cmd[concat_cmd.index("-c:v") + 1]
+    assert "-c:a" in concat_cmd
+    assert "aac" == concat_cmd[concat_cmd.index("-c:a") + 1]
+    assert "aresample=async=1:first_pts=0" in concat_cmd
     assert markers == [("Break", 0.5)]
     assert (
         json.loads((tmp_path / "pretty.json").read_text(encoding="utf-8")) == manifest
     )
+
+
+def test_concat_segments_uses_unique_temporary_lists(tmp_path, monkeypatch):
+    """Concurrent segment concatenations must not share one concat-list file."""
+    inputs = [tmp_path / "a.mp4", tmp_path / "b.mp4"]
+    for path in inputs:
+        path.write_text("stub", encoding="utf-8")
+
+    list_files: list[str] = []
+
+    def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        assert context == "concatenating rendered segments"
+        list_file = cmd[cmd.index("-i") + 1]
+        list_files.append(list_file)
+        assert Path(list_file).exists()
+
+    monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
+
+    text_edit.concat_segments(inputs, tmp_path / "one.mp4")
+    text_edit.concat_segments(inputs, tmp_path / "two.mp4")
+
+    assert len(list_files) == 2
+    assert list_files[0] != list_files[1]
+    assert not Path(list_files[0]).exists()
+    assert not Path(list_files[1]).exists()
 
 
 def test_text_edit_helper_error_paths(tmp_path: Path) -> None:
@@ -1052,6 +1135,9 @@ def test_build_trim_command_draft_uses_ultrafast(tmp_path: Path) -> None:
     finally:
         text_edit._VIDEO_PROBE_CACHE.pop(source, None)
 
+    assert "-af" in cmd
+    assert "afade=t=in" in cmd[cmd.index("-af") + 1]
+    assert "aresample=async=1:first_pts=0" in cmd[cmd.index("-af") + 1]
     assert "-preset" in cmd
     preset_idx = cmd.index("-preset")
     assert cmd[preset_idx + 1] == "ultrafast"

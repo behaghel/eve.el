@@ -17,6 +17,7 @@ from .common import add_json_flag
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
+AUDIO_EDGE_FADE_SECONDS = 0.01
 
 QUALITY_DRAFT = "draft"
 QUALITY_FINAL = "final"
@@ -51,6 +52,21 @@ def _make_scale_vf(scale: float) -> str | None:
     if scale >= 1.0:
         return None
     return f"scale=trunc(iw*{scale}/2)*2:trunc(ih*{scale}/2)*2"
+
+
+def audio_edge_fade_filter(duration: float) -> str | None:
+    """Return a tiny edge fade filter to suppress clicks at edit boundaries."""
+    if duration <= 0:
+        return None
+    fade = min(AUDIO_EDGE_FADE_SECONDS, duration / 4)
+    if fade <= 0:
+        return None
+    fade_start = max(0.0, duration - fade)
+    return (
+        f"afade=t=in:st=0:d={fade:.6f},"
+        f"afade=t=out:st={fade_start:.6f}:d={fade:.6f},"
+        "aresample=async=1:first_pts=0"
+    )
 
 
 def _file_identity(path: pathlib.Path) -> str:
@@ -632,6 +648,18 @@ def load_broll_spec(broll: dict[str, Any]) -> dict[str, Any]:
     return spec
 
 
+def _contain_video_filter(width: int, height: int, pix_fmt: str | None = None) -> str:
+    """Return an ffmpeg filter that fits video inside WIDTH×HEIGHT without crop."""
+    parts = [
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease",
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+        "setsar=1",
+    ]
+    if pix_fmt:
+        parts.append(f"format={pix_fmt}")
+    return ",".join(parts)
+
+
 def prepare_broll_media(
     broll: dict[str, Any],
     source_info: dict[str, Any] | None,
@@ -667,10 +695,7 @@ def prepare_broll_media(
     base_width = int(base_info.get("width") or target_width)
     base_height = int(base_info.get("height") or target_height)
     if base_width != target_width or base_height != target_height:
-        filters.append(
-            f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase"
-        )
-        filters.append(f"crop={target_width}:{target_height}")
+        filters.append(_contain_video_filter(target_width, target_height))
     base_fps = base_info.get("fps_str")
     if base_fps and base_fps != fps_str:
         filters.append(f"fps={fps_str}")
@@ -728,6 +753,8 @@ def build_subtitle_cues(
     previous_source_segment: dict[str, Any] | None = None
     for segment in manifest.get("segments", []):
         if segment_kind(segment) == "marker":
+            if not edit_deleted(segment) and canonical_broll_key(segment):
+                timeline += segment_duration(segment)
             continue
         if preserve_gap_threshold is not None and previous_source_segment is not None:
             gap = compute_gap(previous_source_segment, segment)
@@ -820,9 +847,12 @@ def build_trim_command(
     raw_pix_fmt = str(info.get("pix_fmt") or "yuv420p")
     out_pix_fmt = effective_pix_fmt(raw_pix_fmt, codec, quality)
     _svf = _make_scale_vf(scale)
+    duration = max(0.0, end - start)
     cmd = [FFMPEG, "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(source)]
     if _svf:
         cmd.extend(["-vf", _svf])
+    if audio_filter := audio_edge_fade_filter(duration):
+        cmd.extend(["-af", audio_filter])
     cmd.extend(encoding_args(quality, codec))
     cmd.extend(["-pix_fmt", out_pix_fmt, "-c:a", "aac", str(dest)])
     return cmd
@@ -916,8 +946,7 @@ def build_broll_command(
     if still:
         prepared_broll = working / f"broll_still_{uuid.uuid4().hex}.mp4"
         scale_filter = (
-            f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
-            f"crop={target_width}:{target_height},"
+            f"{_contain_video_filter(target_width, target_height)},"
             f"fps={fps_str},"
             f"format={pix_fmt}"
         )
@@ -995,6 +1024,8 @@ def build_broll_command(
         cmd.extend(
             ["-filter_complex", filter_complex, "-map", "[outv]", "-map", audio_ch]
         )
+        if audio_filter := audio_edge_fade_filter(duration):
+            cmd.extend(["-af", audio_filter])
         cmd.extend(_enc_args)
         cmd.extend(["-pix_fmt", pix_fmt, "-c:a", "aac", str(dest)])
         return cmd
@@ -1029,6 +1060,8 @@ def build_broll_command(
     cmd.extend(["-map", "1:v:0", "-map", audio_map])
     if _svf:
         cmd.extend(["-vf", _svf])
+    if audio_filter := audio_edge_fade_filter(duration):
+        cmd.extend(["-af", audio_filter])
     cmd.extend(_enc_args)
     cmd.extend(
         [
@@ -1454,6 +1487,9 @@ def render_segments(
                 ]
                 if _svf:
                     trim_cmd.extend(["-vf", _svf])
+                if audio_policy == "broll":
+                    if audio_filter := audio_edge_fade_filter(overlay_duration):
+                        trim_cmd.extend(["-af", audio_filter])
                 trim_cmd.extend(encoding_args(quality, codec))
                 trim_cmd.extend(["-pix_fmt", prepared_pix_fmt])
                 if audio_policy == "broll":
@@ -1559,29 +1595,38 @@ def render_segments(
 
 
 def concat_segments(segments: list[pathlib.Path], destination: pathlib.Path) -> None:
-    list_file = destination.parent / "concat_list.txt"
-    with list_file.open("w", encoding="utf-8") as file_handle:
-        for segment in segments:
-            file_handle.write(f"file '{segment}'\n")
+    list_file = destination.parent / f"{destination.stem}-{uuid.uuid4().hex}.concat.txt"
+    try:
+        with list_file.open("w", encoding="utf-8") as file_handle:
+            for segment in segments:
+                file_handle.write(f"file '{segment}'\n")
 
-    print(
-        f"[eve text-edit] Concatenating {len(segments)} rendered clips",
-        flush=True,
-    )
-    cmd = [
-        FFMPEG,
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(list_file),
-        "-c",
-        "copy",
-        str(destination),
-    ]
-    run_ffmpeg(cmd, context="concatenating rendered segments")
+        print(
+            f"[eve text-edit] Concatenating {len(segments)} rendered clips",
+            flush=True,
+        )
+        cmd = [
+            FFMPEG,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(list_file),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-af",
+            "aresample=async=1:first_pts=0",
+            str(destination),
+        ]
+        run_ffmpeg(cmd, context="concatenating rendered segments")
+    finally:
+        list_file.unlink(missing_ok=True)
 
 
 def write_manifest(manifest: dict[str, Any], path: pathlib.Path) -> None:
@@ -1617,6 +1662,8 @@ def collect_markers(
                 or str(segment.get("id") or "marker")
             )
             markers.append((title, timeline))
+            if canonical_broll_key(segment):
+                timeline += segment_duration(segment)
             continue
 
         duration = segment_duration(segment)
@@ -1869,7 +1916,12 @@ def _manifest_hash(manifest: dict[str, Any]) -> str:
 def _render_config_hash(quality: str, codec: str, scale: float) -> str:
     return hashlib.sha256(
         json.dumps(
-            {"quality": quality, "codec": codec, "scale": round(scale, 6)}
+            {
+                "quality": quality,
+                "codec": codec,
+                "scale": round(scale, 6),
+                "broll_fit": "contain-v1",
+            }
         ).encode()
     ).hexdigest()[:16]
 
