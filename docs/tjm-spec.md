@@ -314,6 +314,12 @@ It records explicit local editorial intent for this TJM file:
   auto-tagged as filler by phrase-based editor workflows;
 - absent: the word has no explicit local filler decision.
 
+When an editor user marks words as filler and confirms saving the phrase for
+future sessions, the editor MUST also scan all segments in the current file
+and tag matching occurrences. This scan MUST preserve explicit `"no-filler"`
+decisions and configured exception phrases. Declining to save the phrase MUST
+leave other occurrences unchanged.
+
 For compatibility, producers and consumers MAY also encounter legacy
 `word.edit.kind = "filler"` or top-level `word.kind = "filler"`. These legacy
 forms MUST be interpreted as an effective filler mark when `word.edit.filler` is

@@ -2139,6 +2139,12 @@
   (should (eq (lookup-key eve-playback-mode-map (kbd "S-<right>")) #'eve-seek-long-forward))
   (should (eq (lookup-key eve-playback-mode-map "q") #'eve-stop-playback)))
 
+(ert-deftest eve-context-panels-provider-has-icon ()
+  "Eve supplies the non-empty mode-line icon required by context-panels."
+  (let ((icon (plist-get (eve--context-panels-provider) :icon)))
+    (should (stringp icon))
+    (should-not (string-empty-p icon))))
+
 (ert-deftest eve-context-panels-registers-provider-when-available ()
   "Eve registers its context provider when context-panels is available."
   (skip-unless (featurep 'context-panels))
@@ -2242,17 +2248,23 @@
        (funcall jump source item))
      (should (equal "seg-1" (eve--segment-id-at-point))))))
 
-(ert-deftest eve-context-panels-provider-exposes-segment-bottom-view ()
-  "Eve's context provider exposes the segment editor bottom view."
+(ert-deftest eve-context-panels-provider-exposes-bottom-views ()
+  "Eve's context provider exposes segment editor and compilation bottom views."
   (skip-unless (featurep 'context-panels))
   (eve-test-with-buffer
    (let* ((provider (context-panels-registered-provider 'eve))
           (views (funcall (plist-get provider :collect-bottom-views) (current-buffer)))
-          (view (car views)))
-     (should (= 1 (length views)))
-     (should (eq (plist-get view :id) 'segment-editor))
-     (should (eq (plist-get view :mode) #'eve-segment-panel-mode))
-     (should (plist-get view :select)))))
+          (segment-view (seq-find (lambda (view)
+                                    (eq (plist-get view :id) 'segment-editor))
+                                  views))
+          (compile-view (seq-find (lambda (view)
+                                    (eq (plist-get view :id) 'compilation))
+                                  views)))
+     (should segment-view)
+     (should (eq (plist-get segment-view :mode) #'eve-segment-panel-mode))
+     (should (plist-get segment-view :select))
+     (should compile-view)
+     (should (functionp (plist-get compile-view :render))))))
 
 (ert-deftest eve-segment-panel-renders-gap-warning-for-adjacent-segments ()
   "Segment panel surfaces adjacent source gaps on the first line and CTA area."
@@ -2569,6 +2581,30 @@
          (should (equal (alist-get 'token (nth 3 (alist-get 'words segment)))
                         "delta,"))
          (should (equal (alist-get 'text segment) "alpha beta. gamma: delta,")))))))
+
+(ert-deftest eve-segment-panel-learn-filler-scans-source-only-when-confirmed ()
+  "Learning a phrase tags other segments but respects local exceptions."
+  (dolist (answer '(t nil))
+    (eve-test-with-buffer
+     (let* ((source (current-buffer))
+            (other (copy-tree (car (eve--segments)) t))
+            (words (alist-get 'words other))
+            (eve-filler-phrases nil)
+            (eve-filler-regex nil)
+            (eve-filler-exception-phrases nil))
+       (setf (alist-get 'id other) "seg-2")
+       (setf (alist-get 'token (nth 2 words)) "beta")
+       (eve--mark-word-non-filler (nth 2 words))
+       (setf (alist-get 'segments eve--data)
+             (append (eve--segments) (list other)))
+       (with-temp-buffer
+         (cl-letf (((symbol-function 'eve--segment-panel-source-buffer)
+                    (lambda () source))
+                   ((symbol-function 'y-or-n-p) (lambda (&rest _) answer))
+                   ((symbol-function 'customize-save-variable) #'ignore))
+           (eve--segment-panel-learn-filler-phrase "beta")))
+       (should (eq (not (null (eve--word-filler-p (nth 1 words)))) answer))
+       (should (eve--word-no-filler-p (nth 2 words)))))))
 
 (ert-deftest eve-segment-panel-mark-filler-keeps-bottom-panel-visible-after-save ()
   "Saving a learned filler phrase must not bury the bottom panel."
