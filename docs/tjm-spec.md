@@ -283,6 +283,18 @@ The display token for a word is:
 1. `word.display` when present and non-empty;
 2. otherwise `word.spoken`.
 
+A word object is an atomic timed editing token. Its `display` string MAY contain
+multiple written words or differ from `spoken` in spelling, punctuation, or
+meaning. Rewriting `display` MUST NOT change the token's identity, source timing,
+spoken content, or underlying media. For example, changing the display from
+`"$25"` to `"$2"` leaves the original spoken audio unchanged.
+
+Whitespace inside `display` MUST NOT create new timed tokens. All displayed
+words belonging to that token share its timing and act as one unit for media
+movement, deletion, and highlighting. Media-editing operations MUST act on the
+whole token, not on substrings of its display text. Display rewriting MUST NOT
+trigger automatic timing estimation or remapping.
+
 ### 8.5 Segment-level timing and words
 
 If a media segment supplies `words`, the segment's `start_tick` and `end_tick`
@@ -604,6 +616,15 @@ behavior stable across runs.
 
 For consumers that derive subtitles from TJM:
 
+- each non-deleted media segment with displayable text defines one caption;
+  consumers MUST NOT silently regroup words into separate caption units;
+- splitting or merging media segments changes the caption units accordingly;
+- captions MAY wrap across multiple lines, but all of a segment's caption text
+  appears together; consumers MUST NOT automatically split the segment or shrink
+  its configured font to fit long text; editors SHOULD warn about captions that
+  exceed the available display area;
+- captions appear only during their segment's rendered interval; preserved gaps
+  between segments MUST NOT extend the preceding caption;
 - subtitle time starts at `0` in rendered timeline space, not source-media time;
 - marker segments do not emit normal subtitle cues;
 - renderable marker segments still occupy subtitle time, so later cues MUST be
@@ -640,15 +661,19 @@ When present, `subtitles` has these members:
   defaulting to `1920` and `1080` when the object is absent;
 - `font`: REQUIRED object with non-empty string `family`, positive numeric `size`,
   and boolean `bold`;
+- `placement`: REQUIRED object with `anchor`, whose supported value is
+  `"bottom-center"`, and non-negative numeric `bottom_margin`;
 - `color`: REQUIRED base text color;
 - `outline`: REQUIRED object with `color` and non-negative numeric `width`;
 - `highlight_color`: REQUIRED active-word color when `style` is `"karaoke"`;
   OPTIONAL otherwise.
 
 Colors MUST use `"#RRGGBB"` notation, with hexadecimal RGB components. Font size
-and outline width are measured in pixels on the reference canvas. Renderers MUST
-scale both uniformly by the smaller of output-width/reference-width and
-output-height/reference-height; changing output resolution MUST NOT stretch
+and outline width, as well as the bottom margin from the output frame's bottom
+edge to the caption block's bottom edge, are measured in pixels on the reference
+canvas. Renderers MUST scale these dimensions uniformly by the smaller of
+output-width/reference-width and output-height/reference-height; changing
+output resolution MUST NOT stretch
 letter shapes or change the intended relative text size.
 
 Example configuration:
@@ -659,6 +684,7 @@ Example configuration:
   "style": "karaoke",
   "reference_canvas": { "width": 1920, "height": 1080 },
   "font": { "family": "Arial", "size": 48, "bold": true },
+  "placement": { "anchor": "bottom-center", "bottom_margin": 60 },
   "color": "#FFFFFF",
   "outline": { "color": "#000000", "width": 3 },
   "highlight_color": "#FFD700"
@@ -675,9 +701,13 @@ existing choices.
 
 The `"plain"` style uses the base text color throughout each cue. The
 `"karaoke"` style uses `highlight_color` only for the currently spoken word;
-that word MUST return to the base color when its spoken interval ends. No word
-is highlighted during gaps. The outline color remains independent of the
-active-word text color. Karaoke MUST NOT progressively recolor already spoken
+that token's entire display fragment MUST return to the base color when its
+spoken interval ends. If the display fragment contains several written words,
+they highlight together using the original token timing, not invented timings
+for the individual displayed words. No token is highlighted during gaps.
+During a pause within a segment, its caption remains visible in the base color.
+The outline color remains independent of the active-word text color.
+Karaoke MUST NOT progressively recolor already spoken
 words or assign unrelated colors to individual characters.
 
 Highlight intervals MUST derive from authoritative word ticks and source
@@ -688,14 +718,24 @@ Removed words MUST NOT emit highlights. Consumers MUST NOT substitute evenly
 spaced or estimated word timings for missing timing or unresolved alignment
 between display text and word objects.
 
+Token display strings provide the binding between caption text and source-word
+timing; consumers MUST NOT infer new bindings from the rewritten text. For
+karaoke, caption text MUST be derived from the surviving tokens' display strings
+using Section 8.4. When `display_text` is supplied, it MUST agree with that derived
+text; producers that maintain it MUST keep it synchronized after token edits.
+Plain captions MAY use arbitrary segment-level `display_text` without timed
+word highlighting.
+
 ### 14.3 Subtitle configuration validation
 
 Validators MUST reject invalid types, missing required subtitle members,
 unsupported `mode` or `style` values, invalid colors, non-positive reference
-canvas dimensions or font size, and negative outline width. Renderers MUST
-report an error rather than silently omit burning or requested word highlighting
-when they cannot honor the configuration. An editor MAY preserve a configuration
-it cannot render.
+canvas dimensions or font size, negative outline width or bottom margin, and
+unsupported placement anchors. Renderers MUST report an error rather than
+silently omit burning or requested word highlighting when they cannot honor the
+configuration. If the requested font family or bold face is unavailable,
+renderers MUST report a clear error rather than silently substitute a different
+font. An editor MAY preserve a configuration it cannot render.
 
 ## 15. Producer Requirements
 
@@ -805,7 +845,16 @@ At minimum, a v1.1 implementation SHOULD be tested against these cases:
 - subtitle size scaling from the default reference canvas;
 - karaoke boundaries after cuts, filler removal, gaps, and renderable markers;
 - karaoke gaps with no active-word highlight;
-- invalid subtitle configuration or unavailable word timing/alignment.
+- invalid subtitle configuration or unavailable word timing/alignment;
+- bottom-centered placement with reference-scaled bottom margins;
+- one caption per segment, including after segment splitting and merging;
+- multiline wrapping without automatic segmentation or font shrinking;
+- no caption during inter-segment gaps, and visible unhighlighted captions during
+  intra-segment pauses;
+- single-token display rewrites to multiple written words without media or
+  timing changes, with the whole display fragment highlighted together;
+- whole-token media movement and deletion after display rewriting;
+- an unavailable requested font reported without silent substitution.
 
 ## Appendix A. Valid Minimal Manifest
 
