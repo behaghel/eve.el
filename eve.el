@@ -46,11 +46,13 @@
 (defvar context-panels-side-panel-buffer)
 (defvar context-panels-bottom-panel-buffer)
 (defvar context-panels-source-buffer)
+(defvar eve-segment-panel-source-buffer)
 
 (declare-function context-panels-mode "context-panels" (&optional arg))
 (declare-function context-panels-open "context-panels" (&optional source-buffer))
 (declare-function context-panels-close "context-panels" ())
 (declare-function context-panels-open-bottom-view "context-panels" (view-id &optional source-buffer select))
+(declare-function context-panels-adopt-bottom-view-buffer "context-panels" (buffer view-id &optional source-buffer select))
 (declare-function context-panels-refresh "context-panels" ())
 (declare-function context-panels-refresh-bottom-view "context-panels" ())
 (declare-function context-panels-close-bottom-view "context-panels" ())
@@ -127,7 +129,7 @@ ASR failures because normal Eve transcript segments are expected to stay short."
   :group 'eve)
 
 (defcustom eve-transcribe-offer-reprocess-suspicious t
-  "Whether to offer retranscription of suspiciously long/gapped regions after transcription."
+  "Whether to offer suspicious-region retranscription after transcription."
   :type 'boolean
   :group 'eve)
 
@@ -213,7 +215,7 @@ present."
 (defcustom eve-filler-exception-phrases nil
   "Phrases that should not be auto-tagged as fillers.
 Each entry is a plain string.  Exceptions win over `eve-filler-phrases', so an
-exception such as 'would like' prevents tagging 'like' inside that phrase."
+exception such as \"would like\" prevents tagging \"like\" inside that phrase."
   :type '(repeat string)
   :group 'eve)
 
@@ -1081,7 +1083,7 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
     count))
 
 (defun eve--maybe-offer-reprocess-suspicious-transcripts (backend model)
-  "Offer retranscription for suspicious long/gapped regions using BACKEND and MODEL."
+  "Offer suspicious-region retranscription using BACKEND and MODEL."
   (when eve-transcribe-offer-reprocess-suspicious
     (let ((intervals (eve--suspicious-transcript-intervals)))
       (when (and intervals
@@ -1239,7 +1241,14 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
 	  (setq-local eve--pending-origin origin-buffer)
           (setq-local eve--pending-play-socket play-socket)
 	  (add-hook 'compilation-filter-hook #'eve--compilation-filter nil t)
-	  (add-hook 'compilation-finish-functions #'eve--compilation-finished nil t))))
+	  (add-hook 'compilation-finish-functions #'eve--compilation-finished nil t))
+        (when (and (eve--context-panels-available-p)
+                   (fboundp 'context-panels-adopt-bottom-view-buffer)
+                   (buffer-live-p origin-buffer))
+          (with-current-buffer origin-buffer
+            (eve--context-panels-setup)
+            (context-panels-adopt-bottom-view-buffer
+             buffer 'compilation origin-buffer nil)))))
     (when (window-live-p origin-window)
       (when (and (buffer-live-p origin-buffer)
 		 (not (eq (window-buffer origin-window) origin-buffer)))
@@ -2959,8 +2968,7 @@ will be replaced by the regenerated transcript."
          (base-id (eve--stringify (alist-get 'id original)))
          (ignored-ids (cons base-id removed-ids))
          (existing-ids (seq-remove (lambda (id) (member id ignored-ids))
-                                   (eve--segment-id-list)))
-         result)
+                                   (eve--segment-id-list))))
     (unless transcribed
       (user-error "Regenerated transcript contained no word timings"))
     (cl-loop for segment in transcribed
@@ -3252,12 +3260,15 @@ of leaving an empty visible-word state behind."
     (customize-save-variable symbol value)))
 
 (defun eve--segment-panel-learn-filler-phrase (phrase)
-  "Prompt to add PHRASE to `eve-filler-phrases'."
+  "Prompt to save PHRASE and tag its occurrences in the source buffer."
   (unless (member phrase eve-filler-phrases)
     (when (y-or-n-p (format "Add filler phrase '%s' for future sessions? " phrase))
       (setq eve-filler-phrases (append eve-filler-phrases (list phrase)))
       (eve--customize-save-variable-preserving-windows
-       'eve-filler-phrases eve-filler-phrases))))
+       'eve-filler-phrases eve-filler-phrases)
+      (with-current-buffer (eve--segment-panel-source-buffer)
+        (let ((eve-filler-phrases (list phrase)))
+          (eve--apply-filler-tags))))))
 
 (defun eve-segment-panel-mark-filler ()
   "Mark focused word/range as filler and optionally learn the phrase."
@@ -3859,11 +3870,17 @@ RENDERED-START is SEGMENT's start time in the rendered timeline."
               :height eve-segment-panel-height
               :mode #'eve-segment-panel-mode
               :render #'eve--segment-panel-render
-              :select t)))
+              :select t)
+        (list :id 'compilation
+              :label "Compilation"
+              :height 12
+              :render (lambda (_source _view)
+                        (insert "No Eve compilation yet.\n")))))
 
 (defun eve--context-panels-provider ()
   "Return the Eve provider descriptor for `context-panels'."
   (list :name 'eve
+        :icon "🎬"
         :collect-side-items #'eve--context-panel-side-items
         :render-side-item #'eve--context-panel-render-side-item
         :jump-side-item #'eve--context-panel-jump-side-item

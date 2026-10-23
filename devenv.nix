@@ -116,6 +116,7 @@
     '';
 
     lint.exec = ''
+      set -e
       parse
       checkdoc
       load-check
@@ -125,11 +126,13 @@
     '';
 
     test-all.exec = ''
+      set -e
       test-elisp
       test-py
     '';
 
     ci.exec = ''
+      set -e
       lint
       test-all
     '';
