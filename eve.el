@@ -46,6 +46,7 @@
 (defvar context-panels-side-panel-buffer)
 (defvar context-panels-bottom-panel-buffer)
 (defvar context-panels-source-buffer)
+(defvar eve-segment-panel-source-buffer)
 
 (declare-function context-panels-mode "context-panels" (&optional arg))
 (declare-function context-panels-open "context-panels" (&optional source-buffer))
@@ -128,7 +129,7 @@ ASR failures because normal Eve transcript segments are expected to stay short."
   :group 'eve)
 
 (defcustom eve-transcribe-offer-reprocess-suspicious t
-  "Whether to offer retranscription of suspiciously long/gapped regions after transcription."
+  "Whether to offer suspicious-region retranscription after transcription."
   :type 'boolean
   :group 'eve)
 
@@ -214,7 +215,7 @@ present."
 (defcustom eve-filler-exception-phrases nil
   "Phrases that should not be auto-tagged as fillers.
 Each entry is a plain string.  Exceptions win over `eve-filler-phrases', so an
-exception such as 'would like' prevents tagging 'like' inside that phrase."
+exception such as \"would like\" prevents tagging \"like\" inside that phrase."
   :type '(repeat string)
   :group 'eve)
 
@@ -1082,7 +1083,7 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
     count))
 
 (defun eve--maybe-offer-reprocess-suspicious-transcripts (backend model)
-  "Offer retranscription for suspicious long/gapped regions using BACKEND and MODEL."
+  "Offer suspicious-region retranscription using BACKEND and MODEL."
   (when eve-transcribe-offer-reprocess-suspicious
     (let ((intervals (eve--suspicious-transcript-intervals)))
       (when (and intervals
@@ -2967,8 +2968,7 @@ will be replaced by the regenerated transcript."
          (base-id (eve--stringify (alist-get 'id original)))
          (ignored-ids (cons base-id removed-ids))
          (existing-ids (seq-remove (lambda (id) (member id ignored-ids))
-                                   (eve--segment-id-list)))
-         result)
+                                   (eve--segment-id-list))))
     (unless transcribed
       (user-error "Regenerated transcript contained no word timings"))
     (cl-loop for segment in transcribed

@@ -7,6 +7,7 @@
 
 (require 'ert)
 (require 'cl-lib)
+(require 'info)
 
 (defvar context-panels-side-panel-buffer)
 (defvar context-panels-bottom-panel-buffer)
@@ -674,7 +675,8 @@
      (setf (alist-get 'segments eve--data) (list first second))
      (eve--set-segment-broll first broll)
      (eve--set-segment-broll second broll)
-     (setf (alist-get 'file (eve--segment-broll first)) "other.mp4")
+     (eve--set-segment-broll
+      first (eve--alist-set (eve--segment-broll first) 'file "other.mp4"))
      (setcdr (assoc 'title (alist-get 'placeholders (eve--segment-broll first)))
              "Changed")
      (should (equal (alist-get 'file (eve--segment-broll second)) "intro.mp4"))
@@ -2790,17 +2792,16 @@
 (ert-deftest eve-renders-suspicious-long-segment-indicators ()
   "Suspiciously long segments receive side-panel and face indicators."
   (eve-test-with-buffer
-   (let ((segment (car (eve--segments))))
-     (setq-local eve-validation-suspicious-segment-duration 1.0)
-     (eve--render)
-     (let ((items (eve--context-panel-side-items (current-buffer))))
-       (should (seq-find (lambda (item)
-                           (eq (plist-get item :kind) 'long-segment))
-                         items)))
-     (let ((range (eve-test--match-range "alpha beta gamma delta")))
-       (should range)
-       (should (eve-test--span-has-face-p (car range) (cdr range)
-                                          'eve-suspicious-segment-face))))))
+   (setq-local eve-validation-suspicious-segment-duration 1.0)
+   (eve--render)
+   (let ((items (eve--context-panel-side-items (current-buffer))))
+     (should (seq-find (lambda (item)
+                         (eq (plist-get item :kind) 'long-segment))
+                       items)))
+   (let ((range (eve-test--match-range "alpha beta gamma delta")))
+     (should range)
+     (should (eve-test--span-has-face-p (car range) (cdr range)
+                                      'eve-suspicious-segment-face)))))
 
 (ert-deftest eve-marker-folding-hides-section-until-next-marker ()
   "TAB on a marker folds content until the next marker."
