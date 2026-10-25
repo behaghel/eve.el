@@ -314,6 +314,81 @@ def test_digitally_silent_audio_cannot_be_forced_into_spoken_words(
         engine(path, ["imagined"])
 
 
+@pytest.mark.parametrize("samples", [160000, 160001, 560123])
+def test_ctc_windowed_inference_owns_every_native_frame_once(samples: int) -> None:
+    torch = pytest.importorskip("torch")
+    numpy = pytest.importorskip("numpy")
+    waveform = numpy.arange(samples, dtype="float32")
+    calls = []
+
+    def processor(values: Any, **kwargs: Any) -> dict[str, Any]:
+        first = int(values[0])
+        assert kwargs["sampling_rate"] == 16000
+        assert numpy.array_equal(values, waveform[first : first + len(values)])
+        calls.append((first, len(values)))
+        return {"input_values": torch.from_numpy(values).unsqueeze(0)}
+
+    class Model:
+        config = SimpleNamespace(conv_stride=[320], conv_kernel=[400])
+
+        def __call__(self, input_values: Any) -> Any:
+            first = int(input_values[0, 0])
+            assert first % 320 == 0
+            frames = (input_values.shape[1] - 400) // 320 + 1
+            # Each emitted value identifies its original global frame. This
+            # catches shifted, repeated, missing or interpolated ownership.
+            values = torch.arange(first // 320, first // 320 + frames)
+            return SimpleNamespace(logits=values.reshape(1, frames, 1))
+
+    metadata = {"stale": True}
+    result = alignment._ctc_emissions(
+        Model(), processor, waveform, 16000, metadata=metadata
+    )
+    expected_frames = (samples - 400) // 320 + 1
+    assert result.flatten().tolist() == list(range(expected_frames))
+    assert metadata["native_frame_count"] == expected_frames
+    assert metadata["window_count"] == len(calls)
+    assert metadata["frame_ownership"] == "exact_native_grid"
+    assert "stale" not in metadata
+    windows = metadata["windows"]
+    assert [
+        (w["input_start_sample"], w["input_end_sample"] - w["input_start_sample"])
+        for w in windows
+    ] == calls
+    assert all(length <= 160400 for _, length in calls)
+    assert windows[0]["kept_frame_start"] == 0
+    assert windows[-1]["kept_frame_end"] == expected_frames
+    assert all(
+        a["kept_frame_end"] == b["kept_frame_start"]
+        for a, b in zip(windows, windows[1:])
+    )
+    if samples <= 160000:
+        assert calls == [(0, samples)]
+        assert metadata["strategy"] == "single-window"
+    else:
+        assert len(calls) > 1 and metadata["strategy"] == "overlap-windowed"
+
+
+def test_ctc_window_frame_count_mismatch_is_rejected_not_resampled() -> None:
+    torch = pytest.importorskip("torch")
+    numpy = pytest.importorskip("numpy")
+
+    class Model:
+        config = SimpleNamespace(conv_stride=[320], conv_kernel=[400])
+
+        def __call__(self, input_values: Any) -> Any:
+            frames = (input_values.shape[1] - 400) // 320  # Deliberately one short.
+            return SimpleNamespace(logits=torch.zeros((1, frames, 2)))
+
+    def processor(values: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"input_values": torch.from_numpy(values).unsqueeze(0)}
+
+    with pytest.raises(alignment.AlignmentError, match="frame"):
+        alignment._ctc_emissions(
+            Model(), processor, numpy.zeros(192000, dtype="float32"), 16000
+        )
+
+
 @pytest.mark.parametrize("word_boundaries", [False, True])
 def test_ctc_adapter_preserves_emission_frame_ownership_without_model_downloads(
     tmp_path: Path,

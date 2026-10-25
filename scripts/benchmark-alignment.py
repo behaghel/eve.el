@@ -88,6 +88,9 @@ def main() -> int:
     aligner, model_name, revision = engines[args.engine]
     experiment = {}
     alignment_options: dict[str, Any] = {"offline": args.offline}
+    inference_metadata: dict[str, Any] = {}
+    if args.engine in ("ctc", "ctc-boundary"):
+        alignment_options["inference_metadata"] = inference_metadata
     if args.speaker_adaptation:
         alignment_options["speaker_adaptation"] = True
     if args.pronunciations is not None:
@@ -148,6 +151,8 @@ def main() -> int:
         elapsed = time.monotonic() - started
         report = alignment.evaluate(reference, predicted, frame_times=frame_times)
         report["timing_pass"] = report["pass"]
+        if inference_metadata:
+            report["inference"] = copy.deepcopy(inference_metadata)
         report.update(experiment)
         report.update(
             {

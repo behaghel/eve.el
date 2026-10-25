@@ -131,9 +131,23 @@ unscored failure report, not fabricated intervals or a made-up accuracy score.
 
 Use `--engine ctc` for the English Wav2Vec2 baseline. Public model revisions are
 pinned and downloaded to the local cache; audio inference stays local. With a
-populated cache, `--offline` forbids model downloads. These experiments are not
-enabled by `eve transcribe`. Qwen predictions are read before the SDK's interpolation
+populated cache, `--offline` forbids model downloads. Native CTC is also available
+through the explicit CLI opt-in described below; the other engines remain
+benchmark-only. Qwen predictions are read before the SDK's interpolation
 and monotonicity repair; invalid predictions fail instead of being repaired.
+
+CTC acoustic inference uses nominal 10-second windows with 2-second overlapping
+context on each side, following the [overlap/stride strategy](https://huggingface.co/blog/asr-chunking#chunking-with-stride).
+Clips up to 10 seconds retain the original single-window inference path. Longer
+inputs are sliced on the model's native convolution grid; receptive-field
+coverage and the real source tail are included without padding. Each global
+frame is retained exactly once, with no averaging, interpolation or time stretch.
+The complete unchanged transcript is then forced-aligned against those emissions.
+Unexpected window output lengths fail without repair. Per-source CLI audits and
+CTC benchmark reports record the policy, actual sample windows, retained frame
+ranges and native grid geometry. Windowing does not certify boundary accuracy or
+prove that a forced token was spoken; experimental status and quality gates are
+unchanged.
 
 `--engine ctc-boundary` is a separate experimental CTC refinement, leaving the
 character-span baseline unchanged. It uses acoustically aligned word-delimiter

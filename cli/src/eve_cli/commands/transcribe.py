@@ -471,9 +471,13 @@ def _align_transcription(
             ffmpeg_extract(media, audio)
             with wave.open(str(audio), "rb") as stream:
                 duration = Fraction(stream.getnframes(), stream.getframerate())
+            inference_metadata: dict[str, Any] = {}
             try:
                 predicted = alignment.align_ctc(
-                    audio, tokens, offline=os.environ.get("HF_HUB_OFFLINE") == "1"
+                    audio,
+                    tokens,
+                    offline=os.environ.get("HF_HUB_OFFLINE") == "1",
+                    inference_metadata=inference_metadata,
                 )
             except ImportError as error:
                 _raise_missing_backend_dependency(
@@ -575,6 +579,7 @@ def _align_transcription(
             source_record = {
                 "source": source,
                 "word_count": len(words),
+                "inference": inference_metadata,
                 "pause_diagnostic": alignment.pause_diagnostics(audio, predicted),
             }
             readings = [

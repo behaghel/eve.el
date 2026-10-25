@@ -815,6 +815,13 @@ overlapping, out-of-source, or source-tick-collapsed aligned intervals MUST fail
 publication, even when a quality override is requested. An unavailable model or
 an unsupported transcript MUST NOT be replaced by fabricated estimates.
 
+Overlapping CTC inference windows MUST preserve each output frame's native
+source-grid identity and cover that grid exactly once. Context emissions MAY be
+discarded only where another window owns the same source-grid frames. Missing,
+duplicated or shifted native frames MUST fail rather than be interpolated,
+resampled or retimed. Producer metadata MUST record the inference policy,
+source-sample windows, retained frame ranges and native grid geometry.
+
 English CTC alignment MAY verbalize unsigned integers and grouped thousands
 for acoustic matching only. Original `spoken`/display spelling and token identity
 MUST remain unchanged. A multiword reading MUST remain one original timed token;

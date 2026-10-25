@@ -31,6 +31,8 @@ QWEN_REVISION = "c7cbfc2048c462b0d63a45797104fc9db3ad62b7"
 MFA_MODEL = "MontrealCorpusTools/english_us_arpa"
 MFA_REVISION = "9c8d5d8e1dd5d9cf188a5571203de0e09ca6bede"
 MAX_NUMERIC_READING_PATHS = 32
+CTC_WINDOW_SECONDS = 10
+CTC_CONTEXT_SECONDS = 2
 
 
 class AlignmentError(ValueError):
@@ -796,22 +798,147 @@ def refine_quiet_edges(
     return refined
 
 
+def _ctc_emissions(
+    model: Any,
+    processor: Any,
+    waveform: Any,
+    rate: int,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> Any:
+    """Infer bounded context, retaining each original convolution-grid frame once."""
+    if metadata is not None:
+        metadata.clear()
+    if rate <= 0:
+        raise AlignmentError("Invalid acoustic sample rate")
+    torch = importlib.import_module("torch")
+    samples = len(waveform)
+    hop = math.prod(model.config.conv_stride)
+    windows: list[dict[str, int]] = []
+    if samples <= rate * CTC_WINDOW_SECONDS:
+        values = model(
+            **processor(waveform, sampling_rate=rate, return_tensors="pt")
+        ).logits
+        total_frames = values.shape[1]
+        strategy = "single-window"
+        windows.append(
+            {
+                "input_start_sample": 0,
+                "input_end_sample": samples,
+                "kept_frame_start": 0,
+                "kept_frame_end": total_frames,
+            }
+        )
+        receptive: int | None = None
+    else:
+        receptive, step = 1, 1
+        for kernel, stride in zip(model.config.conv_kernel, model.config.conv_stride):
+            receptive += (kernel - 1) * step
+            step *= stride
+        context = rate * CTC_CONTEXT_SECONDS // hop
+        window_frames = rate * CTC_WINDOW_SECONDS // hop
+        core_frames = window_frames - 2 * context
+        if core_frames <= 0:
+            raise AlignmentError("Unsupported native CTC window geometry")
+        total_frames = (samples - receptive) // hop + 1
+        pieces = []
+        core_start = 0
+        while core_start < total_frames:
+            core_end = min(
+                total_frames,
+                core_start
+                + (window_frames - context if core_start == 0 else core_frames),
+            )
+            left, right = (
+                max(0, core_start - context),
+                min(total_frames, core_end + context),
+            )
+            first_sample = left * hop
+            last_sample = (
+                samples if right == total_frames else (right - 1) * hop + receptive
+            )
+            chunk = waveform[first_sample:last_sample]
+            emitted = model(
+                **processor(chunk, sampling_rate=rate, return_tensors="pt")
+            ).logits
+            if emitted.shape[1] != right - left:
+                raise AlignmentError(
+                    "CTC window emitted an unexpected native frame count; "
+                    "no resampling applied"
+                )
+            pieces.append(emitted[:, core_start - left : core_end - left])
+            windows.append(
+                {
+                    "input_start_sample": first_sample,
+                    "input_end_sample": last_sample,
+                    "kept_frame_start": core_start,
+                    "kept_frame_end": core_end,
+                }
+            )
+            core_start = core_end
+        values = torch.cat(pieces, dim=1)
+        if values.shape[1] != total_frames:
+            raise AlignmentError("CTC windows lost or duplicated native frames")
+        strategy = "overlap-windowed"
+    if metadata is not None:
+        metadata.update(
+            strategy=strategy,
+            sample_rate=rate,
+            input_samples=samples,
+            native_frame_count=total_frames,
+            hop_samples=hop,
+            nominal_window_seconds=CTC_WINDOW_SECONDS,
+            context_seconds=CTC_CONTEXT_SECONDS,
+            window_count=len(windows),
+            frame_ownership="exact_native_grid",
+            windows=windows,
+        )
+        if receptive is not None:
+            metadata["receptive_field_samples"] = receptive
+    return values
+
+
 def align_ctc(
-    audio: Path, words: list[str], *, offline: bool = False
+    audio: Path,
+    words: list[str],
+    *,
+    offline: bool = False,
+    inference_metadata: dict[str, Any] | None = None,
 ) -> list[WordAlignment]:
-    """Return unchanged native character-span estimates, without edge repair."""
-    return _align_ctc(audio, words, offline=offline, word_boundaries=False)
+    """Return native character-span estimates from bounded acoustic context."""
+    return _align_ctc(
+        audio,
+        words,
+        offline=offline,
+        word_boundaries=False,
+        inference_metadata=inference_metadata,
+    )
 
 
 def align_ctc_boundary(
-    audio: Path, words: list[str], *, offline: bool = False
+    audio: Path,
+    words: list[str],
+    *,
+    offline: bool = False,
+    inference_metadata: dict[str, Any] | None = None,
 ) -> list[WordAlignment]:
     """Experimental delimiter evidence plus conservative signal-edge refinement."""
-    return _align_ctc(audio, words, offline=offline, word_boundaries=True)
+    return _align_ctc(
+        audio,
+        words,
+        offline=offline,
+        word_boundaries=True,
+        inference_metadata=inference_metadata,
+    )
 
 
 def _align_ctc(
-    audio: Path, words: list[str], *, offline: bool, word_boundaries: bool
+    audio: Path,
+    words: list[str],
+    *,
+    offline: bool,
+    word_boundaries: bool,
+    inference_metadata: dict[str, Any] | None = None,
 ) -> list[WordAlignment]:
     rate, raw = _read_alignment_audio(audio)
     reading_options = ctc_reading_options(words)
@@ -826,9 +953,14 @@ def _align_ctc(
     ).eval()
     vocabulary = processor.tokenizer.get_vocab()
     waveform = numpy.frombuffer(raw, dtype="<i2").astype("float32") / 32768
-    inputs = processor(waveform, sampling_rate=rate, return_tensors="pt")
     with torch.inference_mode():
-        emissions = model(**inputs).logits.log_softmax(dim=-1).to(torch.float32)
+        emissions = (
+            _ctc_emissions(
+                model, processor, waveform, rate, metadata=inference_metadata
+            )
+            .log_softmax(dim=-1)
+            .to(torch.float32)
+        )
         best: tuple[Any, list[int | None], tuple[str, ...]] | None = None
         best_score = -math.inf
         tied = False

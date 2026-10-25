@@ -98,18 +98,29 @@ def aligned_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, 
             clip.writeframes(b"\1\0" * 16000)
 
     monkeypatch.setattr(transcribe, "ffmpeg_extract", extract)
-    monkeypatch.setattr(
-        alignment,
-        "align_ctc",
-        lambda *a, **kw: [
+
+    def fake_alignment(
+        *args: object, **kwargs: object
+    ) -> list[alignment.WordAlignment]:
+        metadata = kwargs.get("inference_metadata")
+        if isinstance(metadata, dict):
+            metadata.update(
+                strategy="single-window",
+                sample_rate=16000,
+                native_frame_count=49,
+                window_count=1,
+                frame_ownership="exact_native_grid",
+            )
+        return [
             alignment.WordAlignment(
                 0, "Hello", Fraction("0.100021"), Fraction("0.400104")
             ),
             alignment.WordAlignment(
                 1, "world.", Fraction("0.500021"), Fraction("0.900104")
             ),
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(alignment, "align_ctc", fake_alignment)
     monkeypatch.setattr(
         alignment,
         "pause_diagnostics",
@@ -150,6 +161,13 @@ def test_ctc_normal_mode_publishes_native_ticks_despite_experimental_status(
     assert audit["engine"] == "ctc" and audit["forced"] is False
     assert audit["qualification"] == "experimental"
     assert audit["quality_concerns"] == []
+    assert audit["sources"][0]["inference"] == {
+        "strategy": "single-window",
+        "sample_rate": 16000,
+        "native_frame_count": 49,
+        "window_count": 1,
+        "frame_ownership": "exact_native_grid",
+    }
     decision = json.loads(report.read_text())
     assert decision["publication_permitted"] is True
     assert decision["alignment"] == audit
