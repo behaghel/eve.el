@@ -67,6 +67,8 @@ does not reproduce it in full.
 - *Emacs* 29.1 or later
 - *mpv* for live playback tracking
 - *eve CLI* for transcription and rendering (see below)
+- *FFmpeg with libass* and *fontconfig* (=fc-match=) for burned-in captions;
+  both tools are provided by this project's devenv environment
 - *hydra* (optional) for the =?= keybinding cheatsheet popup
 
 *** Installing the CLI
@@ -172,13 +174,16 @@ steps.
 
 ** Structure
 
-A TJM manifest is a JSON file with two top-level arrays:
+New transcriptions are TJM v1.1 JSON files.  Alongside the version and explicit
+render configuration, a manifest has two top-level arrays:
 
 - =sources= — a list of media files referenced by the edit.  Each entry has
-  an =id= used throughout the manifest and a =file= path.
+  an =id= used throughout the manifest, a =file= path relative to the manifest,
+  and a rational =timebase= for interpreting source-local ticks.
 
 - =segments= — the ordered timeline.  Each segment references a source, a
-  start and end time (in seconds or ticks), and the spoken text.  Optional
+  start and end ticks, and the spoken text.  Optional derived seconds are
+  convenience values, not timing authority.  Optional
   fields carry per-word timestamps, b-roll metadata, speaker identity, tags,
   and notes.
 
@@ -186,19 +191,25 @@ A minimal manifest:
 
 #+begin_src json
 {
-  "version": 1,
+  "version": "1.1",
   "sources": [
-    { "id": "clip01", "file": "raw/recording.mp4" }
+    { "id": "clip01", "file": "raw/recording.mp4",
+      "timebase": { "numerator": 1, "denominator": 48000 } }
   ],
   "segments": [
     {
-      "id": "clip01-s0001",
-      "source": "clip01",
-      "start": 12.34,
-      "end": 15.60,
-      "text": "This is what was said."
+      "id": "clip01-s0001", "source": "clip01",
+      "start_tick": 0, "end_tick": 48000, "start": 0, "end": 1,
+      "spoken_text": "Hello world.", "display_text": "Hello world.",
+      "words": [
+        { "spoken": "Hello", "start_tick": 0, "end_tick": 24000,
+          "start": 0, "end": 0.5 },
+        { "spoken": "world.", "start_tick": 24000, "end_tick": 48000,
+          "start": 0.5, "end": 1 }
+      ]
     }
-  ]
+  ],
+  "render": { "filler_policy": "keep", "preserve_short_gaps": 0 }
 }
 #+end_src
 
@@ -683,6 +694,52 @@ enough to catch mistakes before committing to a full export.
 =C-u C-c C-c= compiles at final quality (H.264 medium/CRF 18) for delivery.
 
 The quality used can be changed permanently with =eve-compile-quality=.
+
+** Burned-in captions
+
+Run =M-x eve-enable-subtitle-burning= in a v1.1 TJM buffer or its context panel,
+then save with =C-x C-s= or compile normally.  The command copies
+=eve-subtitle-defaults= into the manifest's optional =subtitles= object; the
+resulting video follows those saved settings, not the current Emacs session.
+Existing subtitle settings are left unchanged, including extension fields.
+Legacy v1 does not support burning: generate a new v1.1 transcription instead.
+Changing only the version field does not add the required clock/tick data.
+
+The defaults use word highlighting, bold 48-pixel white text, a 3-pixel black
+outline, and a gold active token.  Captions are bottom-centered with a 60-pixel
+margin, scaled from a 1920×1080 reference canvas.  One TJM segment is one caption;
+pauses leave the caption visible without highlighting, and captions disappear
+between segments.
+
+The requested font must be installed.  For example, to use DejaVu Sans for
+manifests that do not yet have subtitle settings:
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'eve
+  (setf (alist-get 'family (alist-get 'font eve-subtitle-defaults))
+        "DejaVu Sans"))
+#+end_src
+
+Customize the complete default profile with =M-x customize-variable RET
+eve-subtitle-defaults RET=.  Its values are JSON-compatible alists: =t= is true,
+=:json-false= is false, and =nil= is null.  To use plain captions instead of
+highlighting, set its =style= member to ="plain"=.
+
+Run =M-x eve-disable-subtitle-burning= to remove the manifest's subtitle object.
+Enabling/disabling is undoable with Eve's normal undo command.  Changing Emacs
+defaults never replaces settings already saved in a TJM file; to deliberately
+replace them, disable burning and then enable it again with the new defaults.
+These commands do not change media selections, token timings, or optional
+embedded subtitle tracks.  Burning re-encodes video; audio timing is preserved.
+
+Compilation output appears once in the bottom context view when context-panels
+supports buffer adoption, or in one standalone bottom window otherwise.
+Repeated renders keep one log view and preserve focus in the source buffer.
+Render validation failures appear in that log without automatically opening
+Python source or the CLI launcher.  Invalid token timings identify the
+segment, token, and interval that need repair; missing fonts must be installed
+or replaced in the manifest settings.  Eve does not invent timing or silently
+substitute fonts to make a render succeed.
 
 ** Under the hood
 

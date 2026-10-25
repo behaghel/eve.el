@@ -35,6 +35,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'ansi-color)
+(require 'compile)
 (require 'hydra nil t)
 (require 'image)
 (require 'outline)
@@ -241,6 +242,23 @@ Context panels require the optional `context-panels' package."
 \\='final\\=' (medium/crf18) produces delivery-quality output.
 Use \\[universal-argument] \\[eve-compile] to compile at the opposite quality."
   :type '(choice (const "draft") (const "final"))
+  :group 'eve)
+
+(defcustom eve-subtitle-defaults
+  '((mode . "burn")
+    (style . "karaoke")
+    (reference_canvas . ((width . 1920) (height . 1080)))
+    (font . ((family . "Arial") (size . 48) (bold . t)))
+    (placement . ((anchor . "bottom-center") (bottom_margin . 60)))
+    (color . "#FFFFFF")
+    (outline . ((color . "#000000") (width . 3)))
+    (highlight_color . "#FFD700"))
+  "TJM subtitle configuration copied when enabling burning in a manifest.
+Existing manifest settings are never overwritten.  Values are JSON-compatible
+alists; use :json-false for JSON false, and nil for JSON null.
+The requested font must be installed.  Customize this before enabling burning
+with `eve-enable-subtitle-burning'."
+  :type '(alist :key-type symbol :value-type sexp)
   :group 'eve)
 
 (defcustom eve-compile-jobs 0
@@ -807,12 +825,23 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	     (name (file-name-nondirectory (directory-file-name dir))))
 	(expand-file-name (concat name ".tjm.json") dir)))))
 
+(defun eve--encode-manifest (data)
+  "Encode DATA as JSON, retaining empty v1.1 tag lists as arrays.
+The editor keeps tags as lists; never mutate its live data for serialization."
+  (let ((output (copy-tree data t)))
+    (when (equal (alist-get 'version output) "1.1")
+      (dolist (segment (alist-get 'segments output))
+        (let ((tags (assq 'tags (alist-get 'edit segment))))
+          (when (and tags (null (cdr tags)))
+            (setcdr tags [])))))
+    (json-encode output)))
+
 (defun eve--write-json-file (data path)
   "Write DATA as JSON to PATH."
   (let ((json-encoding-pretty-print t)
 	(json-encoding-lisp-style-closings t))
     (with-temp-file path
-      (insert (json-encode data))
+      (insert (eve--encode-manifest data))
       (unless (bolp) (insert "\n")))))
 
 (defun eve--section-segments (marker)
@@ -1222,29 +1251,44 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
   (setq-local eve--compile-start-time (float-time))
   (force-mode-line-update)
   (let* ((origin-buffer (current-buffer))
+         (compilation-auto-jump-to-first-error nil)
+         (compilation-scroll-output nil)
+         (managed-display (and (eve--context-panels-available-p)
+                               (fboundp 'context-panels-adopt-bottom-view-buffer)))
          (play-socket eve--pending-play-socket)
 	 (origin-window (selected-window))
 	 (display-buffer-overriding-action
-	  '((display-buffer-reuse-mode-window display-buffer-in-side-window)
-	    (side . bottom)
-	    (slot . 0)
-	    (window-height . 12)
-	    (inhibit-same-window . t)
-	    (select . nil)
-	    (window-parameters . ((no-other-window . t)))))
+          (if managed-display
+              '((display-buffer-no-window) (allow-no-window . t))
+            '((display-buffer-reuse-mode-window display-buffer-in-side-window)
+              (side . bottom)
+              (slot . 0)
+              (window-height . 12)
+              (inhibit-same-window . t)
+              (select . nil)
+              (window-parameters . ((no-other-window . t))))))
 	 (compilation-buffer-name-function (lambda (_mode) "*eve text-edit*")))
     (let ((buffer (compilation-start command nil)))
       (when buffer
 	(with-current-buffer buffer
+          ;; Media-render failures belong in the log, not in visited Python
+          ;; source files.  Do not inherit global compiler-navigation policies.
+          (setq-local compilation-auto-jump-to-first-error nil)
+          (setq-local compilation-scroll-output nil)
+          (when (bound-and-true-p next-error-follow-minor-mode)
+            (next-error-follow-minor-mode -1))
 	  (setq-local eve--pending-output (and output (expand-file-name output)))
 	  (setq-local eve--pending-temp temp)
 	  (setq-local eve--pending-origin origin-buffer)
           (setq-local eve--pending-play-socket play-socket)
 	  (add-hook 'compilation-filter-hook #'eve--compilation-filter nil t)
 	  (add-hook 'compilation-finish-functions #'eve--compilation-finished nil t))
-        (when (and (eve--context-panels-available-p)
-                   (fboundp 'context-panels-adopt-bottom-view-buffer)
-                   (buffer-live-p origin-buffer))
+        (when (and managed-display (buffer-live-p origin-buffer))
+          ;; Remove stale displays from earlier renders before the single owner
+          ;; adopts the live buffer.  Leave other frames' layouts untouched.
+          (dolist (window (get-buffer-window-list buffer nil (selected-frame)))
+            (when (window-parent window)
+              (delete-window window)))
           (with-current-buffer origin-buffer
             (eve--context-panels-setup)
             (context-panels-adopt-bottom-view-buffer
@@ -1338,6 +1382,36 @@ Return t to proceed, nil to abort."
             (when (and (zerop changed) (> total 0))
               (message "[eve] All %d segments cached — render will be instant." total)))))))
   t)
+
+(defun eve-enable-subtitle-burning ()
+  "Enable burned-in subtitles using `eve-subtitle-defaults'.
+Copy defaults into the current TJM only when it has no subtitle configuration.
+Existing settings are preserved.  Requires TJM v1.1; this never upgrades v1.
+Save the manifest to persist the change; `eve-compile' saves modified manifests
+before rendering.  Also works from an Eve context panel."
+  (interactive)
+  (with-current-buffer (eve--context-panels-command-source-buffer)
+    (unless (equal "1.1" (alist-get 'version eve--data))
+      (user-error "Subtitle burning requires TJM v1.1; re-transcribe this legacy file"))
+    (if (assq 'subtitles eve--data)
+        (message "Kept existing TJM subtitle configuration")
+      (eve--record-state)
+      (setq eve--data
+            (eve--alist-set eve--data 'subtitles (copy-tree eve-subtitle-defaults t)))
+      (eve--mark-dirty)
+      (message "Enabled subtitle burning; save or compile to persist"))))
+
+(defun eve-disable-subtitle-burning ()
+  "Remove the current TJM subtitle configuration, disabling burning.
+Save the manifest to persist the change.  This does not change spoken tokens,
+media timings, or optional embedded subtitle-track generation."
+  (interactive)
+  (with-current-buffer (eve--context-panels-command-source-buffer)
+    (when (assq 'subtitles eve--data)
+      (eve--record-state)
+      (setq eve--data (assq-delete-all 'subtitles eve--data))
+      (eve--mark-dirty))
+    (message "Subtitle burning disabled")))
 
 (defun eve-compile (&optional toggle-quality)
   "Compile the current TJM (or section) using `eve text-edit'.
@@ -1702,11 +1776,41 @@ summary in the echo area."
              "u undo  C-r redo  f filler  F del-fillers  A non-filler  ]f/[f nav  "
              "SPC play  C-c C-c compile  ? (install hydra for full cheatsheet)"))))
 
+(defun eve--json-editor-value (value)
+  "Convert JSON VALUE to the legacy editor's alist/list representation."
+  (cond
+   ((hash-table-p value)
+    (let (result)
+      (maphash (lambda (key item)
+                 (push (cons (intern key) (eve--json-editor-value item)) result))
+               value)
+      (nreverse result)))
+   ((vectorp value) (mapcar #'eve--json-editor-value value))
+   ((eq value :json-false) nil)
+   (t value)))
+
+(defun eve--parse-editor-data (text)
+  "Decode manifest TEXT while preserving subtitle JSON exactly.
+Other members retain the editor's existing alist/list and boolean conventions.
+Opaque subtrees keep hash tables, vectors and :json-false, so empty objects,
+empty arrays, false and null are not conflated when saving or undoing."
+  (let ((raw (json-parse-string text :object-type 'hash-table :array-type 'array
+                                :null-object nil :false-object :json-false))
+        result)
+    (unless (hash-table-p raw)
+      (user-error "TJM manifest must be a JSON object"))
+    (maphash (lambda (key value)
+               (push (cons (intern key)
+                           (if (equal key "subtitles")
+                               value
+                             (eve--json-editor-value value)))
+                     result))
+             raw)
+    (nreverse result)))
+
 (defun eve--snapshot ()
   "Create a deep copy of `eve--data'."
-  (json-parse-string (json-encode eve--data)
-		     :object-type 'alist :array-type 'list
-		     :null-object nil :false-object nil))
+  (eve--parse-editor-data (json-encode eve--data)))
 
 (defun eve--record-state ()
   "Push current state onto the undo stack prior to mutation."
@@ -4084,8 +4188,7 @@ already open.  This command requires the optional `context-panels' package."
     (setq eve--data
 	  (if (string-empty-p json-source)
 	      '((version . 1) (sources . nil) (segments . nil))
-	    (json-parse-string json-source :object-type 'alist :array-type 'list
-			       :null-object nil :false-object nil)))))
+	    (eve--parse-editor-data json-source)))))
 
 (defun eve--segments ()
   (or (alist-get 'segments eve--data)
@@ -6623,7 +6726,7 @@ If SILENT is non-nil, only produce messages when failures occur."
 (defun eve--serialize-to-file (file)
   (let ((json-encoding-pretty-print t)
 	(json-encoding-lisp-style-closings t))
-    (let ((payload (json-encode eve--data)))
+    (let ((payload (eve--encode-manifest eve--data)))
       (when (and file (file-exists-p file))
 	(let ((backup (concat file "~")))
 	  (condition-case _err

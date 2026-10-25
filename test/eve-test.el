@@ -8,6 +8,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'info)
+(require 'compile)
 
 (defvar context-panels-side-panel-buffer)
 (defvar context-panels-bottom-panel-buffer)
@@ -63,6 +64,25 @@
        (setq-local eve--data (copy-tree eve-test--sample-data t))
        (eve--render)
        ,@body)))
+
+(defmacro eve-test-with-v11-buffer (&rest body)
+  "Execute BODY with a canonical v1.1 version of the timed sample fixture."
+  (declare (indent 0))
+  `(eve-test-with-buffer
+    (setf (alist-get 'version eve--data) "1.1"
+          (alist-get 'render eve--data) '((filler_policy . "keep") (preserve_short_gaps . 0)))
+    (dolist (source (eve--sources))
+      (setf (alist-get 'timebase source) '((numerator . 1) (denominator . 1000))))
+    (dolist (segment (eve--segments))
+      (setf (alist-get 'start_tick segment) (round (* 1000 (alist-get 'start segment)))
+            (alist-get 'end_tick segment) (round (* 1000 (alist-get 'end segment)))
+            (alist-get 'spoken_text segment) (alist-get 'text segment)
+            (alist-get 'display_text segment) (alist-get 'text segment))
+      (dolist (word (alist-get 'words segment))
+        (setf (alist-get 'spoken word) (alist-get 'token word)
+              (alist-get 'start_tick word) (round (* 1000 (alist-get 'start word)))
+              (alist-get 'end_tick word) (round (* 1000 (alist-get 'end word))))))
+    ,@body))
 
 (defun eve-test--segment-tokens (segment)
   "Return the token list for SEGMENT."
@@ -894,6 +914,91 @@
         (should (equal (cadr err)
                        "Cannot find eve CLI executable: missing-eve"))))))
 
+(ert-deftest eve-subtitle-burning-rejects-legacy-without-changing-it ()
+  "Enabling cannot silently upgrade v1 or add unsupported render settings."
+  (eve-test-with-buffer
+   (let ((before (json-encode eve--data)))
+     (should-error (eve-enable-subtitle-burning) :type 'user-error)
+     (should (equal before (json-encode eve--data)))
+     (should-not eve--dirty)
+     (should-not eve--undo-stack))))
+
+(ert-deftest eve-subtitle-burning-defaults-save-with-manifest ()
+  "Enabling burn-in persists a complete configuration through normal saving."
+  (eve-test-with-v11-buffer
+   (let ((file (make-temp-file "eve-subtitles-" nil ".tjm.json"))
+         (eve-validation-on-save nil)
+         (before (copy-tree eve--data t)))
+     (unwind-protect
+         (progn
+           (setq-local buffer-file-name file)
+           (set-visited-file-modtime)
+           (eve-enable-subtitle-burning)
+           (should eve--dirty)
+           (should (buffer-modified-p))
+           (should (equal (alist-get 'segments before) (eve--segments)))
+           (save-buffer)
+           (with-temp-buffer
+             (insert-file-contents file)
+             (let* ((saved (json-parse-buffer))
+                    (config (gethash "subtitles" saved)))
+               (should (equal "burn" (gethash "mode" config)))
+               (should (equal "karaoke" (gethash "style" config)))
+               (should (= 48 (gethash "size" (gethash "font" config))))
+               (should (= 1920 (gethash "width" (gethash "reference_canvas" config))))
+               (should (= 60 (gethash "bottom_margin" (gethash "placement" config)))))))
+       (delete-file file)
+       (when (file-exists-p (concat file "~"))
+         (delete-file (concat file "~")))))))
+
+(ert-deftest eve-subtitle-burning-copies-customized-defaults ()
+  "Manifest choices are copied from customization, never shared or overwritten."
+  (eve-test-with-v11-buffer
+   (let ((eve-subtitle-defaults
+          '((mode . "burn") (style . "plain")
+            (font . ((family . "DejaVu Sans") (size . 64) (bold . :json-false))))))
+     (eve-enable-subtitle-burning)
+     (let ((config (alist-get 'subtitles eve--data)))
+       (should (equal config eve-subtitle-defaults))
+       (should-not (eq config eve-subtitle-defaults))
+       (setf (alist-get 'size (alist-get 'font config)) 72)
+       (should (= 64 (alist-get 'size (alist-get 'font eve-subtitle-defaults))))))))
+
+(ert-deftest eve-subtitle-burning-keeps-existing-json-and-supports-undo ()
+  "Existing booleans, extension objects and arrays survive toggling and undo."
+  (with-temp-buffer
+    (insert "{\"version\":\"1.1\",\"sources\":[],\"segments\":[],\"subtitles\":{"
+            "\"mode\":\"burn\",\"style\":\"plain\",\"font\":{\"bold\":false},"
+            "\"extension\":{\"empty\":[],\"object\":{},\"switch\":false,\"nothing\":null}}}")
+    (eve-mode)
+    (let ((before (json-encode (alist-get 'subtitles eve--data))))
+      (eve-enable-subtitle-burning)
+      (should-not eve--dirty)
+      (should-not eve--undo-stack)
+      (should (equal before (json-encode (alist-get 'subtitles eve--data))))
+      (eve-disable-subtitle-burning)
+      (should-not (assq 'subtitles eve--data))
+      (should eve--dirty)
+      (eve-undo)
+      (let* ((config (alist-get 'subtitles eve--data))
+             (extension (gethash "extension" config)))
+        (should (eq :json-false (gethash "bold" (gethash "font" config))))
+        (should (eq :json-false (gethash "switch" extension)))
+        (should (equal [] (gethash "empty" extension)))
+        (should (hash-table-p (gethash "object" extension)))
+        (should-not (gethash "nothing" extension 'missing)))
+      (eve-redo)
+      (should-not (assq 'subtitles eve--data)))))
+
+(ert-deftest eve-subtitle-burning-can-be-enabled-from-panel ()
+  "Commands issued in a context panel configure its source manifest."
+  (eve-test-with-v11-buffer
+   (let ((source (current-buffer)))
+     (with-temp-buffer
+       (setq-local context-panels-source-buffer source)
+       (eve-enable-subtitle-burning))
+     (should (assq 'subtitles eve--data)))))
+
 (ert-deftest eve-compile-saves-modified-buffer-before-rendering ()
   "Compilation saves modified Eve buffers before validating and rendering."
   (eve-test-with-buffer
@@ -1043,6 +1148,26 @@
                    t)))
         (eve--pre-flight-validate "draft")
         (should prompted)))))
+
+(ert-deftest eve-v11-empty-tags-stay-arrays-in-save-and-render-manifests ()
+  "Newly transcribed empty tag arrays must remain valid after editor saving."
+  (eve-test-with-v11-buffer
+   (let ((file (make-temp-file "eve-v11-tags-" nil ".tjm.json")))
+     (unwind-protect
+         (progn
+           (eve--set-segment-tags (car (eve--segments)) nil)
+           (dolist (writer '(render save))
+             (if (eq writer 'render)
+                 (eve--write-json-file eve--data file)
+               (eve--serialize-to-file file))
+             (with-temp-buffer
+               (insert-file-contents file)
+               (let* ((data (json-parse-buffer))
+                      (segment (aref (gethash "segments" data) 0)))
+                 (should (equal [] (gethash "tags" (gethash "edit" segment)))))))
+           (should-not (eve--segment-tags (car (eve--segments)))))
+       (delete-file file)
+       (when (file-exists-p (concat file "~")) (delete-file (concat file "~")))))))
 
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
@@ -1891,6 +2016,116 @@
                 (lambda (_f) (list nil nil nil nil nil fixed-time))))
         (eve-play-rendered)
         (should (eq 'rendered eve--playback-mode))))))
+
+(ert-deftest eve-compilation-has-one-context-panel-window ()
+  "Fresh, repeated and previously duplicated renders use one managed window."
+  (skip-unless (and (featurep 'context-panels)
+                    (fboundp 'context-panels-adopt-bottom-view-buffer)))
+  (eve-test-with-buffer
+   (let ((source (current-buffer)))
+     (save-window-excursion
+       (delete-other-windows)
+       (switch-to-buffer source)
+       (unwind-protect
+           (progn
+             ;; Reproduce the two legacy slots before asking Eve to recover.
+             (let ((buffer (get-buffer-create "*eve text-edit*")))
+               (display-buffer-in-side-window buffer '((side . bottom) (slot . 0)))
+               (display-buffer-in-side-window buffer '((side . bottom) (slot . 1))))
+             (dotimes (_ 3)
+               (eve--run-compile "printf 'expected failure\\n'; exit 1" "/tmp/unused-eve-render.mp4")
+               (let* ((buffer (get-buffer "*eve text-edit*"))
+                      (process (get-buffer-process buffer))
+                      (deadline (+ (float-time) 5)))
+                 (while (and (process-live-p process) (< (float-time) deadline))
+                   (accept-process-output process 0.05))
+                 (should-not (process-live-p process))
+                 (let ((windows (get-buffer-window-list buffer nil (selected-frame))))
+                   (should (= 1 (length windows)))
+                   (should (eq 'bottom (window-parameter (car windows) 'window-side)))
+                   (should (= 1 (window-parameter (car windows) 'window-slot)))))
+               (should (eq source (window-buffer (selected-window))))))
+         (when-let* ((buffer (get-buffer "*eve text-edit*"))) (kill-buffer buffer)))))))
+
+(ert-deftest eve-compilation-standalone-display-remains-available ()
+  "Without buffer adoption, compilation uses its normal single bottom window."
+  (eve-test-with-buffer
+   (let ((source (current-buffer)))
+     (save-window-excursion
+       (delete-other-windows)
+       (switch-to-buffer source)
+       (unwind-protect
+           (cl-letf (((symbol-function 'eve--context-panels-available-p) (lambda () nil)))
+             (eve--run-compile "printf 'expected failure\\n'; exit 1" "/tmp/unused-eve-render.mp4")
+             (let* ((buffer (get-buffer "*eve text-edit*"))
+                    (process (get-buffer-process buffer))
+                    (deadline (+ (float-time) 5)))
+               (while (and (process-live-p process) (< (float-time) deadline))
+                 (accept-process-output process 0.05))
+               (should-not (process-live-p process))
+               (let ((windows (get-buffer-window-list buffer nil (selected-frame))))
+                 (should (= 1 (length windows)))
+                 (should (= 0 (window-parameter (car windows) 'window-slot)))))
+             (should (eq source (window-buffer (selected-window)))))
+         (when-let* ((buffer (get-buffer "*eve text-edit*"))) (kill-buffer buffer)))))))
+
+(ert-deftest eve-render-traceback-does-not-open-python-launcher ()
+  "Even a genuine traceback stays in the log instead of visiting its source."
+  (eve-test-with-buffer
+   (let* ((source (current-buffer))
+          (window (selected-window))
+          (launcher (make-temp-file "eve-launcher-" nil ".py"))
+          (compilation-auto-jump-to-first-error t)
+          (compilation-scroll-output 'first-error)
+          (trace (format "Traceback (most recent call last):\n  File \"%s\", line 1, in <module>\nValueError: test failure\n" launcher))
+          compilation-buffer)
+     (unwind-protect
+         (progn
+           (eve--run-compile
+            (concat "printf %s " (shell-quote-argument trace) "; exit 1")
+            "/tmp/unused-eve-render.mp4")
+           (setq compilation-buffer (get-buffer "*eve text-edit*"))
+           (let ((process (get-buffer-process compilation-buffer))
+                 (deadline (+ (float-time) 5)))
+             (while (and (process-live-p process) (< (float-time) deadline))
+               (accept-process-output process 0.05))
+             (should-not (process-live-p process))
+             (accept-process-output process 0.05))
+           (should-not (get-file-buffer launcher))
+           (should (= 1 (length (get-buffer-window-list
+                                 compilation-buffer nil (selected-frame)))))
+           (should (eq source (window-buffer window))))
+       (when (buffer-live-p compilation-buffer) (kill-buffer compilation-buffer))
+       (when-let* ((buffer (get-file-buffer launcher))) (kill-buffer buffer))
+       (delete-file launcher)))))
+
+(ert-deftest eve-run-compile-never-auto-visits-error-files ()
+  "Eve keeps global compilation preferences but disables error-file following."
+  (eve-test-with-buffer
+   (let ((compilation-auto-jump-to-first-error t)
+         (compilation-scroll-output 'first-error)
+         (buffer (generate-new-buffer " *eve compile navigation test*"))
+         (auto-jump-at-start 'unset)
+         (scroll-at-start 'unset))
+     (unwind-protect
+         (cl-letf (((symbol-function 'compilation-start)
+                    (lambda (&rest _args)
+                      (setq auto-jump-at-start compilation-auto-jump-to-first-error
+                            scroll-at-start compilation-scroll-output)
+                      (with-current-buffer buffer
+                        (compilation-mode)
+                        (next-error-follow-minor-mode 1))
+                      buffer)))
+           (eve--run-compile "fake-command" "/tmp/out.mp4")
+           (should-not auto-jump-at-start)
+           (should-not scroll-at-start)
+           (with-current-buffer buffer
+             (should-not compilation-auto-jump-to-first-error)
+             (should-not compilation-scroll-output)
+             (should-not next-error-follow-minor-mode))
+           (should compilation-auto-jump-to-first-error)
+           (should (eq compilation-scroll-output 'first-error)))
+       (when (buffer-live-p buffer) (kill-buffer buffer))))))
 
 (ert-deftest eve-run-compile-propagates-pending-play-socket ()
   "Compilation buffers inherit pending playback sockets from source buffers."
