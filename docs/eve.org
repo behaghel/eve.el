@@ -266,8 +266,62 @@ New manifests explicitly keep fillers and set =render.preserve_short_gaps= to
 they are authoritative for v1.1 rendering.
 
 Missing, reversed, zero-duration, or sub-tick-collapsed word intervals block
-publication. Existing output is left untouched on validation failure;
-word durations are never invented to make validation pass.
+publication of a successful transcription.  Eve does not add a tick or stretch
+neighbouring words to make validation pass.  Existing output is left untouched
+on validation failure.  Default transcription preserves ASR estimates without
+certifying acoustic accuracy.  The CLI's opt-in =--word-aligner ctc= path uses
+unchanged native CTC estimates after English faster-whisper recognition; no human
+timing annotations are needed.  Unsigned English integers, including grouped
+thousands and sentence punctuation, use alignment-only verbalization.  =11,=
+remains the same token and spelling while CTC matches =ELEVEN=.  Multiword
+readings remain atomic.  Four-digit numbers compare cardinal and year readings
+against the same acoustic emissions, rather than assuming a year pronunciation.
+Selected readings and the pinned normalizer's version are saved in the alignment
+audit.  Ambiguous score ties or more than 32 reading paths fail without guessing.
+Decimals, signed/currency/percentage forms, leading zeros, numeric compounds and
+ordinals remain unsupported.
+
+Experimental backend status does not require force.  A recognizer/CTC boundary
+disagreement greater than 160 ms is recorded in =alignment.diagnostics= without
+blocking publication: disagreement alone does not establish that CTC is wrong.
+Unavailable recognizer timing for comparison remains a blocking quality concern.
+=--force= may accept recorded quality concerns, never invalid native intervals,
+changed tokens, source-bound violations or model errors.  Informational
+diagnostics alone never set the recorded =forced= flag, even with =--force=.
+Selected media envelopes are retained rather than shrunk to character spans.
+If expanded caption envelopes intersect, they are partitioned jointly between
+adjacent word intervals, retaining exactly the same source coverage without
+repeating footage.  Non-overlapping captions and intended gaps stay unchanged.
+Word estimates, grouping and order do not change; genuinely overlapping word
+timings still fail instead of being repaired.
+
+Alignment writes a decision report beside the output (or at
+=--alignment-report PATH=).  Successful manifests store the same =alignment=
+audit record, including model/revision, concerns and any actual override.
+=eve text-edit ... --report render.json= carries that record into its render
+report.  Subtitle settings still live in TJM.
+
+In Emacs, set =eve-transcribe-word-aligner= to ="ctc"= to opt into this path
+for =M-x eve-transcribe= and =M-x eve-dired-transcribe=.  The default =nil=
+keeps backend word timings.  The CTC path requires English =faster-whisper=
+and the CLI's declared =alignment= dependencies.  Its progress shows the word
+alignment stage, and success opens the manifest as usual.
+
+A normal run never passes =--force=.  Use =C-u M-x eve-transcribe= or
+=C-u M-x eve-dired-transcribe= to request a quality override for that run;
+this requires the CTC opt-in and still cannot override invalid timing.
+A failure shows =*eve transcribe*= and is never retried automatically.
+The alignment audit, including false booleans and empty arrays, survives
+editor saving and undo.  Empty segment tag lists also remain arrays in saved
+and render manifests.  CTC completion skips legacy suspicious-region ASR
+repair offers; the word-aligner setting does not change manual region
+retranscription commands.
+
+The pause diagnostic is provisional and non-blocking: Silero-VAD gaps of at
+least 250 ms, with 80 ms excluded at each edge.  Representative validation is
+still needed before it becomes a blocking gate.  Runtime completion does not
+certify the separate release target of 95% of reference boundaries within 80 ms
+(40 ms stretch), nor the operational target of 95% normal completion.
 
 ** Backends
 
@@ -295,6 +349,7 @@ Good starting points:
 |----------+---------+-------------|
 | =eve-transcribe-backend= | ="faster-whisper"= | Backend name passed to =eve transcribe=. |
 | =eve-transcribe-model= | ="medium.en"= | Model identifier. |
+| =eve-transcribe-word-aligner= | =nil= | Set to ="ctc"= for opt-in native word alignment on full-source transcription. |
 | =eve-transcribe-verbatim= | =t= | Pass =--verbatim= to the backend. |
 | =eve-transcribe-hotwords= | =nil= | Optional hotwords override; nil uses CLI defaults. |
 | =eve-transcribe-tag-fillers= | =t= | Tag filler words during transcription. |

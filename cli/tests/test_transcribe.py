@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import wave
 from argparse import Namespace
 from contextlib import redirect_stderr
+from copy import deepcopy
+from fractions import Fraction
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from eve_cli import tjm_v11
+from eve_cli import alignment, tjm_v11
 from eve_cli.commands import transcribe
 from eve_cli.main import build_parser, main
 
@@ -66,6 +69,495 @@ def make_run_args(media: Path, output: Path, **overrides: object) -> Namespace:
 def mock_source_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub clocks for empty ASR fixtures; real probing has media-level tests."""
     monkeypatch.setattr(transcribe, "probe_audio_sample_rate", lambda _path: 48000)
+
+
+@pytest.fixture
+def aligned_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    media, output = tmp_path / "clip.mp4", tmp_path / "result.tjm.json"
+    media.write_bytes(b"source-must-not-change")
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: [
+            {
+                "id": "clip01-s0001",
+                "source": "clip01",
+                "start": 0.1,
+                "end": 0.9,
+                "words": [
+                    {"token": "Hello", "start": 0.1, "end": 0.4},
+                    {"token": "world.", "start": 0.5, "end": 0.9},
+                ],
+            }
+        ],
+    )
+
+    def extract(_source: Path, target: Path) -> None:
+        with wave.open(str(target), "wb") as clip:
+            clip.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            clip.writeframes(b"\1\0" * 16000)
+
+    monkeypatch.setattr(transcribe, "ffmpeg_extract", extract)
+    monkeypatch.setattr(
+        alignment,
+        "align_ctc",
+        lambda *a, **kw: [
+            alignment.WordAlignment(
+                0, "Hello", Fraction("0.100021"), Fraction("0.400104")
+            ),
+            alignment.WordAlignment(
+                1, "world.", Fraction("0.500021"), Fraction("0.900104")
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        alignment,
+        "pause_diagnostics",
+        lambda *a, **kw: {"status": "provisional", "blocking": False, "overlaps": []},
+        raising=False,
+    )
+    return media, output
+
+
+def test_ctc_normal_mode_publishes_native_ticks_despite_experimental_status(
+    aligned_job: tuple[Path, Path],
+) -> None:
+    media, output = aligned_job
+    report = output.with_name("decision.json")
+    assert (
+        main(
+            [
+                "transcribe",
+                str(media),
+                "--output",
+                str(output),
+                "--word-aligner",
+                "ctc",
+                "--alignment-report",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    data = json.loads(output.read_text())
+    tjm_v11.validate_manifest(data)
+    words = [w for segment in data["segments"] for w in segment["words"]]
+    assert [(w["spoken"], w["start_tick"], w["end_tick"]) for w in words] == [
+        ("Hello", 4801, 19205),
+        ("world.", 24001, 43205),
+    ]
+    audit = data["alignment"]
+    assert audit["engine"] == "ctc" and audit["forced"] is False
+    assert audit["qualification"] == "experimental"
+    assert audit["quality_concerns"] == []
+    decision = json.loads(report.read_text())
+    assert decision["publication_permitted"] is True
+    assert decision["alignment"] == audit
+    assert media.read_bytes() == b"source-must-not-change"
+
+
+def test_numeric_alignment_publishes_original_tokens_and_reading_provenance(
+    aligned_job: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media, output = aligned_job
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: [
+            {
+                "id": "a",
+                "source": "clip01",
+                "start": 0.1,
+                "end": 0.9,
+                "words": [
+                    {"token": "11,", "start": 0.1, "end": 0.4},
+                    {"token": "2027.", "start": 0.5, "end": 0.9},
+                ],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        alignment,
+        "align_ctc",
+        lambda *a, **kw: [
+            alignment.WordAlignment(
+                0, "11,", Fraction("0.1"), Fraction("0.4"), alignment_text="ELEVEN"
+            ),
+            alignment.WordAlignment(
+                1,
+                "2027.",
+                Fraction("0.5"),
+                Fraction("0.9"),
+                alignment_text="TWENTY TWENTY SEVEN",
+            ),
+        ],
+    )
+    assert (
+        main(
+            ["transcribe", str(media), "--output", str(output), "--word-aligner", "ctc"]
+        )
+        == 0
+    )
+    data = json.loads(output.read_text())
+    assert [w["spoken"] for s in data["segments"] for w in s["words"]] == [
+        "11,",
+        "2027.",
+    ]
+    normalization = data["alignment"]["sources"][0]["normalization"]
+    assert (
+        normalization["library"] == "num2words" and normalization["version"] == "0.5.14"
+    )
+    assert normalization["readings"] == [
+        {"word_index": 0, "text": "11,", "alignment_text": "ELEVEN"},
+        {"word_index": 1, "text": "2027.", "alignment_text": "TWENTY TWENTY SEVEN"},
+    ]
+    assert data["alignment"]["forced"] is False
+
+
+def test_word_alignment_does_not_shrink_existing_selected_media(
+    aligned_job: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media, output = aligned_job
+    monkeypatch.setattr(
+        alignment,
+        "align_ctc",
+        lambda *a, **kw: [
+            alignment.WordAlignment(0, "Hello", Fraction("0.2"), Fraction("0.3")),
+            alignment.WordAlignment(1, "world.", Fraction("0.6"), Fraction("0.8")),
+        ],
+    )
+    assert (
+        main(
+            ["transcribe", str(media), "--output", str(output), "--word-aligner", "ctc"]
+        )
+        == 0
+    )
+    segment = json.loads(output.read_text())["segments"][0]
+    assert (segment["start_tick"], segment["end_tick"]) == (4800, 43200)
+    assert segment["words"][0]["start_tick"] == 9600
+
+
+@pytest.mark.parametrize(
+    "delta,force",
+    [("0.16", False), ("0.161", False), ("0.161", True)],
+)
+def test_ctc_disagreement_is_nonblocking_and_never_changes_estimates(
+    aligned_job: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    delta: str,
+    force: bool,
+) -> None:
+    media, output = aligned_job
+    output.write_bytes(b"previous manifest")
+    report = output.with_name("decision.json")
+    start = Fraction("0.1") + Fraction(delta)
+    monkeypatch.setattr(
+        alignment,
+        "align_ctc",
+        lambda *a, **kw: [
+            alignment.WordAlignment(0, "Hello", start, Fraction("0.4")),
+            alignment.WordAlignment(1, "world.", Fraction("0.5"), Fraction("0.9")),
+        ],
+    )
+    result = main(
+        [
+            "transcribe",
+            str(media),
+            "--output",
+            str(output),
+            "--word-aligner",
+            "ctc",
+            "--alignment-report",
+            str(report),
+        ]
+        + (["--force"] if force else [])
+    )
+    assert result == 0
+    decision = json.loads(report.read_text())
+    assert decision["publication_permitted"] is True
+    audit = decision["alignment"]
+    assert audit["forced"] is False  # Even --force is not an override without concerns.
+    assert audit["quality_concerns"] == []
+    assert bool(audit["diagnostics"]) is (delta == "0.161")
+    if delta == "0.161":
+        assert audit["diagnostics"][0]["code"] == "boundary_disagreement"
+        assert audit["diagnostics"][0]["boundary"] == "start"
+        assert audit["diagnostics"][0]["blocking"] is False
+    data = json.loads(output.read_text())
+    assert data["alignment"] == audit
+    assert data["segments"][0]["words"][0]["start_tick"] == round(start * 48000)
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_unavailable_recognizer_timing_still_requires_audited_quality_override(
+    aligned_job: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    force: bool,
+) -> None:
+    media, output = aligned_job
+    output.write_bytes(b"previous manifest")
+    report = output.with_name("decision.json")
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: [
+            {
+                "id": "a",
+                "source": "clip01",
+                "start": 0.1,
+                "end": 0.9,
+                "words": [
+                    {"token": "Hello", "start": None, "end": None},
+                    {"token": "world.", "start": 0.5, "end": 0.9},
+                ],
+            }
+        ],
+    )
+    assert main(
+        [
+            "transcribe",
+            str(media),
+            "--output",
+            str(output),
+            "--word-aligner",
+            "ctc",
+            "--alignment-report",
+            str(report),
+        ]
+        + (["--force"] if force else [])
+    ) == (0 if force else 1)
+    decision = json.loads(report.read_text())
+    audit = decision["alignment"]
+    assert decision["publication_permitted"] is force
+    assert audit["forced"] is force
+    assert audit["quality_concerns"][0]["code"] == "recognizer_timing_unavailable"
+    if force:
+        data = json.loads(output.read_text())
+        assert data["alignment"] == audit
+        assert data["segments"][0]["words"][0]["start_tick"] == 4801
+    else:
+        assert output.read_bytes() == b"previous manifest"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "zero",
+        "reversed",
+        "negative",
+        "outside",
+        "overlap",
+        "missing",
+        "nonfinite",
+        "subtick",
+        "count",
+        "identity",
+    ],
+)
+def test_force_never_bypasses_aligned_timing_integrity(
+    aligned_job: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    bad: str,
+) -> None:
+    media, output = aligned_job
+    output.write_bytes(b"previous manifest")
+    pairs = {
+        "zero": (0.1, 0.1),
+        "reversed": (0.2, 0.1),
+        "negative": (-0.1, 0.2),
+        "outside": (0.1, 1.1),
+        "overlap": (0.1, 0.6),
+        "missing": (None, 0.4),
+        "nonfinite": (float("nan"), 0.4),
+        "subtick": (0.1, 0.100001),
+    }
+    start, end = pairs.get(bad, (0.1, 0.4))
+    predicted = [
+        SimpleNamespace(
+            index=0, text="Oops" if bad == "identity" else "Hello", start=start, end=end
+        ),
+        SimpleNamespace(index=1, text="world.", start=0.5, end=0.9),
+    ]
+    if bad == "count":
+        predicted.pop()
+    monkeypatch.setattr(alignment, "align_ctc", lambda *a, **kw: predicted)
+    assert (
+        main(
+            [
+                "transcribe",
+                str(media),
+                "--output",
+                str(output),
+                "--word-aligner",
+                "ctc",
+                "--force",
+            ]
+        )
+        == 1
+    )
+    assert output.read_bytes() == b"previous manifest"
+    assert media.read_bytes() == b"source-must-not-change"
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_joint_caption_boundaries_publish_without_duplicate_media(
+    aligned_job: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    force: bool,
+) -> None:
+    media, output = aligned_job
+    output.write_bytes(b"previous manifest")
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: [
+            {
+                "id": "a",
+                "source": "clip01",
+                "start": 0.1,
+                "end": 0.5,
+                "words": [{"token": "Hello", "start": 0.1, "end": 0.5}],
+            },
+            {
+                "id": "b",
+                "source": "clip01",
+                "start": 0.5,
+                "end": 0.9,
+                "words": [{"token": "world.", "start": 0.5, "end": 0.9}],
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        alignment,
+        "align_ctc",
+        lambda *a, **kw: [
+            alignment.WordAlignment(0, "Hello", Fraction("0.1"), Fraction("0.51")),
+            alignment.WordAlignment(1, "world.", Fraction("0.51"), Fraction("0.9")),
+        ],
+    )
+    assert (
+        main(
+            [
+                "transcribe",
+                str(media),
+                "--output",
+                str(output),
+                "--word-aligner",
+                "ctc",
+                "--max-segment-words",
+                "0",
+            ]
+            + (["--force"] if force else [])
+        )
+        == 0
+    )
+    data = json.loads(output.read_text())
+    tjm_v11.validate_manifest(data)
+    first, second = data["segments"]
+    assert [(s["id"], s["start_tick"], s["end_tick"]) for s in data["segments"]] == [
+        ("a", 4800, 24480),
+        ("b", 24480, 43200),
+    ]
+    assert first["words"][0]["end_tick"] == second["words"][0]["start_tick"] == 24480
+    assert data["alignment"]["forced"] is False
+    assert media.read_bytes() == b"source-must-not-change"
+
+
+@pytest.mark.parametrize(
+    "envelopes,words",
+    [
+        ([("0.1", "0.55"), ("0.45", "0.9")], [("0.1", "0.5"), ("0.6", "0.8")]),
+        (
+            [("0", "0.5"), ("0.3", "0.8"), ("0.6", "1")],
+            [("0.1", "0.2"), ("0.4", "0.5"), ("0.7", "0.8")],
+        ),
+        (
+            [("0.1", "0.3"), ("0.4", "0.7"), ("0.2", "0.95")],
+            [("0.12", "0.2"), ("0.5", "0.6"), ("0.8", "0.9")],
+        ),
+        (
+            [("0", "0.2"), ("0.4", "0.7"), ("0.6", "0.9")],
+            [("0.05", "0.15"), ("0.45", "0.55"), ("0.75", "0.85")],
+        ),
+        ([("0.1", "0.5"), ("0.5", "0.9")], [("0.2", "0.3"), ("0.6", "0.8")]),
+    ],
+)
+def test_caption_partition_preserves_coverage_words_and_grouping(
+    envelopes: list[tuple[str, str]],
+    words: list[tuple[str, str]],
+) -> None:
+    segments = [
+        {
+            "id": str(i),
+            "start": Fraction(left),
+            "end": Fraction(right),
+            "words": [
+                {
+                    "token": str(i),
+                    "start": Fraction(words[i][0]),
+                    "end": Fraction(words[i][1]),
+                }
+            ],
+            "notes": "keep me",
+        }
+        for i, (left, right) in enumerate(envelopes)
+    ]
+    before = deepcopy(segments)
+    transcribe._partition_caption_envelopes(segments)
+    for old, new in zip(before, segments):
+        assert {k: v for k, v in old.items() if k not in ("start", "end")} == {
+            k: v for k, v in new.items() if k not in ("start", "end")
+        }
+        assert new["start"] <= new["words"][0]["start"]
+        assert new["end"] >= new["words"][-1]["end"]
+    assert all(a["end"] <= b["start"] for a, b in zip(segments, segments[1:]))
+    # Every original source sample is retained exactly once, including nested
+    # overlaps whose outer envelope reaches beyond its neighbors.
+    for tick in range(1000):
+        expected = any(
+            round(s["start"] * 1000) <= tick < round(s["end"] * 1000) for s in before
+        )
+        count = sum(
+            round(s["start"] * 1000) <= tick < round(s["end"] * 1000) for s in segments
+        )
+        assert count == int(expected)
+    for point in [Fraction(i, 30) for i in range(30)] + [
+        Fraction("0.375"),
+        Fraction("0.6001"),
+    ]:
+        assert sum(s["start"] <= point < s["end"] for s in segments) == int(
+            any(s["start"] <= point < s["end"] for s in before)
+        )
+    # Captions that only touch are already valid and must not be moved.
+    if envelopes == [("0.1", "0.5"), ("0.5", "0.9")]:
+        assert segments == before
+
+
+def test_force_and_report_cannot_bypass_configuration_or_overwrite_inputs(
+    aligned_job: tuple[Path, Path],
+) -> None:
+    media, output = aligned_job
+    assert main(["transcribe", str(media), "--output", str(output), "--force"]) == 1
+    assert (
+        main(
+            [
+                "transcribe",
+                str(media),
+                "--output",
+                str(output),
+                "--word-aligner",
+                "ctc",
+                "--alignment-report",
+                str(media),
+                "--force",
+            ]
+        )
+        == 1
+    )
+    assert not output.exists()
+    assert media.read_bytes() == b"source-must-not-change"
 
 
 @pytest.mark.parametrize("rate", [44100, 48000])

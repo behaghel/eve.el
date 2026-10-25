@@ -805,6 +805,77 @@ to satisfy validation; any alignment repair requires evidence from the source
 audio. Output MUST satisfy the manifest validation rules before being reported
 as successfully produced.
 
+### 15.1 Automatic alignment and quality overrides
+
+Automatic word-alignment output MUST use acoustic estimates from the source,
+without a required human timing or review step. It MUST preserve recognized
+token identity and order. Caption segmentation MAY follow alignment; it MUST
+NOT redistribute word intervals. Missing, non-finite, negative, zero, reversed,
+overlapping, out-of-source, or source-tick-collapsed aligned intervals MUST fail
+publication, even when a quality override is requested. An unavailable model or
+an unsupported transcript MUST NOT be replaced by fabricated estimates.
+
+English CTC alignment MAY verbalize unsigned integers and grouped thousands
+for acoustic matching only. Original `spoken`/display spelling and token identity
+MUST remain unchanged. A multiword reading MUST remain one original timed token;
+its interval MUST come from the first and last native acoustic spans, never
+from proportional allocation or interpolation. Four-digit numbers MAY have
+both cardinal and year readings, including supported English conjunction
+variants. The reading MUST be selected by native CTC path score over the same
+acoustic emissions, not by assuming every four-digit number is a year. These
+scores rank readings; they are not calibrated proof that a word was spoken.
+Selected readings, normalizer library/version and search limits MUST be recorded
+in producer metadata. Unsupported numeric forms, unresolved score ties and
+pronunciation searches exceeding the supported bound MUST fail without guessing.
+
+Generated caption envelopes MAY retain valid recognizer-selected media and
+expand to include their aligned words. Overlapping envelopes MUST be partitioned
+jointly without changing the union of retained source intervals, duplicating
+coverage, or changing word timing, identity, grouping or order. A shared caption
+boundary MUST lie between the preceding caption's last word end and the next
+caption's first word start. The midpoint is a presentation partition, not an
+estimated word boundary. Non-overlapping envelopes and intended gaps MUST remain
+unchanged. Shared boundaries MUST be serialized consistently on the source clock.
+Overlapping word intervals remain invalid and MUST NOT be repaired by this step.
+
+Runtime quality checks are distinct from reference-based accuracy qualification.
+The release accuracy target is at least 95% of word boundaries within 80 ms of
+reviewed reference boundaries; 40 ms is a separately reported stretch target.
+Ordinary runtime success MUST NOT claim to certify that accuracy. An experimental
+backend's qualification status alone MUST NOT require a quality override.
+
+When recognition and alignment boundary estimates differ by more than 160 ms,
+the producer MUST record a non-blocking `boundary_disagreement` observation in
+`alignment.diagnostics`. Disagreement alone MUST NOT block publication or require
+force: it does not establish that the acoustic aligner's estimate is wrong.
+Missing or invalid recognizer timing used only for comparison remains a quality
+concern, not permission to fabricate alignment timing. Quality concerns MUST
+block normal publication; an explicit per-run force option MAY override them
+only after all structural checks pass. Failed checks MUST leave any previous
+output manifest unchanged. A quality override MUST NOT change the estimates.
+The `forced` flag records an actual quality override, not merely that a force
+option was supplied; informational diagnostics alone MUST NOT set it.
+
+Clear pauses MUST remain unhighlighted. A provisional pause diagnostic uses
+pauses of at least 250 ms, excluding an 80 ms uncertainty margin at each edge.
+Unvalidated pause-detector observations MUST be identified as provisional, not
+presented as established quality failures or as evidence of accuracy. Runtime
+pause checks require validation on representative recordings before their
+observations are used as blocking quality concerns. Ordinary completion and
+quality-rejection rates SHOULD be measured separately from boundary accuracy;
+at least 95% normal completion on representative recordings is the operational
+target, not justification to weaken checks.
+
+An automatic alignment producer MUST record its engine, model identifier,
+revision, qualification status, non-blocking diagnostics, quality concerns and
+whether a quality override was actually used in a top-level `alignment` object. This producer metadata is
+an extension under Section 4; it does not change authoritative word ticks or
+render settings. An alignment decision report MUST preserve the same record
+and state whether publication is permitted. A requested render report MUST
+preserve that record too. Consumers MUST NOT interpret recorded override
+metadata as permission to bypass validation. Absence of an alignment record
+MUST NOT be interpreted as acoustic certification.
+
 ## 16. Consumer Requirements
 
 A conforming TJM v1.1 consumer:
@@ -820,6 +891,14 @@ A conforming TJM v1.1 consumer:
   carry renderable `segment.edit.broll` with usable duration data;
 - SHOULD preserve unknown members for forward compatibility when operating as an
   editor or round-tripper.
+
+Editing frontends MUST preserve the JSON types inside `alignment` metadata
+through loading, saving and undo, including false booleans, empty arrays, empty
+objects and null. An explicit new alignment operation MAY replace this record.
+Full-source transcription frontends MUST request quality overrides only on an
+explicit per-run action, never through an automatic forced retry. Completing a
+CTC-aligned transcription MUST NOT trigger a legacy ASR timing-repair offer that
+could replace the aligned estimates under the original audit record.
 
 ## 17. Validation and Error Handling
 

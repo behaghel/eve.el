@@ -9,14 +9,16 @@ import subprocess
 import sys
 import tempfile
 import time
+import wave
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from fractions import Fraction
+from importlib.metadata import version as package_version
 from typing import Any, Never
 
-from .. import tjm_v11
+from .. import alignment, tjm_v11
 from ..utils.fillers import DEFAULT_FILLERS
 from .common import add_json_flag, write_json_atomic
 from .tag_fillers import tag_manifest_fillers
@@ -397,6 +399,221 @@ def _v11_segments(
             entry["edit"] = edit
         canonical.append(entry)
     return canonical
+
+
+def _partition_caption_envelopes(segments: list[dict[str, Any]]) -> None:
+    """Partition intersecting source envelopes without touching any word data.
+
+    Components are formed in source-time order, not with a greedy neighbor fix:
+    a later, wide envelope can bridge two previously disjoint ranges. Only
+    overlapping components change; touching captions and real gaps stay intact.
+    """
+    components: list[tuple[Fraction, Fraction, list[int]]] = []
+    for left, right, index in sorted(
+        (segment["start"], segment["end"], index)
+        for index, segment in enumerate(segments)
+    ):
+        if components and left < components[-1][1]:
+            start, end, members = components[-1]
+            members.append(index)
+            components[-1] = (start, max(end, right), members)
+        else:
+            components.append((left, right, [index]))
+    for left, right, members in components:
+        if len(members) == 1:
+            continue
+        members.sort()
+        if members != list(range(members[0], members[-1] + 1)):
+            raise tjm_v11.ValidationError(
+                "Caption envelopes are not in source word order"
+            )
+        boundaries = [left]
+        for previous, following in zip(members, members[1:]):
+            word_end = segments[previous]["words"][-1]["end"]
+            word_start = segments[following]["words"][0]["start"]
+            if word_end > word_start:
+                raise tjm_v11.ValidationError(
+                    "Overlapping words cannot be fixed by caption partitioning"
+                )
+            # This is a presentation boundary, never a new phonetic estimate.
+            boundaries.append((word_end + word_start) / 2)
+        boundaries.append(right)
+        for index, start, end in zip(members, boundaries, boundaries[1:]):
+            segments[index].update(start=start, end=end)
+
+
+def _align_transcription(
+    args: Namespace,
+    inputs: list[pathlib.Path],
+    segments: list[dict[str, Any]],
+    sample_rates: dict[str, int],
+) -> dict[str, Any]:
+    """Use unchanged native CTC estimates; diagnostics never adjust boundaries."""
+    concerns: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
+    sources: list[dict[str, Any]] = []
+    if any(segment["source"] not in sample_rates for segment in segments):
+        raise tjm_v11.ValidationError("Alignment received an unknown source")
+    with tempfile.TemporaryDirectory() as directory:
+        for number, media in enumerate(inputs, 1):
+            source = f"clip{number:02d}"
+            selected = [segment for segment in segments if segment["source"] == source]
+            words = [word for segment in selected for word in segment.get("words", [])]
+            tokens = [word.get("token") for word in words]
+            if not tokens or any(
+                not isinstance(token, str) or not token.strip() for token in tokens
+            ):
+                raise tjm_v11.ValidationError(
+                    f"{source}: no recognized tokens to align"
+                )
+            audio = pathlib.Path(directory) / f"{source}.wav"
+            _emit_progress(args, "align", source=source, engine="ctc")
+            ffmpeg_extract(media, audio)
+            with wave.open(str(audio), "rb") as stream:
+                duration = Fraction(stream.getnframes(), stream.getframerate())
+            try:
+                predicted = alignment.align_ctc(
+                    audio, tokens, offline=os.environ.get("HF_HUB_OFFLINE") == "1"
+                )
+            except ImportError as error:
+                _raise_missing_backend_dependency(
+                    "ctc alignment",
+                    extra="alignment",
+                    modules=("torch", "torchaudio", "transformers", "num2words"),
+                    exc=error,
+                )
+            except (alignment.AlignmentError, RuntimeError, OSError) as error:
+                raise tjm_v11.ValidationError(
+                    f"{source}: acoustic alignment failed: {error}"
+                ) from error
+            if len(predicted) != len(words):
+                raise tjm_v11.ValidationError(
+                    f"{source}: alignment changed token count"
+                )
+            # Keep the recognizer's selected media envelopes: highlighting must
+            # not truncate audio just because CTC stops before a spoken tail.
+            envelopes: list[tuple[Fraction, Fraction] | None] = []
+            for segment in selected:
+                try:
+                    left, right = (
+                        Fraction(str(segment.get("start"))),
+                        Fraction(str(segment.get("end"))),
+                    )
+                    first = Fraction(str(segment["words"][0].get("start")))
+                    last = Fraction(str(segment["words"][-1].get("end")))
+                    valid = 0 <= left <= first < last <= right <= duration
+                    envelopes.append((left, right) if valid else None)
+                except (ValueError, ZeroDivisionError):
+                    envelopes.append(None)
+            previous_end = Fraction(0)
+            for index, (word, prediction) in enumerate(zip(words, predicted)):
+                label = f"{source}, token {index} {word['token']!r}"
+                if prediction.index != index or prediction.text != word["token"]:
+                    raise tjm_v11.ValidationError(
+                        f"{label}: alignment changed token identity or order"
+                    )
+                try:
+                    start, end = (
+                        Fraction(str(prediction.start)),
+                        Fraction(str(prediction.end)),
+                    )
+                except (ValueError, ZeroDivisionError) as error:
+                    raise tjm_v11.ValidationError(
+                        f"{label}: invalid aligned timing"
+                    ) from error
+                _transcription_interval(
+                    {"start": start, "end": end}, sample_rates[source], label
+                )
+                if start < previous_end or end > duration:
+                    raise tjm_v11.ValidationError(
+                        f"{label}: overlapping or out-of-source aligned timing"
+                    )
+                previous_end = end
+                try:
+                    asr_start, asr_end = (
+                        Fraction(str(word.get("start"))),
+                        Fraction(str(word.get("end"))),
+                    )
+                    if asr_start < 0 or asr_end <= asr_start or asr_end > duration:
+                        raise ValueError("invalid recognizer interval")
+                except (ValueError, ZeroDivisionError):
+                    concerns.append(
+                        {
+                            "code": "recognizer_timing_unavailable",
+                            "source": source,
+                            "word_index": index,
+                            "message": (
+                                f"{label}: recognizer timing unavailable "
+                                "for independent comparison"
+                            ),
+                        }
+                    )
+                else:
+                    for boundary, recognized, aligned in (
+                        ("start", asr_start, start),
+                        ("end", asr_end, end),
+                    ):
+                        difference = abs(recognized - aligned)
+                        if difference > Fraction(4, 25):
+                            diagnostics.append(
+                                {
+                                    "code": "boundary_disagreement",
+                                    "blocking": False,
+                                    "source": source,
+                                    "word_index": index,
+                                    "boundary": boundary,
+                                    "recognizer_seconds": str(recognized),
+                                    "alignment_seconds": str(aligned),
+                                    "difference_ms": float(difference * 1000),
+                                    "message": (
+                                        f"{label}: {boundary} estimates disagree by "
+                                        f"{float(difference * 1000):.1f} ms (>160 ms)"
+                                    ),
+                                }
+                            )
+                word.update(start=start, end=end)
+            source_record = {
+                "source": source,
+                "word_count": len(words),
+                "pause_diagnostic": alignment.pause_diagnostics(audio, predicted),
+            }
+            readings = [
+                {
+                    "word_index": item.index,
+                    "text": item.text,
+                    "alignment_text": item.alignment_text,
+                }
+                for item in predicted
+                if getattr(item, "alignment_text", None) is not None
+            ]
+            if readings:
+                source_record["normalization"] = {
+                    "library": "num2words",
+                    "version": package_version("num2words"),
+                    "selection": "native_ctc_path_score_uncalibrated",
+                    "max_reading_paths": alignment.MAX_NUMERIC_READING_PATHS,
+                    "readings": readings,
+                }
+            sources.append(source_record)
+            for segment, envelope in zip(selected, envelopes):
+                start, end = segment["words"][0]["start"], segment["words"][-1]["end"]
+                segment["start"] = min(envelope[0], start) if envelope else start
+                segment["end"] = max(envelope[1], end) if envelope else end
+            _partition_caption_envelopes(selected)
+    return {
+        "engine": "ctc",
+        "model": alignment.CTC_MODEL,
+        "revision": alignment.CTC_REVISION,
+        "qualification": "experimental",
+        "quality_concerns": concerns,
+        "diagnostics": diagnostics,
+        "forced": bool(getattr(args, "force", False) and concerns),
+        "sources": sources,
+        "notice": (
+            "Runtime checks do not certify 95% of boundaries within 80 ms; "
+            "backend qualification remains open."
+        ),
+    }
 
 
 def _load_whisper_model() -> Any:
@@ -821,6 +1038,22 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         action="store_true",
         help="Emit machine-readable progress events as JSON lines on stderr",
     )
+    parser.add_argument(
+        "--word-aligner",
+        choices=("none", "ctc"),
+        default="none",
+        help="Opt-in native CTC alignment (English words and unsigned integers; "
+        "experimental)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Override recorded word-alignment quality concerns, never invalid timing",
+    )
+    parser.add_argument(
+        "--alignment-report",
+        help="Alignment decision JSON (default: OUTPUT.alignment-report.json)",
+    )
     parser.add_argument("--stub", action="store_true", help=argparse.SUPPRESS)
     add_json_flag(parser)
     parser.set_defaults(handler=run, command="transcribe")
@@ -835,9 +1068,30 @@ def run(args: Namespace) -> int:
 
     stub_mode = args.stub or os.environ.get("VIDEO_TRANSCRIBE_STUB")
     output_path = pathlib.Path(args.output).expanduser()
+    align_words = getattr(args, "word_aligner", "none") == "ctc"
+    if (
+        getattr(args, "force", False) or getattr(args, "alignment_report", None)
+    ) and not align_words:
+        raise tjm_v11.ValidationError(
+            "--force and --alignment-report require --word-aligner ctc"
+        )
+    if align_words and (
+        args.backend != "faster-whisper" or args.language != "en" or stub_mode
+    ):
+        raise tjm_v11.ValidationError(
+            "CTC alignment requires real faster-whisper English recognition"
+        )
     protected = {path.resolve() for path in inputs}
     if output_path.resolve() in protected:
         raise tjm_v11.ValidationError("Manifest output must not overwrite input media")
+    report_path = pathlib.Path(
+        getattr(args, "alignment_report", None)
+        or f"{output_path}.alignment-report.json"
+    ).expanduser()
+    if align_words and report_path.resolve() in protected | {output_path.resolve()}:
+        raise tjm_v11.ValidationError(
+            "Alignment report must not overwrite media or manifest"
+        )
     sample_rates = {
         f"clip{index:02d}": probe_audio_sample_rate(media_path)
         for index, media_path in enumerate(inputs, start=1)
@@ -855,6 +1109,7 @@ def run(args: Namespace) -> int:
     ]
     manifest_segments: list[dict[str, Any]] = []
 
+    alignment_record: dict[str, Any] | None = None
     backend_runners: dict[str, BackendRunner] = {
         "faster-whisper": transcribe_faster_whisper,
         "transformers": transcribe_transformers,
@@ -872,6 +1127,10 @@ def run(args: Namespace) -> int:
                 manifest_segments = resegment_naturally(
                     manifest_segments, args.max_segment_words
                 )
+            if align_words:
+                alignment_record = _align_transcription(
+                    args, inputs, manifest_segments, sample_rates
+                )
         except MissingBackendDependencyError as exc:
             print(f"eve transcribe: {exc}", file=sys.stderr)
             return 2
@@ -885,7 +1144,34 @@ def run(args: Namespace) -> int:
         "segments": _v11_segments(manifest_segments, sample_rates),
         "render": {"filler_policy": "keep", "preserve_short_gaps": 0.0},
     }
+    if alignment_record is not None:
+        manifest["alignment"] = alignment_record
     tjm_v11.validate_manifest(manifest)
+    if alignment_record is not None:
+        permitted = (
+            not alignment_record["quality_concerns"] or alignment_record["forced"]
+        )
+        write_json_atomic(
+            report_path,
+            {
+                "manifest": str(output_path),
+                "publication_permitted": bool(permitted),
+                "alignment": alignment_record,
+            },
+        )
+        if not permitted:
+            raise tjm_v11.ValidationError(
+                f"Word-alignment quality concerns "
+                f"({len(alignment_record['quality_concerns'])}); see {report_path}. "
+                "Use --force to accept unchanged valid estimates."
+            )
+        print(f"[eve transcribe] NOTICE: {alignment_record['notice']}", file=sys.stderr)
+        if alignment_record["forced"]:
+            print(
+                f"[eve transcribe] WARNING: alignment quality override "
+                f"recorded in {report_path}",
+                file=sys.stderr,
+            )
     _emit_progress(args, "write", output=str(output_path))
     write_json_atomic(output_path, manifest, pretty=args.pretty)
 

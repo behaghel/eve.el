@@ -167,6 +167,15 @@ using source start/end times and ignoring word-level edits."
   :type 'string
   :group 'eve)
 
+(defcustom eve-transcribe-word-aligner nil
+  "Optional word aligner for full-source transcription commands.
+Nil keeps backend word timings.  \"ctc\" opts into experimental native CTC
+alignment with English faster-whisper recognition.  Requires the CLI's
+alignment dependencies.  Region retranscription is unaffected."
+  :type '(choice (const :tag "Backend word timings" nil)
+                 (const :tag "Native CTC (experimental)" "ctc"))
+  :group 'eve)
+
 (defcustom eve-transcribe-verbatim t
   "Whether `eve transcribe' should preserve verbatim output."
   :type 'boolean
@@ -944,6 +953,8 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
       ("load-model" (format "loading model %s via %s" model backend))
       ("extract" (format "extracting audio %s/%s — %s" current total (file-name-nondirectory (eve--stringify file))))
       ("decode" (format "decoding %s/%s — %s" current total (file-name-nondirectory (eve--stringify file))))
+      ("align" (format "aligning words with %s — %s"
+                       (alist-get 'engine event) (alist-get 'source event)))
       ("resegment" "resegmenting transcript")
       ("tag-fillers" "tagging fillers")
       ("write" (format "writing %s" (file-name-nondirectory (eve--stringify output))))
@@ -1122,8 +1133,9 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
         (let ((count (eve--reprocess-suspicious-intervals intervals backend model)))
           (message "Reprocessed %d suspicious region(s)" count))))))
 
-(defun eve--transcribe-finished (process event output-path)
-  "Handle completion of transcribe PROCESS EVENT for OUTPUT-PATH."
+(defun eve--transcribe-finished (process event output-path &optional word-aligner)
+  "Handle completion of transcribe PROCESS EVENT for OUTPUT-PATH.
+WORD-ALIGNER is captured at launch; CTC output skips legacy ASR repair offers."
   (eve--transcribe-finished-state)
   (let ((buffer (process-buffer process)))
     (if (and (eq (process-status process) 'exit)
@@ -1131,7 +1143,8 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
         (progn
           (message "eve transcribe finished: %s" output-path)
           (find-file output-path)
-          (when (derived-mode-p 'eve-mode)
+          (when (and (not (equal word-aligner "ctc"))
+                     (derived-mode-p 'eve-mode))
             (eve--maybe-offer-reprocess-suspicious-transcripts
              (or (process-get process :eve-backend) eve-transcribe-backend)
              (or (process-get process :eve-model) eve-transcribe-model))))
@@ -1139,9 +1152,13 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
         (pop-to-buffer buffer))
       (message "eve transcribe failed: %s" (string-trim event)))))
 
-(defun eve--transcribe-async (files output-path)
-  "Launch `eve transcribe` for FILES, writing OUTPUT-PATH asynchronously."
-  (let* ((program (or (eve--resolve-cli)
+(defun eve--transcribe-async (files output-path &optional force)
+  "Launch `eve transcribe` for FILES, writing OUTPUT-PATH asynchronously.
+Optional FORCE requests a per-run quality override with the CTC opt-in."
+  (let* ((word-aligner eve-transcribe-word-aligner)
+         (_ (when (and force (not (equal word-aligner "ctc")))
+              (user-error "Quality override requires eve-transcribe-word-aligner = ctc")))
+         (program (or (eve--resolve-cli)
                       (user-error "Cannot find eve CLI executable: %s"
                                   eve-cli-program)))
           (output-file (expand-file-name output-path))
@@ -1157,6 +1174,9 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
                              (list "--hotwords" eve-transcribe-hotwords))
                            (when eve-transcribe-tag-fillers
                              '("--tag-fillers"))
+                           (when word-aligner
+                             (list "--word-aligner" word-aligner))
+                           (when force '("--force"))
                            '("--progress-json"))))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
@@ -1169,7 +1189,7 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
                                   :filter #'eve--transcribe-process-filter
                                   :sentinel (lambda (process event)
                                               (eve--transcribe-finished
-                                               process event output-file)))))
+                                               process event output-file word-aligner)))))
       (when (processp process)
         (process-put process :eve-start-time start-time)
         (process-put process :eve-backend eve-transcribe-backend)
@@ -1790,7 +1810,7 @@ summary in the echo area."
    (t value)))
 
 (defun eve--parse-editor-data (text)
-  "Decode manifest TEXT while preserving subtitle JSON exactly.
+  "Decode manifest TEXT while preserving subtitle and alignment JSON exactly.
 Other members retain the editor's existing alist/list and boolean conventions.
 Opaque subtrees keep hash tables, vectors and :json-false, so empty objects,
 empty arrays, false and null are not conflated when saving or undoing."
@@ -1801,7 +1821,7 @@ empty arrays, false and null are not conflated when saving or undoing."
       (user-error "TJM manifest must be a JSON object"))
     (maphash (lambda (key value)
                (push (cons (intern key)
-                           (if (equal key "subtitles")
+                           (if (member key '("subtitles" "alignment"))
                                value
                              (eve--json-editor-value value)))
                      result))
@@ -6120,9 +6140,11 @@ With prefix FORCE, merge despite metadata conflicts."
     (eve--populate-raw-buffer buf buffer-file-name)
     (switch-to-buffer buf)))
 
-(defun eve-transcribe (directory)
-  "Transcribe supported media files from DIRECTORY."
-  (interactive "DDirectory to transcribe: ")
+(defun eve-transcribe (directory &optional force)
+  "Transcribe supported media files from DIRECTORY.
+With prefix FORCE, request an explicit CTC quality override for this run.
+Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails."
+  (interactive "DDirectory to transcribe: \nP")
   (let* ((expanded-directory (file-name-as-directory
 				      (expand-file-name directory)))
 	 (files (seq-filter #'file-regular-p
@@ -6132,18 +6154,20 @@ With prefix FORCE, merge despite metadata conflicts."
     (unless media-files
       (user-error "No media files found in %s" expanded-directory))
     (eve--transcribe-async media-files
-			  (eve--infer-manifest-path media-files))))
+                          (eve--infer-manifest-path media-files) force)))
 
-(defun eve-dired-transcribe ()
-  "Transcribe supported marked media files from the current Dired buffer."
-  (interactive)
+(defun eve-dired-transcribe (&optional force)
+  "Transcribe supported marked media files from the current Dired buffer.
+With prefix FORCE, request an explicit CTC quality override for this run.
+Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails."
+  (interactive "P")
   (unless (derived-mode-p 'dired-mode)
     (user-error "Not in a Dired buffer"))
   (let ((media-files (eve--filter-media-files (dired-get-marked-files t))))
     (unless media-files
       (user-error "No media files selected"))
     (eve--transcribe-async media-files
-                          (eve--infer-manifest-path media-files))))
+                          (eve--infer-manifest-path media-files) force)))
 
 (defun eve-play-segment (&optional segment)
   "Play SEGMENT using `eve-play-program', or the rendered section when on a marker."

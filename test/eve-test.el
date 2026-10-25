@@ -1169,6 +1169,94 @@
        (delete-file file)
        (when (file-exists-p (concat file "~")) (delete-file (concat file "~")))))))
 
+(ert-deftest eve-alignment-audit-survives-editor-save-and-undo ()
+  "Producer booleans, arrays and extension objects survive normal editing."
+  (let ((file (make-temp-file "eve-alignment-audit-" nil ".tjm.json"))
+        (eve-validation-on-save nil))
+    (unwind-protect
+        (with-temp-buffer
+          (insert "{\"version\":\"1.1\",\"sources\":[],\"segments\":[],"
+                  "\"alignment\":{\"engine\":\"ctc\",\"forced\":false,"
+                  "\"quality_concerns\":[],\"diagnostics\":[{\"blocking\":false}],"
+                  "\"extension\":{\"object\":{},\"array\":[],\"nothing\":null}}}")
+          (eve-mode)
+          (setq-local buffer-file-name file)
+          (set-visited-file-modtime)
+          (eve-enable-subtitle-burning)
+          (eve-undo)
+          (eve-redo)
+          (save-buffer)
+          (let* ((saved (json-parse-string
+                         (with-temp-buffer (insert-file-contents file) (buffer-string))
+                         :null-object nil :false-object :json-false))
+                 (audit (gethash "alignment" saved))
+                 (extension (gethash "extension" audit)))
+            (should (equal "ctc" (gethash "engine" audit)))
+            (should (eq :json-false (gethash "forced" audit)))
+            (should (equal [] (gethash "quality_concerns" audit)))
+            (should (eq :json-false (gethash "blocking" (aref (gethash "diagnostics" audit) 0))))
+            (should (hash-table-p (gethash "object" extension)))
+            (should (equal [] (gethash "array" extension)))
+            (should-not (gethash "nothing" extension 'missing))))
+      (delete-file file)
+      (when (file-exists-p (concat file "~")) (delete-file (concat file "~"))))))
+
+(ert-deftest eve-transcribe-ctc-uses-only-explicit-quality-overrides ()
+  "CTC is opt-in; only an explicit run argument adds --force."
+  (dolist (force '(nil t))
+    (let ((eve-transcribe-word-aligner "ctc")
+          (eve-transcribe-backend "faster-whisper")
+          (eve--transcribe-process-count 0)
+          (eve--transcribe-mode-line-string nil)
+          (global-mode-string nil)
+          command)
+      (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "/opt/eve/bin/eve"))
+                ((symbol-function 'make-process)
+                 (lambda (&rest args) (setq command (plist-get args :command)) 'fake-process)))
+        (eve--transcribe-async '("/tmp/clip.mov") "/tmp/clip.tjm.json" force))
+      (should (equal (cadr (member "--word-aligner" command)) "ctc"))
+      (should (eq (and (member "--force" command) t) force))
+      (should (member "--progress-json" command)))))
+
+(ert-deftest eve-transcribe-force-requires-ctc-opt-in ()
+  "A prefix must not become a blanket force flag on ordinary transcription."
+  (let ((eve-transcribe-word-aligner nil))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest _args) (ert-fail "must not launch"))))
+      (should-error (eve--transcribe-async '("/tmp/clip.mov") "/tmp/clip.tjm.json" t)
+                    :type 'user-error))))
+
+(ert-deftest eve-transcribe-shows-native-alignment-progress ()
+  "The acoustic stage has an operator-readable progress label."
+  (should (equal (eve--transcribe-progress-detail
+                  '((phase . "align") (engine . "ctc") (source . "clip01")))
+                 "aligning words with ctc — clip01")))
+
+(ert-deftest eve-transcribe-ctc-completion-does-not-offer-asr-timing-replacement ()
+  "The launch choice survives customization changes while the job runs."
+  (let ((eve-transcribe-word-aligner "ctc")
+        (eve-transcribe-backend "faster-whisper")
+        (eve--transcribe-process-count 0)
+        (eve--transcribe-mode-line-string nil)
+        (global-mode-string nil)
+        (buffer (get-buffer-create eve--transcribe-buffer-name))
+        sentinel opened)
+    (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "/opt/eve/bin/eve"))
+              ((symbol-function 'make-process)
+               (lambda (&rest args) (setq sentinel (plist-get args :sentinel)) 'fake-process))
+              ((symbol-function 'process-buffer) (lambda (_process) buffer))
+              ((symbol-function 'process-status) (lambda (_process) 'exit))
+              ((symbol-function 'process-exit-status) (lambda (_process) 0))
+              ((symbol-function 'find-file) (lambda (path) (setq opened path)))
+              ((symbol-function 'derived-mode-p) (lambda (&rest _modes) t))
+              ((symbol-function 'eve--maybe-offer-reprocess-suspicious-transcripts)
+               (lambda (&rest _args) (ert-fail "CTC must not fall back to ASR timing repair"))))
+      (eve--transcribe-async '("/tmp/clip.mov") "/tmp/clip.tjm.json")
+      (setq eve-transcribe-word-aligner nil)
+      (funcall sentinel 'fake-process "finished\n")
+      (should (equal opened "/tmp/clip.tjm.json"))
+      (should (= eve--transcribe-process-count 0)))))
+
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
   (let ((eve-cli-program "eve-custom")
@@ -1298,7 +1386,8 @@
          (clip (expand-file-name "clip.mp4" expanded-directory))
          (voice (expand-file-name "voice.WAV" expanded-directory))
          captured-files
-         captured-output)
+         captured-output
+         captured-force)
     (unwind-protect
         (progn
           (with-temp-file clip
@@ -1309,10 +1398,13 @@
           (with-temp-file (expand-file-name "notes.txt" expanded-directory)
             (insert "ignore"))
           (cl-letf (((symbol-function 'eve--transcribe-async)
-                     (lambda (files output-path)
+                     (lambda (files output-path &optional force)
                        (setq captured-files files
-                             captured-output output-path))))
-            (eve-transcribe expanded-directory))
+                             captured-output output-path
+                             captured-force force))))
+            (dolist (force '(nil (4)))
+              (eve-transcribe expanded-directory force)
+              (should (equal captured-force force))))
           (should (equal captured-files (list clip voice)))
           (should (equal captured-output
                          (expand-file-name
@@ -1352,7 +1444,8 @@
 (ert-deftest eve-dired-transcribe-delegates-marked-media-files ()
   "Dired entry point filters marked files and preserves media order."
   (let (captured-files
-        captured-output)
+        captured-output
+        captured-force)
     (cl-letf (((symbol-function 'derived-mode-p)
                (lambda (&rest _modes)
                  t))
@@ -1362,10 +1455,14 @@
                    "/tmp/session/notes.txt"
                    "/tmp/session/clip.mp4")))
               ((symbol-function 'eve--transcribe-async)
-               (lambda (files output-path)
+               (lambda (files output-path &optional force)
                  (setq captured-files files
-                       captured-output output-path))))
-      (eve-dired-transcribe)
+                       captured-output output-path
+                       captured-force force))))
+      (dolist (force '(nil (4)))
+        (let ((current-prefix-arg force))
+          (call-interactively #'eve-dired-transcribe))
+        (should (equal captured-force force)))
       (should (equal captured-files
                      '("/tmp/session/voice.WAV"
                        "/tmp/session/clip.mp4")))
@@ -1418,8 +1515,9 @@
         (kill-buffer buffer)))))
 
 (ert-deftest eve-transcribe-async-surfaces-buffer-on-failure ()
-  "Non-zero completion shows the transcribe buffer and reports the failure."
-  (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+  "A CTC failure shows its log without opening output or forcing a retry."
+  (let ((eve-transcribe-word-aligner "ctc")
+        (buffer (get-buffer-create eve--transcribe-buffer-name))
          (eve--transcribe-process-count 0)
          (eve--transcribe-mode-line-string nil)
          (global-mode-string nil)
@@ -1459,6 +1557,8 @@
                      'fake-process
                      "exited abnormally with code 1\n"))
           (should-not opened)
+          (should (= eve--transcribe-process-count 0))
+          (should-not (member "--force" (plist-get captured-plist :command)))
           (should (eq popped buffer))
            (should (member "eve transcribe failed: exited abnormally with code 1"
                            messages)))

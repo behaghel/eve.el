@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from eve_cli import subtitles, tjm_v11
+from eve_cli import alignment, subtitles, tjm_v11
 from eve_cli.commands import text_edit, transcribe
 
 pytestmark = pytest.mark.skipif(
@@ -56,6 +56,159 @@ def pcm(path: Path) -> tuple[int, ...]:
         ]
     )
     return struct.unpack(f"<{len(data) // 2}h", data)
+
+
+def test_joint_caption_plan_keeps_real_samples_and_frame_ids_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from eve_cli.main import main
+
+    rate = 48000
+    samples = tuple((index * 73) % 20000 - 10000 for index in range(rate * 2))
+    audio, source = tmp_path / "source.wav", tmp_path / "source.mp4"
+    with wave.open(str(audio), "wb") as stream:
+        stream.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+        stream.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "nullsrc=size=160x90:rate=60:duration=2,"
+            "geq=lum='16+219*mod(floor(N/pow(2,floor(X/20))),2)':cb=128:cr=128",
+            "-i",
+            str(audio),
+            "-c:v",
+            "libx264",
+            "-bf",
+            "0",
+            "-c:a",
+            "alac",
+            "-shortest",
+            str(source),
+        ],
+        check=True,
+    )
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: [
+            {
+                "id": "a",
+                "source": "clip01",
+                "start": 0.1,
+                "end": 1.1,
+                "words": [{"token": "first", "start": 0.2, "end": 1.1}],
+            },
+            {
+                "id": "b",
+                "source": "clip01",
+                "start": 1.0,
+                "end": 1.9,
+                "words": [{"token": "second", "start": 1.0, "end": 1.8}],
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        alignment,
+        "align_ctc",
+        lambda *a, **kw: [
+            alignment.WordAlignment(0, "first", Fraction("0.2"), Fraction("1.04")),
+            alignment.WordAlignment(1, "second", Fraction("1.1"), Fraction("1.8")),
+        ],
+    )
+    monkeypatch.setattr(
+        alignment, "pause_diagnostics", lambda *a: {"status": "provisional"}
+    )
+    path = tmp_path / "edit.tjm.json"
+    assert (
+        main(
+            [
+                "transcribe",
+                str(source),
+                "--output",
+                str(path),
+                "--word-aligner",
+                "ctc",
+                "--max-segment-words",
+                "0",
+            ]
+        )
+        == 0
+    )
+    manifest = json.loads(path.read_text())
+    tjm_v11.validate_manifest(manifest)
+    assert (
+        manifest["segments"][0]["end_tick"]
+        == manifest["segments"][1]["start_tick"]
+        == 51360
+    )
+    working = tmp_path / "render"
+    working.mkdir()
+    parts = text_edit.render_segments(
+        text_edit.prepare_render_manifest(manifest, tmp_path),
+        tmp_path,
+        working,
+        quality="final",
+    )
+    decoded = [pcm(part) for part in parts]
+    source_ranges = [(4800, 51360), (51360, 91200)]
+    assert sum(map(len, decoded)) == 86400
+    for actual, (start, end) in zip(decoded, source_ranges):
+        assert len(actual) == end - start
+        assert actual[600:-600] == samples[start + 600 : end - 600]
+    output = tmp_path / "joined.mp4"
+    text_edit.concat_segments(
+        parts, output, durations=[Fraction(len(p), rate) for p in decoded]
+    )
+    expected_pts = [
+        p - Fraction("0.1")
+        for p in subtitles.probe_frame_times(source)
+        if Fraction("0.1") <= p < Fraction("1.9")
+    ]
+    actual_pts = subtitles.probe_frame_times(output)
+    assert len(actual_pts) == len(expected_pts)
+
+    # Each picture carries its source frame index in eight large luma blocks.
+    # Check identity/order, not timestamp quantization by the existing encoder.
+    def frame_ids(path: Path) -> list[int]:
+        pixels = subprocess.check_output(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-fps_mode",
+                "passthrough",
+                "-pix_fmt",
+                "gray",
+                "-f",
+                "rawvideo",
+                "-",
+            ]
+        )
+        size = 160 * 90
+        return [
+            sum(
+                (pixels[offset + 45 * 160 + 10 + bit * 20] > 128) << bit
+                for bit in range(8)
+            )
+            for offset in range(0, len(pixels), size)
+        ]
+
+    assert frame_ids(source) == list(range(120))
+    assert frame_ids(output) == list(range(6, 114))
+    info = streams(output)["audio"]
+    assert abs(
+        int(info["duration_ts"]) * Fraction(info["time_base"]) - Fraction("1.8")
+    ) <= Fraction(1, rate)
 
 
 @pytest.mark.parametrize("sample_rate", [44100, 48000])
