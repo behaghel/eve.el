@@ -1,0 +1,8 @@
+[workspace]
+name = "eve-alignment-mfa-benchmark"
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[dependencies]
+python = "3.12.*"
+montreal-forced-aligner = "==3.4.3"

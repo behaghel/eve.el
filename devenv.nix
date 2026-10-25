@@ -16,13 +16,24 @@
     pkgs.git
     pkgs.python312
     pkgs.uv
+    pkgs.pixi
     pkgs.texinfo
     pkgs.ffmpeg
+    pkgs.fontconfig
   ];
 
   env = {
     EDITOR = "emacs";
     PYTHONUTF8 = "1";
+    FONTCONFIG_FILE = pkgs.writeText "eve-fontconfig.conf" ''
+      <?xml version="1.0"?>
+      <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+      <fontconfig>
+        <include>${pkgs.fontconfig.out}/etc/fonts/fonts.conf</include>
+        <dir>/System/Library/Fonts</dir>
+        <dir>/Library/Fonts</dir>
+      </fontconfig>
+    '';
   };
 
   scripts = {
