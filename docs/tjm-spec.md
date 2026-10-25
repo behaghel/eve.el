@@ -618,6 +618,19 @@ insert the source gap only when that choice is documented as part of the
 renderer's supported b-roll behavior. Repository consumers SHOULD keep this
 behavior stable across runs.
 
+### 13.6 Temporal integrity
+
+Renderers MUST derive retained media intervals from source ticks and timebases,
+not from millisecond-rounded convenience values. Audio boundaries are selected
+on the source sample grid; video is represented by its actual presentation
+frames. Repeated cuts and concatenations MUST NOT accumulate codec priming,
+padding, or per-clip duration-rounding errors into the intended timeline.
+
+Codec/container bookkeeping MUST NOT introduce an initial audio/video offset
+that is absent from the manifest. Subtitle burning MUST preserve the assembled
+media timeline, including video presentation timestamps and audio duration,
+rather than stretch or shift it to match an assumed frame rate.
+
 ## 14. Subtitle and Display Cue Generation
 
 For consumers that derive subtitles from TJM:
@@ -657,6 +670,12 @@ styling as part of the resulting video. These settings belong to the manifest,
 not to a renderer's or editor's session preferences. Omitting this object does
 not request burned-in subtitles and does not change the cue-generation rules
 above or prevent consumers from exporting separate or embedded subtitle tracks.
+
+Subtitle burning requires a supported TJM v1.1-or-later format. It is not defined
+for legacy TJM v1; consumers MUST reject burn-in requests on v1 manifests rather
+than interpret their seconds-based fields as v1.1 ticks. Adding `subtitles` or
+changing only `version` does not upgrade a legacy manifest. This specification
+defines only version `"1.1"`; consumers MUST reject unsupported future versions.
 
 When present, `subtitles` has these members:
 
@@ -720,7 +739,15 @@ Highlight intervals MUST derive from authoritative word ticks and source
 timebases, mapped onto the same rendered timeline as the video. Cuts, deleted
 segments and words, dropped fillers, preserved gaps, and renderable markers MUST
 have the same timing effects on video, subtitle cues, and word highlights.
-Removed words MUST NOT emit highlights. Consumers MUST NOT substitute evenly
+Removed words MUST NOT emit highlights. A token is active on a frame exactly
+when that frame's presentation timestamp falls in one of its retained spoken
+intervals, including the start and excluding the end. Consumers MUST use actual
+presentation timestamps rather than infer a constant-rate grid for variable-rate
+video. If a subtitle backend cannot distinguish frames across a required timing
+boundary, the renderer MUST report that limitation rather than choose a guessed
+boundary.
+
+Consumers MUST NOT substitute evenly
 spaced or estimated word timings for missing timing or unresolved alignment
 between display text and word objects.
 
@@ -757,8 +784,8 @@ A conforming TJM v1.1 producer:
 - MUST emit supported `segment.edit.broll.mode` and
   `segment.edit.broll.audio` values only;
 - MUST emit supported `render.filler_policy` values only;
-- SHOULD emit filler classification in `word.edit.kind` rather than legacy
-  top-level `word.kind`;
+- SHOULD emit filler classification in `word.edit.filler` rather than legacy
+  `word.edit.kind` or top-level `word.kind`;
 - SHOULD emit stable, unique `id` values for sources and segments;
 - SHOULD emit `display_text` explicitly on spoken media segments;
 - SHOULD preserve unknown members when editing an existing manifest unless the
@@ -768,6 +795,15 @@ A conforming TJM v1.1 producer:
 
 Plain transcription producers MAY omit word kind on all words. In that case,
 consumers treat the words as lexical by default.
+
+Producers MUST preserve available timing precision through transcription
+segmentation until conversion to the declared source clock. They MUST NOT first
+round backend timings to milliseconds. A word whose interval is missing,
+reversed, zero-duration, or collapses to zero ticks MUST NOT be published as a
+valid timed word. Producers MUST NOT stretch or redistribute intervals solely
+to satisfy validation; any alignment repair requires evidence from the source
+audio. Output MUST satisfy the manifest validation rules before being reported
+as successfully produced.
 
 ## 16. Consumer Requirements
 

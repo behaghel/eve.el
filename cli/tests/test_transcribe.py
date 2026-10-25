@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from eve_cli import tjm_v11
 from eve_cli.commands import transcribe
 from eve_cli.main import build_parser, main
 
@@ -59,6 +60,153 @@ def make_run_args(media: Path, output: Path, **overrides: object) -> Namespace:
     }
     values.update(overrides)
     return Namespace(**values)
+
+
+@pytest.fixture(autouse=True)
+def mock_source_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub clocks for empty ASR fixtures; real probing has media-level tests."""
+    monkeypatch.setattr(transcribe, "probe_audio_sample_rate", lambda _path: 48000)
+
+
+@pytest.mark.parametrize("rate", [44100, 48000])
+def test_transcribe_emits_valid_v11_without_millisecond_rounding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rate: int,
+) -> None:
+    media = tmp_path / "clip.mp4"
+    media.touch()
+    output = tmp_path / "manifest.json"
+    monkeypatch.setattr(transcribe, "probe_audio_sample_rate", lambda _path: rate)
+    raw = FakeSegment(
+        start=1.000021,
+        end=1.000104,
+        text="tick fine.",
+        words=[
+            FakeWord(1.000021, 1.000042, "tick"),
+            FakeWord(1.000042, 1.000104, "fine."),
+        ],
+    )
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: transcribe.segment_to_dict("clip01", 1, raw, 0),
+    )
+    assert (
+        main(
+            [
+                "transcribe",
+                str(media),
+                "--output",
+                str(output),
+                "--max-segment-words",
+                "2",
+            ]
+        )
+        == 0
+    )
+    manifest = json.loads(output.read_text())
+    tjm_v11.validate_manifest(manifest)
+    assert manifest["version"] == "1.1"
+    assert manifest["sources"][0]["timebase"] == {"numerator": 1, "denominator": rate}
+    assert manifest["render"] == {"filler_policy": "keep", "preserve_short_gaps": 0}
+    segment = manifest["segments"][0]
+    assert (segment["start_tick"], segment["end_tick"]) == (rate + 1, rate + 5)
+    assert segment["spoken_text"] == segment["display_text"] == "tick fine."
+    assert [(word["start_tick"], word["end_tick"]) for word in segment["words"]] == [
+        (rate + 1, rate + 2),
+        (rate + 2, rate + 5),
+    ]
+    assert [word["spoken"] for word in segment["words"]] == ["tick", "fine."]
+    assert segment["words"][0]["start"] == (rate + 1) / rate
+
+
+def test_each_transcribed_source_uses_its_own_sample_grid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = [tmp_path / "44.mp4", tmp_path / "48.mp4"]
+    for file in files:
+        file.touch()
+    monkeypatch.setattr(
+        transcribe,
+        "probe_audio_sample_rate",
+        lambda path: 44100 if path.name == "44.mp4" else 48000,
+    )
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: [
+            {
+                "id": f"clip{index:02d}-s0001",
+                "source": f"clip{index:02d}",
+                "start": 0.25,
+                "end": 0.5,
+                "words": [{"token": "hello", "start": 0.25, "end": 0.5}],
+            }
+            for index in range(1, 3)
+        ],
+    )
+    output = tmp_path / "multi.tjm.json"
+    assert (
+        main(["transcribe", *(str(file) for file in files), "--output", str(output)])
+        == 0
+    )
+    manifest = json.loads(output.read_text())
+    tjm_v11.validate_manifest(manifest)
+    assert [source["timebase"]["denominator"] for source in manifest["sources"]] == [
+        44100,
+        48000,
+    ]
+    assert [segment["end_tick"] for segment in manifest["segments"]] == [22050, 24000]
+
+
+@pytest.mark.parametrize(
+    "start,end", [(1.0, 1.0), (1.1, 1.0), (None, 1.0), (1.000001, 1.000002)]
+)
+def test_transcribe_never_fabricates_a_positive_word_interval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    start: float | None,
+    end: float,
+) -> None:
+    media = tmp_path / "clip.mp4"
+    media.touch()
+    output = tmp_path / "manifest.json"
+    output.write_text("previous valid output")
+    monkeypatch.setattr(
+        transcribe,
+        "transcribe_faster_whisper",
+        lambda args, paths: [
+            {
+                "id": "bad-word",
+                "source": "clip01",
+                "start": 0,
+                "end": 2,
+                "text": "it.",
+                "words": [{"token": "it.", "start": start, "end": end}],
+            }
+        ],
+    )
+    assert (
+        main(
+            [
+                "transcribe",
+                str(media),
+                "--output",
+                str(output),
+                "--max-segment-words",
+                "0",
+            ]
+        )
+        == 1
+    )
+    assert output.read_text() == "previous valid output"
+    error = capsys.readouterr().err
+    assert "it." in error
+    assert "bad-word" in error
+    assert "Traceback" not in error
 
 
 def test_transcribe_parser_matches_legacy_defaults() -> None:
@@ -121,10 +269,18 @@ def test_transcribe_stub_writes_manifest_sources_only(tmp_path: Path) -> None:
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert payload == {
-        "version": 1,
-        "sources": [{"id": "clip01", "file": str(media)}],
+        "version": "1.1",
+        "sources": [
+            {
+                "id": "clip01",
+                "file": "../clip.mp4",
+                "timebase": {"numerator": 1, "denominator": 48000},
+            }
+        ],
         "segments": [],
+        "render": {"filler_policy": "keep", "preserve_short_gaps": 0},
     }
+    tjm_v11.validate_manifest(payload)
 
 
 def test_transcribe_stub_mode_can_come_from_environment(
@@ -140,8 +296,9 @@ def test_transcribe_stub_mode_can_come_from_environment(
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert exit_code == 0
-    assert payload["sources"][0]["file"] == str(media)
+    assert (output.parent / payload["sources"][0]["file"]).resolve() == media.resolve()
     assert payload["segments"] == []
+    tjm_v11.validate_manifest(payload)
 
 
 def test_segment_to_dict_splits_long_segments_at_word_boundaries() -> None:
@@ -208,6 +365,8 @@ def test_ffmpeg_extract_invokes_expected_command(
         "-y",
         "-i",
         str(source),
+        "-af",
+        "aresample=async=1:first_pts=0",
         "-ac",
         "1",
         "-ar",
@@ -299,24 +458,24 @@ def test_transcribe_run_uses_model_and_emits_manifest(
             },
         )
     ]
-    assert payload["sources"] == [{"id": "clip01", "file": str(media)}]
-    assert payload["segments"] == [
+    tjm_v11.validate_manifest(payload)
+    assert payload["sources"] == [
         {
-            "id": "clip01-s0001",
-            "source": "clip01",
-            "start": 0.0,
-            "end": 0.9,
-            "speaker": "spk1",
-            "text": "hello world",
-            "words": [
-                {"start": 0.0, "end": 0.4, "token": "hello"},
-                {"start": 0.4, "end": 0.9, "token": "world"},
-            ],
-            "tags": [],
-            "notes": "",
-            "broll": None,
+            "id": "clip01",
+            "file": "clip.mp4",
+            "timebase": {"numerator": 1, "denominator": 48000},
         }
     ]
+    segment = payload["segments"][0]
+    assert segment["id"] == "clip01-s0001"
+    assert segment["speaker"] == "spk1"
+    assert segment["spoken_text"] == segment["display_text"] == "hello world"
+    assert (segment["start_tick"], segment["end_tick"]) == (0, 43200)
+    assert [
+        (word["spoken"], word["start_tick"], word["end_tick"])
+        for word in segment["words"]
+    ] == [("hello", 0, 19200), ("world", 19200, 43200)]
+    assert segment["edit"] == {"tags": [], "notes": ""}
 
 
 def test_transcribe_run_dispatches_default_backend_to_faster_whisper(
@@ -357,10 +516,15 @@ def test_transcribe_run_dispatches_default_backend_to_faster_whisper(
 
     assert exit_code == 0
     assert dispatched == [("faster-whisper", [media])]
-    assert payload == {
-        "version": 1,
-        "sources": [{"id": "clip01", "file": str(media)}],
-        "segments": returned_segments,
+    tjm_v11.validate_manifest(payload)
+    assert payload["version"] == "1.1"
+    assert payload["segments"][0]["spoken_text"] == "hello"
+    assert payload["segments"][0]["words"][0]["end_tick"] == 24000
+    assert "start_tick" not in returned_segments[0]
+    assert returned_segments[0]["words"][0] == {
+        "start": 0.0,
+        "end": 0.5,
+        "token": "hello",
     }
 
 
@@ -501,10 +665,11 @@ def test_transcribe_run_tags_fillers_in_manifest_when_enabled(
     payload = json.loads(output.read_text(encoding="utf-8"))
 
     assert exit_code == 0
-    assert payload["segments"][0]["words"] == [
-        {"start": 0.0, "end": 0.2, "token": "um", "edit": {"kind": "filler"}},
-        {"start": 0.2, "end": 0.6, "token": "hello"},
-    ]
+    tjm_v11.validate_manifest(payload)
+    words = payload["segments"][0]["words"]
+    assert [word["spoken"] for word in words] == ["um", "hello"]
+    assert words[0]["edit"] == {"filler": True}
+    assert "edit" not in words[1]
 
 
 def test_transcribe_transformers_normalizes_pipeline_chunks(

@@ -243,6 +243,21 @@ Two commands launch transcription:
 On failure, the =*eve transcribe*= buffer appears so you can inspect the error
 output.
 
+** Timing and output validity
+
+The transcriber writes v1.1 with a per-source audio sample clock, canonical
+spoken words, and tick intervals.  Backend precision is retained through
+segmentation and converted once to nearest source-sample ticks.  The 16 kHz
+ASR working audio preserves leading media-time offsets.
+
+New manifests explicitly keep fillers and set =render.preserve_short_gaps= to
+=0=.  Change these saved render settings in the raw JSON companion when needed;
+they are authoritative for v1.1 rendering.
+
+Missing, reversed, zero-duration, or sub-tick-collapsed word intervals block
+publication. Existing output is left untouched on validation failure;
+word durations are never invented to make validation pass.
+
 ** Backends
 
 =eve transcribe= supports three backends:
