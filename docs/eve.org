@@ -339,11 +339,11 @@ receives default filler hotwords such as =um=, =uh=, =like=, and =you know=;
 set =eve-transcribe-hotwords= or pass =--hotwords= to override them.  For
 =transformers= and =nemo=, choose a verbatim-friendly model instead.
 
-Default production recognition and alignment models must permit work and
-commercial use of both their weights and generated outputs under the published
-license, without a separate vendor agreement.  Check model and output terms,
-not only the inference code's license.  Non-commercial or research-only weights
-are not eligible as the default production backend.
+Choose recognition and alignment models whose published licenses permit the
+intended use of both their weights and generated outputs.  This is a
+non-commercial project; non-commercial research models may be evaluated here.
+Check model and output terms, not only the inference code's license, and verify
+production or operational deployment rights separately before routine use.
 
 Licensing eligibility and backend availability do not establish verbatim recall
 or timing accuracy.  Model quality must be qualified separately; a backend's

@@ -733,6 +733,29 @@ wheels = [
 ]
 
 [[package]]
+name = "crisperwhisper"
+version = "2.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "soundfile" },
+    { name = "soxr" },
+    { name = "tokenizers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/80/901f5e22fe229e77a2189c1d5a51cce2317d3b69185c69cfc8766fe80e0a/crisperwhisper-2.0.3.tar.gz", hash = "sha256:6b376db36b6d746b23045de373a8c1a6249ea5fe99cd7cb9aec4afb8ddd0065d", size = 128854, upload-time = "2026-09-14T11:33:46.274Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/8e/06d5918dcd3fc070e7b7d87bd228a8da2d1f1be88b4ae9c4f32b7cfe26f8/crisperwhisper-2.0.3-py3-none-any.whl", hash = "sha256:526dd8556883808d0ccbc4da38b05181953a4f7599a16c7a721e47d7590e108a", size = 107068, upload-time = "2026-09-14T11:33:44.836Z" },
+]
+
+[package.optional-dependencies]
+transformers = [
+    { name = "accelerate" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+
+[[package]]
 name = "ctranslate2"
 version = "4.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1137,6 +1160,7 @@ alignment = [
     { name = "transformers" },
 ]
 alignment-benchmark = [
+    { name = "crisperwhisper", extra = ["transformers"] },
     { name = "qwen-asr" },
     { name = "torch" },
 ]
@@ -1159,6 +1183,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "crisperwhisper", extras = ["transformers"], marker = "extra == 'alignment-benchmark'", specifier = "==2.0.3" },
     { name = "faster-whisper", specifier = ">=1.1.1" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'nemo'", specifier = ">=2.4.0" },
     { name = "num2words", marker = "extra == 'alignment'", specifier = "==0.5.14" },
