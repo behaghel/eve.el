@@ -329,7 +329,7 @@ certify the separate release target of 95% of reference boundaries within 80 ms
 
 | Backend | Flag | Notes |
 |---------+------+-------|
-| =faster-whisper= | =--backend faster-whisper= | Default.  Fast, local, good accuracy. |
+| =faster-whisper= | =--backend faster-whisper= | Default.  Fast, local inference. |
 | =transformers= | =--backend transformers= | HuggingFace models.  Needs optional deps. |
 | =nemo= | =--backend nemo= | NVIDIA NeMo.  Needs optional deps. |
 
@@ -339,9 +339,15 @@ receives default filler hotwords such as =um=, =uh=, =like=, and =you know=;
 set =eve-transcribe-hotwords= or pass =--hotwords= to override them.  For
 =transformers= and =nemo=, choose a verbatim-friendly model instead.
 
-Good starting points:
-- =transformers=: =nyrahealth/CrisperWhisper=
-- =nemo=: =nvidia/parakeet-ctc-1.1b=
+Default production recognition and alignment models must permit work and
+commercial use of both their weights and generated outputs under the published
+license, without a separate vendor agreement.  Check model and output terms,
+not only the inference code's license.  Non-commercial or research-only weights
+are not eligible as the default production backend.
+
+Licensing eligibility and backend availability do not establish verbatim recall
+or timing accuracy.  Model quality must be qualified separately; a backend's
+=--verbatim= option or a model's name is not a guarantee of filler preservation.
 
 ** Configuration
 
