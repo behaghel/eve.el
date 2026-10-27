@@ -80,7 +80,12 @@ creates a local virtualenv and installs the pre-built wheel from =cli/dist/=.
 
 For standard in-Emacs use, that local bootstrap path means a separate global
 =eve= install is optional.  The fallback path assumes Python 3.12 or later is
-available and that the package checkout is writable.
+available and that the package checkout is writable.  It reuses an existing
+=cli/.venv=; it does not automatically refresh that environment when a new wheel
+is shipped.  After updating the package, refresh an existing CLI installation
+using its original installation method.  In a devenv development checkout,
+use the project's Python synchronization workflow rather than replacing its
+managed environment with a runtime wheel installation.
 
 If you want =eve= on your =PATH= for shell use, install it globally:
 
@@ -406,9 +411,28 @@ Deleted content is shown or hidden with =C-c C-h= (=eve-hide-deleted-mode=).
 
 - =s= or =|= (=eve-split-segment=) — splits the current segment at point,
   creating two segments with the text and timing divided at the cut.
+  In the segment panel, the word under point takes precedence over older
+  keyboard focus.  Modal keymaps can override =s=; =|= or
+  =M-x eve-segment-panel-split= invokes the panel split command directly.
 
 - =m= or =)= (=eve-merge-with-next=) — merges the current segment with the
   one below, combining text and adjusting the end time.
+
+For v1.1, splitting partitions the original source interval at an existing
+word edge without retiming words or losing retained footage.  Merging preserves
+word records and refreshes the combined caption.  Different source clocks,
+backwards/overlapping source intervals, and mixed timed/untimed captions cannot
+be forced into one timed group.  Reordering remains valid without changing any
+source-local ticks.
+
+*Regroup first, then delete:* v1.1 split/merge commands reject groups with active
+word cuts, including fillers removed by =render.filler_policy = "drop"=.  Restore
+the cuts before regrouping, then reapply them.  A filler mark with policy
+="keep"= is not an active cut; explicit non-filler decisions remain respected.
+Merging also refuses to span a deleted group, including one hidden between the
+selected groups.  Force cannot bypass these checks.  This prevents the
+renderer’s per-group trimming rules from silently reinstating omitted footage;
+rejection leaves both data and undo history unchanged.
 
 ** Reordering
 
@@ -435,8 +459,23 @@ working on one chapter of a longer video.
 ** Inline editing
 
 Press =e= (=eve-dwim-edit=) to edit the text or metadata of the segment at
-point.  The command adapts to context: on a word it edits the spoken text; on
-a marker it edits the title.
+point.  On a marker it edits the title.  For timed v1.1 segments it changes
+=display= fragments, never the factual =spoken= tokens or their source ticks.
+The panel's =i= action edits one focused token or the selected token range;
+=E= edits the segment's token displays.
+
+A single v1.1 token can display a complete phrase, which highlights and deletes
+as one unit.  For a bulk replacement, supply one replacement word per selected
+timed token; otherwise edit the tokens individually.  Ambiguous replacements
+are rejected before changing data or undo history.  Capitalization and
+punctuation actions also change only token displays.  Karaoke caption text is
+kept synchronized with surviving token displays after word edits.
+
+The legacy seconds-only time editor and local transcript regeneration are not
+available for v1.1: they fail without changing data rather than silently
+rewriting aliases or losing exact clocks.  Explicit source-tick changes can be
+made through the raw JSON view.  Existing-timeline editing and export do not
+require transcription or timing review.
 
 ** Metadata
 
@@ -444,7 +483,7 @@ a marker it edits the title.
 |-----+---------+-------------|
 | =t= | =eve-toggle-tag= | Toggle a tag on the segment at point. |
 | =i= | =eve-edit-speaker= | Set the speaker label for the segment. |
-| =r= | =eve-edit-start-end= | Edit the segment's start/end timecodes. |
+| =r= | =eve-edit-start-end= | Edit legacy v1 timecodes; rejected safely for v1.1. |
 | =C-c C-n= | =eve-edit-notes= | Edit free-form notes for the segment. |
 
 ** Undo and redo
@@ -758,17 +797,28 @@ The quality used can be changed permanently with =eve-compile-quality=.
 
 ** Burned-in captions
 
+An existing valid v1.1 timeline can be opened and exported directly; no new
+transcription or alignment is required.  Eve reads source-local ticks using
+each source's timebase, even without legacy =start=, =end=, =text= or =token=
+aliases.  Displayed seconds are a view: opening, configuring subtitles and
+saving do not round or replace the authoritative ticks.  Existing =word.display=
+fragments appear together as one timed token, including multiword fragments;
+spoken text remains separate.
+
 Run =M-x eve-enable-subtitle-burning= in a v1.1 TJM buffer or its context panel,
 then save with =C-x C-s= or compile normally.  The command copies
 =eve-subtitle-defaults= into the manifest's optional =subtitles= object; the
 resulting video follows those saved settings, not the current Emacs session.
 Existing subtitle settings are left unchanged, including extension fields.
-Legacy v1 does not support burning: generate a new v1.1 transcription instead.
+Legacy v1 does not support burning: supply a valid v1.1 timeline instead.
 Changing only the version field does not add the required clock/tick data.
 
-The defaults use word highlighting, bold 48-pixel white text, a 3-pixel black
-outline, and a gold active token.  Captions are bottom-centered with a 60-pixel
-margin, scaled from a 1920×1080 reference canvas.  One TJM segment is one caption;
+The defaults use word highlighting, bold 144-pixel white text, a 3-pixel black
+outline, and a gold active token.  Captions are bottom-centered with a 180-pixel
+margin, scaled from a 1920×1080 reference canvas.  The large text-first profile
+is intentional: speech and captions can dominate the video rather than serve
+as a small annotation.  On a 1080×1920 portrait export, uniform scaling gives
+an 81-pixel font and a 101.25-pixel bottom margin.  One TJM segment is one caption;
 pauses leave the caption visible without highlighting, and captions disappear
 between segments.
 

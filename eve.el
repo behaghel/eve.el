@@ -257,8 +257,8 @@ Use \\[universal-argument] \\[eve-compile] to compile at the opposite quality."
   '((mode . "burn")
     (style . "karaoke")
     (reference_canvas . ((width . 1920) (height . 1080)))
-    (font . ((family . "Arial") (size . 48) (bold . t)))
-    (placement . ((anchor . "bottom-center") (bottom_margin . 60)))
+    (font . ((family . "Arial") (size . 144) (bold . t)))
+    (placement . ((anchor . "bottom-center") (bottom_margin . 180)))
     (color . "#FFFFFF")
     (outline . ((color . "#000000") (width . 3)))
     (highlight_color . "#FFD700"))
@@ -842,7 +842,21 @@ The editor keeps tags as lists; never mutate its live data for serialization."
       (dolist (segment (alist-get 'segments output))
         (let ((tags (assq 'tags (alist-get 'edit segment))))
           (when (and tags (null (cdr tags)))
-            (setcdr tags [])))))
+            (setcdr tags []))))
+      (dolist (segment (alist-get 'segments output))
+        (dolist (item (cons segment (alist-get 'words segment)))
+          (when-let* ((edit (assq 'edit item)))
+            (when (listp (cdr edit))
+              (dolist (key '(deleted filler))
+                (when-let* ((flag (assq key (cdr edit))))
+                  (when (null (cdr flag)) (setcdr flag :json-false))))
+              (let ((broll (alist-get 'broll (cdr edit))))
+                (when (listp broll)
+                  (dolist (key '(still continue))
+                    (when-let* ((flag (assq key broll)))
+                      (when (null (cdr flag)) (setcdr flag :json-false)))))))
+            (when (null (cdr edit))
+              (setcdr edit (make-hash-table :test 'equal)))))))
     (json-encode output)))
 
 (defun eve--write-json-file (data path)
@@ -987,15 +1001,15 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
   "Return non-nil when SEGMENT is suspiciously long."
   (and eve-validation-suspicious-segment-duration
        (not (eve--marker-p segment))
-       (let ((start (eve--coerce-number (alist-get 'start segment)))
-             (end (eve--coerce-number (alist-get 'end segment))))
+       (let ((start (eve--source-seconds segment 'start))
+             (end (eve--source-seconds segment 'end)))
          (and start end
               (> (- end start) eve-validation-suspicious-segment-duration)))))
 
 (defun eve--segment-duration-seconds (segment)
   "Return SEGMENT duration in seconds, or nil."
-  (let ((start (eve--coerce-number (alist-get 'start segment)))
-        (end (eve--coerce-number (alist-get 'end segment))))
+  (let ((start (eve--source-seconds segment 'start))
+        (end (eve--source-seconds segment 'end)))
     (and start end (- end start))))
 
 (defun eve--suspicious-long-segments ()
@@ -1009,8 +1023,8 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
        (not (eve--marker-p segment))
        (not (eve--edit-deleted-p segment))
        (alist-get 'source segment)
-       (eve--coerce-number (alist-get 'start segment))
-       (eve--coerce-number (alist-get 'end segment))))
+       (eve--source-seconds segment 'start)
+       (eve--source-seconds segment 'end)))
 
 (defun eve--source-gap-between (previous next)
   "Return source gap plist between PREVIOUS and NEXT, or nil."
@@ -1018,8 +1032,8 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
              (eve--media-segment-for-gap-p previous)
              (eve--media-segment-for-gap-p next)
              (equal (alist-get 'source previous) (alist-get 'source next)))
-    (let* ((prev-end (eve--coerce-number (alist-get 'end previous)))
-           (next-start (eve--coerce-number (alist-get 'start next)))
+    (let* ((prev-end (eve--source-seconds previous 'end))
+           (next-start (eve--source-seconds next 'start))
            (duration (- next-start prev-end)))
       (when (> duration eve-gap-indicator-duration)
         (list :before previous :after next :duration duration
@@ -1415,6 +1429,14 @@ before rendering.  Also works from an Eve context panel."
       (user-error "Subtitle burning requires TJM v1.1; re-transcribe this legacy file"))
     (if (assq 'subtitles eve--data)
         (message "Kept existing TJM subtitle configuration")
+      (when (equal (eve--aget 'style eve-subtitle-defaults) "karaoke")
+        (dolist (segment (eve--segments))
+          (let ((caption (alist-get 'display_text segment)))
+            (when (and caption (not (string-empty-p (string-trim caption)))
+                       (not (eve--marker-p segment))
+                       (not (equal (string-trim caption) (eve--segment-display-text segment))))
+              (user-error "Caption %s is not bound to its timed tokens; edit token displays or choose plain captions"
+                          (alist-get 'id segment))))))
       (eve--record-state)
       (setq eve--data
             (eve--alist-set eve--data 'subtitles (copy-tree eve-subtitle-defaults t)))
@@ -2590,14 +2612,16 @@ face, and KEY uses the normal context-panel key-hint face."
     (setq-local eve-segment-panel-segment-id (eve--stringify segment-id))
     (let* ((visible-words (and segment
                                (eve--segment-panel-visible-words segment source-buffer)))
-           (start (alist-get 'start segment))
-           (end (alist-get 'end segment))
+           (start (with-current-buffer source-buffer (eve--source-seconds segment 'start)))
+           (end (with-current-buffer source-buffer (eve--source-seconds segment 'end)))
+           (suspicious (with-current-buffer source-buffer
+                         (eve--suspicious-long-segment-p segment)))
            (duration (max 0.0 (- (or end 0.0) (or start 0.0))))
            (speaker (or (eve--aget 'speaker segment) "—"))
            (tags (or (eve--segment-tags segment) '())))
       (eve--segment-panel-clamp-word-index visible-words)
       (insert (propertize eve-segment-panel-segment-id 'face 'eve-heading-face))
-      (when (eve--suspicious-long-segment-p segment)
+      (when suspicious
         (insert "  " (propertize (format "⚠ long %.1fs" duration)
                                   'face 'eve-gap-indicator-face)))
       (when-let* ((gap (with-current-buffer source-buffer
@@ -2636,7 +2660,7 @@ face, and KEY uses the normal context-panel key-hint face."
                      (eve--segment-panel-action-with-key "split" "|"))
                "  ")
               "\n")
-      (when (eve--suspicious-long-segment-p segment)
+      (when suspicious
         (insert "  " (propertize "⚠ suspiciously long — r regen segment"
                                   'face 'eve-gap-indicator-face)
                 "\n"))
@@ -2900,6 +2924,9 @@ computing the range so action keys operate on the visibly focused word."
          (segment-id eve-segment-panel-segment-id)
          (preferred (or preferred-index eve-segment-panel-word-index)))
     (with-current-buffer source
+      (when-let* ((segment (eve--segment-by-id segment-id)))
+        (when (eve--canonical-editor-p)
+          (eve--segment-panel-refresh-segment-text segment)))
       (eve--mark-dirty)
       (eve--render t)
       (eve--goto-segment segment-id))
@@ -2915,67 +2942,39 @@ computing the range so action keys operate on the visibly focused word."
           (split-string (string-trim text) "[[:space:]]+" t)))
 
 (defun eve--segment-panel-copy-word-with-token (word token)
-  "Return copy of WORD with visible TOKEN updated."
+  "Return copy of WORD with visible TOKEN updated, never retimed."
   (let ((copy (copy-tree word t)))
-    (if (alist-get 'spoken copy)
-        (setf (alist-get 'spoken copy) token)
-      (setf (alist-get 'token copy) token))
+    (eve--segment-panel-set-word-token copy token)
     copy))
 
-(defun eve--segment-panel-word-start (word)
-  "Return WORD start time."
-  (or (eve--coerce-number (alist-get 'start word))
-      (eve--coerce-number (alist-get 'start_tick word))
-      0.0))
-
-(defun eve--segment-panel-word-end (word)
-  "Return WORD end time."
-  (or (eve--coerce-number (alist-get 'end word))
-      (eve--coerce-number (alist-get 'end_tick word))
-      (eve--segment-panel-word-start word)))
-
-(defun eve--segment-panel-replacement-word (token start end)
-  "Return a new replacement word TOKEN from START to END."
-  (list (cons 'start start)
-        (cons 'end end)
-        (cons 'token token)))
+(defun eve--segment-panel-rephrase-values (segment start-index end-index replacement)
+  "Validate REPLACEMENT for SEGMENT's START-INDEX through END-INDEX.
+Return one display fragment per existing token, without mutating data."
+  (let* ((words (alist-get 'words segment))
+         (text (string-trim replacement))
+         (tokens (eve--segment-panel-retokenize text))
+         (count (1+ (- end-index start-index))))
+    (unless (and (<= 0 start-index end-index) (< end-index (length words)))
+      (user-error "Invalid word range"))
+    (unless tokens (user-error "Replacement cannot be empty; use delete instead"))
+    (let ((old (mapcar #'eve--word-render-text
+                      (cl-subseq words start-index (1+ end-index)))))
+      (cond
+       ((equal text (string-join old " ")) old)
+       ((and (= count 1) (eve--canonical-editor-p)) (list text))
+       ((= count (length tokens)) tokens)
+       (t (user-error "Ambiguous replacement: edit one timed token at a time; timings are never redistributed"))))))
 
 (defun eve--segment-panel-rephrase-range (segment start-index end-index replacement)
-  "Replace SEGMENT words from START-INDEX to END-INDEX with REPLACEMENT text."
-  (let* ((tokens (eve--segment-panel-retokenize replacement))
-         (words (copy-sequence (alist-get 'words segment)))
-         (range-len (1+ (- end-index start-index))))
-    (when (null tokens)
-      (user-error "Replacement cannot be empty; use delete instead"))
-    (unless (and (<= 0 start-index) (< end-index (length words)))
-      (user-error "Invalid word range"))
-    (let* ((before (cl-subseq words 0 start-index))
-           (after (nthcdr (1+ end-index) words))
-           (old-range (cl-subseq words start-index (1+ end-index)))
-           (new-range
-            (if (= (length tokens) range-len)
-                (cl-mapcar #'eve--segment-panel-copy-word-with-token old-range tokens)
-              (let* ((span-start (eve--segment-panel-word-start (car old-range)))
-                     (span-end (eve--segment-panel-word-end (car (last old-range))))
-                     (step (/ (max 0.0 (- span-end span-start))
-                              (float (length tokens))))
-                     (idx 0)
-                     result)
-                (dolist (token tokens (nreverse result))
-                  (let ((start (+ span-start (* idx step)))
-                        (end (+ span-start (* (1+ idx) step))))
-                    (push (eve--segment-panel-replacement-word token start end)
-                          result)
-                    (setq idx (1+ idx)))))))
-           (merged (append before new-range after)))
-      (setf (alist-get 'words segment) merged)
-      (setf (alist-get 'text segment)
-            (string-join (mapcar #'eve--word-render-text merged) " "))
-      (setf (alist-get 'start segment)
-            (eve--segment-panel-word-start (car merged)))
-      (setf (alist-get 'end segment)
-            (eve--segment-panel-word-end (car (last merged))))
-      start-index)))
+  "Rewrite SEGMENT's selected display fragments without changing source facts."
+  (let* ((values (eve--segment-panel-rephrase-values segment start-index end-index replacement))
+         (words (alist-get 'words segment))
+         (new-range (cl-mapcar #'eve--segment-panel-copy-word-with-token
+                              (cl-subseq words start-index (1+ end-index)) values)))
+    (setf (alist-get 'words segment)
+          (append (cl-subseq words 0 start-index) new-range (nthcdr (1+ end-index) words)))
+    (eve--segment-panel-refresh-segment-text segment)
+    start-index))
 
 (defun eve-segment-panel-edit-words ()
   "Rephrase the focused word or selected range in the panel."
@@ -2988,8 +2987,10 @@ computing the range so action keys operate on the visibly focused word."
                            (cl-subseq words (car range) (1+ (cdr range))))
                    " "))
          (replacement (read-string "Rephrase words: " current)))
+    (eve--segment-panel-rephrase-values segment (car range) (cdr range) replacement)
     (eve--segment-panel-record-state)
-    (eve--segment-panel-rephrase-range segment (car range) (cdr range) replacement)
+    (with-current-buffer (eve--segment-panel-source-buffer)
+      (eve--segment-panel-rephrase-range segment (car range) (cdr range) replacement))
     (eve--segment-panel-after-edit (car range))
     (message "Rephrased '%s' → '%s'" current replacement)))
 
@@ -3000,8 +3001,10 @@ computing the range so action keys operate on the visibly focused word."
          (words (alist-get 'words segment))
          (current (string-join (mapcar #'eve--word-render-text words) " "))
          (replacement (read-string "Rephrase segment: " current)))
+    (eve--segment-panel-rephrase-values segment 0 (1- (length words)) replacement)
     (eve--segment-panel-record-state)
-    (eve--segment-panel-rephrase-range segment 0 (1- (length words)) replacement)
+    (with-current-buffer (eve--segment-panel-source-buffer)
+      (eve--segment-panel-rephrase-range segment 0 (1- (length words)) replacement))
     (eve--segment-panel-after-edit 0)
     (message "Rephrased segment '%s' → '%s'" current replacement)))
 
@@ -3194,10 +3197,16 @@ START-TIME is used for minibuffer elapsed-time feedback."
   (eve--regenerate-segment-range segment segment backend model start-time))
 
 (defun eve-segment-panel-regenerate-transcript (backend model)
-  "Regenerate the current segment transcript with BACKEND and MODEL."
+  "Regenerate the current legacy segment with BACKEND and MODEL.
+TJM v1.1 rejects this seconds-only path before data or history changes."
   (interactive
-   (list (read-string "Backend: " eve-transcribe-backend)
-         (read-string "Model: " eve-transcribe-model)))
+   (progn
+     (with-current-buffer (eve--segment-panel-source-buffer)
+       (eve--require-legacy-timing-editor "regeneration"))
+     (list (read-string "Backend: " eve-transcribe-backend)
+           (read-string "Model: " eve-transcribe-model))))
+  (with-current-buffer (eve--segment-panel-source-buffer)
+    (eve--require-legacy-timing-editor "regeneration"))
   (let ((segment (eve--segment-panel-segment))
         (start-time (float-time)))
     (eve--segment-panel-record-state)
@@ -3246,13 +3255,19 @@ Adjacent source gaps take precedence so `U' repairs the gap range."
         segment))))
 
 (defun eve-segment-panel-regenerate-until (target-id backend model)
-  "Regenerate from the current segment through TARGET-ID, inclusive."
+  "Regenerate legacy segments through TARGET-ID with BACKEND and MODEL.
+TJM v1.1 rejects this seconds-only path before data or history changes."
   (interactive
-   (let* ((default (eve--segment-panel-next-segment-id))
+   (progn
+     (with-current-buffer (eve--segment-panel-source-buffer)
+       (eve--require-legacy-timing-editor "regeneration"))
+     (let* ((default (eve--segment-panel-next-segment-id))
           (target (read-string "Regenerate until segment id: " default)))
      (list target
            (read-string "Backend: " eve-transcribe-backend)
-           (read-string "Model: " eve-transcribe-model))))
+           (read-string "Model: " eve-transcribe-model)))))
+  (with-current-buffer (eve--segment-panel-source-buffer)
+    (eve--require-legacy-timing-editor "regeneration"))
   (let* ((source (eve--segment-panel-source-buffer))
          (start-segment (eve--segment-panel-regenerate-start-segment target-id))
          (end-segment (with-current-buffer source
@@ -3282,8 +3297,8 @@ Adjacent source gaps take precedence so `U' repairs the gap range."
 
 (defun eve--segment-panel-set-word-token (word token)
   "Set WORD's visible TOKEN in place."
-  (if (alist-get 'spoken word)
-      (setf (alist-get 'spoken word) token)
+  (if (eve--canonical-editor-p)
+      (eve--alist-set word 'display token)
     (setf (alist-get 'token word) token)))
 
 (defun eve--capitalize-token (token)
@@ -3292,10 +3307,43 @@ Adjacent source gaps take precedence so `U' repairs the gap range."
       (replace-match (upcase (match-string 0 token)) t t token)
     token))
 
+(defun eve--word-media-cut-p (word)
+  "Return non-nil when WORD is removed by explicit edits or filler policy."
+  (or (eve--edit-deleted-p word)
+      (and (equal (alist-get 'filler_policy (alist-get 'render eve--data)) "drop")
+           (let ((edit (eve--edit-metadata word)))
+             (cond
+              ((eve--edit-key-present-p 'filler edit) (eve--word-filler-p word))
+              ((eve--edit-key-present-p 'kind edit) (equal (eve--edit-kind word) "filler"))
+              (t (equal (alist-get 'kind word) "filler")))))))
+
+(defun eve--require-uncut-caption-groups (segments)
+  "Reject regrouping SEGMENTS when v1.1 source cuts cannot be preserved."
+  (when (and (eve--canonical-editor-p)
+             (seq-some (lambda (segment)
+                         (or (eve--edit-deleted-p segment)
+                             (seq-some #'eve--word-media-cut-p (alist-get 'words segment))))
+                       segments))
+    (user-error "Regroup first, then delete/drop fillers; restore existing cuts before regrouping (no changes made)")))
+
+(defun eve--segment-display-text (segment)
+  "Derive SEGMENT's surviving display text without changing any source record."
+  (let* ((canonical (eve--canonical-editor-p))
+         (words (seq-remove (lambda (word) (and canonical (eve--word-media-cut-p word)))
+                            (alist-get 'words segment))))
+    (string-join (mapcar #'eve--word-render-text words) " ")))
+
 (defun eve--segment-panel-refresh-segment-text (segment)
-  "Refresh SEGMENT text from its rendered words."
-  (setf (alist-get 'text segment)
-        (string-join (mapcar #'eve--word-render-text (alist-get 'words segment)) " ")))
+  "Refresh SEGMENT's caption cache without rewriting its spoken record."
+  (eve--alist-set segment (if (eve--canonical-editor-p) 'display_text 'text)
+                  (eve--segment-display-text segment)))
+
+(defun eve--refresh-transcript-group (segment)
+  "Rebuild SEGMENT text caches after explicit changes to its word membership."
+  (eve--alist-set segment 'spoken_text
+                  (string-join (mapcar (lambda (word) (alist-get 'spoken word))
+                                      (alist-get 'words segment)) " "))
+  (eve--segment-panel-refresh-segment-text segment))
 
 (defun eve-segment-panel-capitalize-words ()
   "Capitalize the focused word or selected range in the panel."
@@ -3453,11 +3501,12 @@ of leaving an empty visible-word state behind."
         (eve--segment-panel-refresh)))))
 
 (defun eve-segment-panel-split ()
-  "Split current segment at focused word."
+  "Split at the word under point, falling back to the panel's stored focus."
   (interactive)
   (let* ((source (eve--segment-panel-source-buffer))
          (segment-id eve-segment-panel-segment-id)
-         (word-index eve-segment-panel-word-index)
+         (word-index (or (eve--segment-panel-word-index-at-point)
+                         eve-segment-panel-word-index))
          (panel (current-buffer)))
     (with-current-buffer source
       (eve--goto-word-by-index segment-id word-index)
@@ -4228,6 +4277,31 @@ already open.  This command requires the optional `context-panels' package."
                        (eve--stringify source-id)))
 	    (or sources (eve--sources))))
 
+(defun eve--source-seconds (item edge &optional segment)
+  "Read ITEM's EDGE in seconds using its authoritative source clock.
+EDGE is `start' or `end'.  SEGMENT optionally supplies a word's parent.
+This is a view conversion only: no seconds aliases or ticks are written.
+Legacy manifests retain their seconds-based interpretation."
+  (if (not (equal (alist-get 'version eve--data) "1.1"))
+      (eve--time->seconds (alist-get edge item))
+    (let* ((tick-key (intern (concat (symbol-name edge) "_tick")))
+           (cell (assq tick-key item)))
+      (when cell
+        (let* ((ticks (cdr cell))
+               (parent (or segment
+                           (seq-find (lambda (candidate)
+                                       (memq item (alist-get 'words candidate)))
+                                     (eve--segments))))
+               (source-id (or (alist-get 'source item) (alist-get 'source parent)))
+               (clock (alist-get 'timebase (eve--source-by-id source-id)))
+               (numerator (alist-get 'numerator clock))
+               (denominator (alist-get 'denominator clock)))
+          (unless (and (integerp ticks) (>= ticks 0)
+                       (integerp numerator) (> numerator 0)
+                       (integerp denominator) (> denominator 0))
+            (user-error "Invalid %s or source timebase for %s" tick-key source-id))
+          (/ (* ticks numerator) (float denominator)))))))
+
 (defun eve--format-time (seconds)
   (let* ((tot (or (eve--coerce-number seconds) 0.0))
 	 (mins (floor (/ tot 60)))
@@ -4289,16 +4363,34 @@ already open.  This command requires the optional `context-panels' package."
   "Normalize segment TEXT for rendering."
   (string-trim (replace-regexp-in-string "\\s-+" " " (eve--stringify text))))
 
+(defun eve--canonical-editor-p ()
+  "Return non-nil for a v1.1 buffer or its source-linked segment panel."
+  (let ((source (and (boundp 'eve-segment-panel-source-buffer)
+                     eve-segment-panel-source-buffer)))
+    (equal (alist-get 'version (if (buffer-live-p source)
+                                  (buffer-local-value 'eve--data source)
+                                eve--data))
+           "1.1")))
+
 (defun eve--word-render-text (word)
-  "Return the preferred visible text for WORD."
-  (or (car (eve--word-strings word)) ""))
+  "Return WORD's display fragment, falling back to the format's source token."
+  (let ((display (alist-get 'display word)))
+    (if (and (stringp display) (not (string-empty-p (string-trim display))))
+        display
+      (or (and (not (eve--canonical-editor-p)) (alist-get 'token word))
+          (car (eve--word-strings word)) ""))))
 
 (defun eve--segment-render-data (segment)
   "Return SEGMENT render data as (:text TEXT :word-spans SPANS).
 Each entry in SPANS is (START END WORD) over the returned TEXT."
   (let* ((words (alist-get 'words segment))
-         (text (eve--normalize-segment-text (alist-get 'text segment)))
-         (source-spans (and words (eve--segment-word-spans text)))
+         (canonical (equal (alist-get 'version eve--data) "1.1"))
+         (text (eve--normalize-segment-text
+                (if canonical
+                    (or (alist-get 'display_text segment)
+                        (alist-get 'spoken_text segment))
+                  (alist-get 'text segment))))
+         (source-spans (and (not canonical) words (eve--segment-word-spans text)))
          (pieces nil)
          (word-spans nil)
          (cursor 0))
@@ -4351,8 +4443,8 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
     (delq nil
           (mapcar (lambda (word)
                     (unless (and hide-deleted (eve--edit-deleted-p word))
-                      (let ((start (alist-get 'start word))
-                            (end (alist-get 'end word)))
+                      (let ((start (eve--source-seconds word 'start segment))
+                            (end (eve--source-seconds word 'end segment)))
                         (when (and (numberp start) (numberp end) (> end start))
                           (cons start end)))))
                   words))))
@@ -4362,8 +4454,8 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
   (if (and hide-deleted (eve--segment-has-deleted-words-p segment))
       (when-let* ((ranges (eve--rendered-word-ranges segment hide-deleted)))
         (cons (caar ranges) (cdar (last ranges))))
-    (let ((start (alist-get 'start segment))
-          (end (alist-get 'end segment)))
+    (let ((start (eve--source-seconds segment 'start))
+          (end (eve--source-seconds segment 'end)))
       (when (and (numberp start) (numberp end) (> end start))
         (cons start end)))))
 
@@ -4392,8 +4484,8 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
                            (eve--rendered-word-ranges segment hide-deleted))
                :initial-value 0.0))
    (t
-    (let ((start (alist-get 'start segment))
-          (end (alist-get 'end segment)))
+    (let ((start (eve--source-seconds segment 'start))
+          (end (eve--source-seconds segment 'end)))
       (if (and (numberp start) (numberp end) (> end start))
           (- end start)
         0.0)))))
@@ -4464,8 +4556,8 @@ Always includes time 0, mapped to the first segment."
 SEGMENTS is an ordered list of segment alists with \\='start and \\='end keys.
 Returns nil if TIME is before all segments or falls in a gap."
   (cl-loop for seg in segments
-           for seg-start = (or (alist-get 'start seg) 0.0)
-           for seg-end   = (or (alist-get 'end   seg) 0.0)
+           for seg-start = (or (eve--source-seconds seg 'start) 0.0)
+           for seg-end   = (or (eve--source-seconds seg 'end) 0.0)
            when (and (>= time seg-start) (< time seg-end))
            return seg
            finally return nil))
@@ -4632,9 +4724,9 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 
 (defun eve--format-words (words)
   (mapconcat (lambda (word)
-	       (let ((token (alist-get 'token word))
-		     (start (eve--format-time (alist-get 'start word)))
-		     (end (eve--format-time (alist-get 'end word))))
+	       (let ((token (eve--word-render-text word))
+		     (start (eve--format-time (eve--source-seconds word 'start)))
+		     (end (eve--format-time (eve--source-seconds word 'end))))
 		 (format "%s[%s-%s]" token start end)))
 	     (if eve-hide-deleted-mode
 		 (seq-remove #'eve--edit-deleted-p words)
@@ -4761,7 +4853,36 @@ Returns non-nil when a summary was inserted."
 	      (cons word-start word-end))))))))
 
 (defun eve--word-info-at-point ()
-  "Return a plist describing the word at point in the current segment."
+  "Return the atomic timed word at point in the current segment."
+  (if (not (equal (alist-get 'version eve--data) "1.1"))
+      (eve--legacy-word-info-at-point)
+    (let* ((segment (or (eve--segment-at-point) (user-error "No segment at point")))
+           (id (alist-get 'id segment))
+           (bounds (eve--segment-bounds id))
+           (view (eve--segment-render-data segment))
+           (text (plist-get view :text))
+           (spans (plist-get view :word-spans))
+           (offset (and bounds (- (point) (car bounds))))
+           (span (and offset
+                      (seq-find (lambda (candidate)
+                                  (and (>= offset (nth 0 candidate))
+                                       (< offset (nth 1 candidate))))
+                                spans))))
+      (unless span (user-error "No timed word at point"))
+      (let ((word (nth 2 span)))
+        (list :segment segment :segment-id id :segment-text text
+              :segment-bounds bounds :word word
+              :word-bounds (cons (+ (car bounds) (nth 0 span))
+                                 (+ (car bounds) (nth 1 span)))
+              :word-text (substring text (nth 0 span) (nth 1 span))
+              :word-index (cl-position word (alist-get 'words segment) :test #'eq)
+              :word-spans (mapcar (lambda (entry)
+                                    (list (nth 0 entry) (nth 1 entry)
+                                          (substring text (nth 0 entry) (nth 1 entry))))
+                                  spans))))))
+
+(defun eve--legacy-word-info-at-point ()
+  "Return a plist describing a whitespace word in a legacy segment."
   (let* ((segment (eve--segment-at-point)))
     (unless segment
       (user-error "No segment at point"))
@@ -4855,10 +4976,19 @@ Returns non-nil when a summary was inserted."
       (let* ((seg-start (car bounds))
 	     (seg-end (cdr bounds))
 	     (segment-text (buffer-substring-no-properties seg-start seg-end))
-	     (spans (eve--segment-word-spans segment-text)))
-	(when (and spans (<= 0 index) (< index (length spans)))
-	  (goto-char (+ seg-start (nth 0 (nth index spans))))
-	  t)))))
+             (segment (eve--segment-by-id segment-id))
+             (canonical (eve--canonical-editor-p))
+             (spans (if canonical
+                        (plist-get (eve--segment-render-data segment) :word-spans)
+                      (eve--segment-word-spans segment-text)))
+             (span (if canonical
+                       (seq-find (lambda (entry)
+                                   (eq (nth 2 entry) (nth index (alist-get 'words segment))))
+                                 spans)
+                     (and (<= 0 index) (nth index spans)))))
+        (when span
+          (goto-char (+ seg-start (nth 0 span)))
+          t)))))
 
 (defun eve--window-total-width (window)
   (let* ((margins (window-margins window))
@@ -5244,6 +5374,14 @@ Optional COUNT moves backward multiple segments."
   (eve--move-by-segments (- (or count 1))))
 
 (defun eve--mark-dirty ()
+  (when (and (equal (alist-get 'version eve--data) "1.1")
+             (equal (let ((config (alist-get 'subtitles eve--data)))
+                      (if (hash-table-p config) (gethash "style" config)
+                        (alist-get 'style config)))
+                    "karaoke"))
+    (dolist (segment (eve--segments))
+      (when (alist-get 'words segment)
+        (eve--segment-panel-refresh-segment-text segment))))
   (setq eve--dirty t)
   (set-buffer-modified-p t))
 
@@ -5346,6 +5484,8 @@ Optional COUNT moves backward multiple segments."
       (user-error "Segment has no word timings to delete"))
     (eve--record-state)
     (let ((deleted (eve--toggle-edit-deleted word)))
+      (when (eve--canonical-editor-p)
+        (eve--segment-panel-refresh-segment-text segment))
       (eve--mark-dirty)
       (eve--render t)
       (or (eve--goto-word-by-index segment-id word-index)
@@ -5429,7 +5569,8 @@ marking it as filler again in this TJM file."
 
 (defun eve-split-segment ()
   "Split the current segment at point, creating a new segment
-that starts at the word under point."
+that starts at the word under point.
+Restore active v1.1 source cuts before regrouping; otherwise no change is made."
   (interactive)
   (let* ((info (eve--word-info-at-point))
 	 (segment (plist-get info :segment))
@@ -5438,6 +5579,7 @@ that starts at the word under point."
 	 (segment-id (plist-get info :segment-id))
 	 (word-index (plist-get info :word-index))
 	 (word-spans (plist-get info :word-spans))
+         (canonical (eve--canonical-editor-p))
 	 (words (alist-get 'words segment)))
     (unless words
       (user-error "Segment has no word timings to split"))
@@ -5445,6 +5587,7 @@ that starts at the word under point."
       (when (or (<= word-index 0)
 		(>= word-index total))
 	(user-error "Move to a word away from the segment boundary to split")))
+    (eve--require-uncut-caption-groups (list segment))
     (eve--record-state)
     (let* ((segments (eve--segments))
 	   (segment-index (cl-position segment segments :test #'eq)))
@@ -5452,34 +5595,44 @@ that starts at the word under point."
 	(error "Unable to determine segment index"))
       (let* ((before-words (cl-subseq words 0 word-index))
 	     (after-words (cl-subseq words word-index))
-	     (before-spans (cl-subseq word-spans 0 word-index))
-	     (after-spans (cl-subseq word-spans word-index))
+	     (before-spans (unless canonical (cl-subseq word-spans 0 word-index)))
+	     (after-spans (unless canonical (cl-subseq word-spans word-index)))
 	     (segment-before (copy-tree segment t))
 	     (segment-after (copy-tree segment t))
 	     (new-id (eve--generate-segment-id segment-id)))
-	;; Update text and timings for the first half
-	(setf (alist-get 'text segment-before) (eve--spans->text before-spans))
+	;; Caption partitioning preserves exact word ticks and original outer bounds.
+        (unless canonical
+          (setf (alist-get 'text segment-before) (eve--spans->text before-spans)))
 	(setf (alist-get 'words segment-before) before-words)
 	(eve--set-segment-broll segment-before (and broll-orig (copy-alist broll-orig)))
-	(let ((first before-words)
+	(unless canonical
+          (let ((first before-words)
 	      (last (last before-words)))
 	  (when (and first last)
 	    (setf (alist-get 'start segment-before)
 		  (eve--coerce-number (alist-get 'start (car first))))
 	    (setf (alist-get 'end segment-before)
-		  (eve--coerce-number (alist-get 'end (car last))))))
+		  (eve--coerce-number (alist-get 'end (car last)))))))
 	;; Update text, id, and timings for the second half
 	(setf (alist-get 'id segment-after) new-id)
-	(setf (alist-get 'text segment-after) (eve--spans->text after-spans))
+        (unless canonical
+          (setf (alist-get 'text segment-after) (eve--spans->text after-spans)))
 	(setf (alist-get 'words segment-after) after-words)
 	(eve--set-segment-broll segment-after (and broll-orig (copy-alist broll-orig)))
-	(let ((first after-words)
+	(unless canonical
+          (let ((first after-words)
 	      (last (last after-words)))
 	  (when (and first last)
 	    (setf (alist-get 'start segment-after)
 		  (eve--coerce-number (alist-get 'start (car first))))
 	    (setf (alist-get 'end segment-after)
-		  (eve--coerce-number (alist-get 'end (car last))))))
+		  (eve--coerce-number (alist-get 'end (car last)))))))
+        (when canonical
+          (let ((boundary (alist-get 'start_tick (car after-words))))
+            (setf (alist-get 'end_tick segment-before) boundary
+                  (alist-get 'start_tick segment-after) boundary))
+          (dolist (half (list segment-before segment-after))
+            (eve--refresh-transcript-group half)))
 	;; Splice the new segments into the manifest
 	(let* ((head (cl-subseq segments 0 segment-index))
 	       (tail (cl-subseq segments (1+ segment-index)))
@@ -5495,8 +5648,8 @@ that starts at the word under point."
 	(when broll-orig
 	  (let* ((broll-before (eve--segment-broll segment-before))
 		 (broll-after (eve--segment-broll segment-after))
-		 (start-before (eve--coerce-number (alist-get 'start segment-before)))
-		 (end-before (eve--coerce-number (alist-get 'end segment-before)))
+		 (start-before (eve--source-seconds segment-before 'start))
+		 (end-before (eve--source-seconds segment-before 'end))
 		 (duration-before (and start-before end-before (- end-before start-before)))
 		 (orig-offset (alist-get 'start_offset broll-orig))
 		 (orig-duration (alist-get 'duration broll-orig))
@@ -5550,7 +5703,8 @@ that starts at the word under point."
 
 (defun eve--merge-segments-at-index (idx &optional force next-idx)
   "Merge segment at IDX with NEXT-IDX, optionally FORCE conflicts.
-When NEXT-IDX is nil, merge with the immediately following segment."
+When NEXT-IDX is nil, merge with the immediately following segment.
+FORCE cannot bypass v1.1 source-cut or source-clock preservation checks."
   (let* ((segments (eve--segments))
          (segment (nth idx segments))
          (next-index (or next-idx (1+ idx)))
@@ -5565,6 +5719,14 @@ When NEXT-IDX is nil, merge with the immediately following segment."
       (user-error "Merge target must follow current segment"))
     (when (eve--marker-p next)
       (user-error "Cannot merge across marker segments"))
+    (when (eve--canonical-editor-p)
+      (unless (and (equal (alist-get 'source segment) (alist-get 'source next))
+                   (integerp (alist-get 'start_tick next))
+                   (<= (alist-get 'end_tick segment) (alist-get 'start_tick next)))
+        (user-error "Cannot merge incompatible source clocks or backwards/overlapping source intervals"))
+      (unless (eq (null (alist-get 'words segment)) (null (alist-get 'words next)))
+        (user-error "Cannot merge timed and untimed captions without an explicit token binding")))
+    (eve--require-uncut-caption-groups (cl-subseq segments idx (1+ next-index)))
     (let ((conflicts (eve--merge-conflicts segment next)))
       (when (and conflicts
                  (not force)
@@ -5572,8 +5734,8 @@ When NEXT-IDX is nil, merge with the immediately following segment."
                                         (string-join conflicts ", ")))))
         (user-error "Merge conflicts: %s" (string-join conflicts ", "))))
     (eve--record-state)
-    (let* ((text-a (eve--stringify (alist-get 'text segment)))
-           (text-b (eve--stringify (alist-get 'text next)))
+    (let* ((text-a (eve--stringify (alist-get (if (eve--canonical-editor-p) 'display_text 'text) segment)))
+           (text-b (eve--stringify (alist-get (if (eve--canonical-editor-p) 'display_text 'text) next)))
            (combined-text
             (string-trim
              (string-join
@@ -5597,8 +5759,9 @@ When NEXT-IDX is nil, merge with the immediately following segment."
         (setf (alist-get 'speaker segment) (alist-get 'speaker next)))
       (when (and (null (eve--segment-broll segment)) (eve--segment-broll next))
         (eve--set-segment-broll segment (copy-tree (eve--segment-broll next) t)))
-      (setf (alist-get 'text segment)
-            (and (not (string-empty-p combined-text)) combined-text))
+      (unless (eve--canonical-editor-p)
+        (setf (alist-get 'text segment)
+              (and (not (string-empty-p combined-text)) combined-text)))
       (setf (alist-get 'words segment) (and merged-words merged-words))
       (let ((notes (seq-filter (lambda (chunk)
                                  (and chunk (not (string-empty-p chunk))))
@@ -5621,14 +5784,24 @@ When NEXT-IDX is nil, merge with the immediately following segment."
            (cl-delete-duplicates clean-tags
                                  :test #'string=
                                  :key #'eve--stringify))))
-      (if merged-words
+      (if (eve--canonical-editor-p)
+          (progn
+            (setf (alist-get 'end_tick segment) (alist-get 'end_tick next))
+            (if merged-words
+                (eve--refresh-transcript-group segment)
+              (eve--alist-set segment 'spoken_text
+                              (string-trim (string-join
+                                            (list (eve--stringify (alist-get 'spoken_text segment))
+                                                  (eve--stringify (alist-get 'spoken_text next))) " ")))
+              (eve--alist-set segment 'display_text combined-text)))
+        (if merged-words
           (let ((first-word (car merged-words))
                 (last-word (car (last merged-words))))
             (setf (alist-get 'start segment)
                   (eve--coerce-number (alist-get 'start first-word)))
             (setf (alist-get 'end segment)
                   (eve--coerce-number (alist-get 'end last-word))))
-        (setf (alist-get 'end segment) (alist-get 'end next)))
+        (setf (alist-get 'end segment) (alist-get 'end next))))
       (setq eve--visual-separators
             (cl-remove (eve--stringify next-id) eve--visual-separators
                        :test #'string= :count 1))
@@ -5705,22 +5878,26 @@ With prefix FORCE, merge despite metadata conflicts."
       (eve--render t))))
 
 (defun eve-edit-text (segment)
-  "Edit the text of SEGMENT (defaults to segment at point)."
+  "Edit SEGMENT display text without inventing timed-token bindings."
   (interactive (list (or (eve--segment-at-point)
-			 (user-error "No segment at point"))))
-  (eve--record-state)
-  (if (eve--marker-p segment)
-      (let* ((current (alist-get 'title segment))
-	     (new (read-string "Marker title: " (eve--stringify current))))
-	(setf (alist-get 'title segment) (unless (string-empty-p new) new))
-	(eve--mark-dirty)
-	(eve--render t)
-	(message "Updated marker title"))
-    (let* ((current (alist-get 'text segment))
-	   (new (read-string "Segment text: " current)))
-      (setf (alist-get 'text segment) new)
-      (eve--mark-dirty)
-      (eve--render t))))
+                         (user-error "No segment at point"))))
+  (let* ((marker (eve--marker-p segment))
+         (canonical (eve--canonical-editor-p))
+         (words (alist-get 'words segment))
+         (current (cond (marker (eve--stringify (alist-get 'title segment)))
+                        (canonical (or (alist-get 'display_text segment) ""))
+                        (t (alist-get 'text segment))))
+         (new (read-string (if marker "Marker title: " "Display text (one word per timed token for bulk edits): ") current)))
+    (when (and canonical words)
+      (eve--segment-panel-rephrase-values segment 0 (1- (length words)) new))
+    (eve--record-state)
+    (cond
+     (marker (eve--alist-set segment 'title (unless (string-empty-p new) new)))
+     ((and canonical words)
+      (eve--segment-panel-rephrase-range segment 0 (1- (length words)) new))
+     (t (eve--alist-set segment (if canonical 'display_text 'text) new)))
+    (eve--mark-dirty)
+    (eve--render t)))
 
 (defun eve-dwim-edit ()
   "Edit b-roll metadata or segment text depending on context at point."
@@ -5754,10 +5931,17 @@ With prefix FORCE, merge despite metadata conflicts."
     (eve--mark-dirty)
     (eve--render t)))
 
+(defun eve--require-legacy-timing-editor (operation)
+  "Reject OPERATION when its legacy seconds-only implementation is unsafe."
+  (when (equal (alist-get 'version eve--data) "1.1")
+    (user-error "Source-clock-aware %s is not yet supported for TJM v1.1; no changes made" operation)))
+
 (defun eve-edit-start-end (segment)
-  "Edit start and end timestamps of SEGMENT."
+  "Edit legacy start and end timestamps of SEGMENT.
+TJM v1.1 rejects this seconds-only editor without changing data or history."
   (interactive (list (or (eve--segment-at-point)
 			 (user-error "No segment at point"))))
+  (eve--require-legacy-timing-editor "manual time editing")
   (eve--record-state)
   (if (eve--marker-p segment)
       (let* ((current-source (eve--stringify (alist-get 'source segment)))
@@ -6177,8 +6361,8 @@ Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails
     (if (eve--marker-p seg)
         (eve--play-marker seg)
       (let* ((source (alist-get 'source seg))
-             (start (alist-get 'start seg))
-             (end (alist-get 'end seg))
+             (start (eve--source-seconds seg 'start))
+             (end (eve--source-seconds seg 'end))
              (source-entry (eve--source-by-id source)))
         (unless source-entry
           (user-error "Unknown source id: %s" source))
@@ -6230,10 +6414,10 @@ Collects all non-deleted segments from the same source, stores them in
                                           (eve--edit-deleted-p s)))))
                          all-segs)
              (lambda (a b)
-               (< (or (alist-get 'start a) 0.0)
-                  (or (alist-get 'start b) 0.0))))))
+               (< (or (eve--source-seconds a 'start) 0.0)
+                  (or (eve--source-seconds b 'start) 0.0))))))
       (let ((socket-path (concat (make-temp-name "/tmp/eve-mpv-") ".sock"))
-            (start-time (or (alist-get 'start seg) 0.0)))
+            (start-time (or (eve--source-seconds seg 'start) 0.0)))
         (eve--play-with-mpv abs-file start-time nil socket-path)
         ;; Set state AFTER eve--play-with-mpv: that function calls
         ;; eve-stop-playback → eve--ipc-teardown which clears these vars.
@@ -6695,8 +6879,8 @@ If SILENT is non-nil, only produce messages when failures occur."
 	issues)
     (dolist (segment (eve--segments))
       (unless (eve--marker-p segment)
-	(let ((start (eve--coerce-number (alist-get 'start segment)))
-	      (end (eve--coerce-number (alist-get 'end segment)))
+	(let ((start (eve--source-seconds segment 'start))
+	      (end (eve--source-seconds segment 'end))
 	      (words (alist-get 'words segment))
 	      (id (alist-get 'id segment)))
 	  (when (or (null start) (null end))
@@ -6711,9 +6895,9 @@ If SILENT is non-nil, only produce messages when failures occur."
                           eve-validation-suspicious-segment-duration)
                   issues))
 	  (dolist (word words)
-	    (let ((w-start (eve--coerce-number (alist-get 'start word)))
-		  (w-end (eve--coerce-number (alist-get 'end word)))
-		  (token (alist-get 'token word)))
+	    (let ((w-start (eve--source-seconds word 'start segment))
+		  (w-end (eve--source-seconds word 'end segment))
+		  (token (or (alist-get 'spoken word) (alist-get 'token word))))
 	      (when (or (null w-start) (null w-end))
 		(push (format "%s: word '%s' missing timing"
 			      (or id "<no-id>")
@@ -6885,8 +7069,8 @@ Shows duration and render state right after the buffer name."
       (let* ((id (eve--stringify (alist-get 'id segment)))
 	     (speaker (eve--stringify (alist-get 'speaker segment)))
 	     (source (eve--stringify (alist-get 'source segment)))
-	     (start (or (eve--display-time (alist-get 'start segment)) ""))
-	     (end (or (eve--display-time (alist-get 'end segment)) ""))
+	     (start (or (eve--display-time (eve--source-seconds segment 'start)) ""))
+	     (end (or (eve--display-time (eve--source-seconds segment 'end)) ""))
 	     (tags (eve--segment-tags segment))
 	     (notes (eve--stringify (eve--segment-notes segment)))
 	     (broll (eve--segment-broll segment))

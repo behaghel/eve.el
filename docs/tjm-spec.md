@@ -126,7 +126,9 @@ Conforming consumers MUST accept `"1.1"` and MUST treat any other value as
 unsupported.
 
 TJM v1.1 is not an additive alias for TJM v1. The v1 and v1.1 contracts differ
-in field names, timing authority, and render semantics.
+in field names, timing authority, and render semantics. Consumers MUST select
+the format by `version`, not by the presence of tick-like or similarly named
+extension members.
 
 ## 6. Sources
 
@@ -171,7 +173,10 @@ Producers targeting portability SHOULD prefer manifest-relative paths.
 One source tick equals `numerator / denominator` seconds.
 
 Every exact timing field tied to a source MUST be interpreted in that source's
-timebase.
+timebase. Editor playback and displayed source times and durations MUST use
+that same clock, including when seconds convenience fields are absent or
+contradict the ticks. Converting ticks to seconds for a read-only view MUST NOT
+replace or round the stored ticks or source timebase during a save/reopen cycle.
 
 Producers MUST NOT emit duplicate source identifiers.
 
@@ -236,7 +241,8 @@ when round-tripping.
 
 ### 8.3 Segment edit namespace
 
-When present, `segment.edit` MUST be an object. It carries mutable editorial
+When present, `segment.edit` MUST be an object, including `{}` when empty,
+not `null`. It carries mutable editorial
 instructions while `source`, `start_tick`, `end_tick`, `spoken_text`, and
 `words` remain the factual transcript and timing record.
 
@@ -293,7 +299,15 @@ Whitespace inside `display` MUST NOT create new timed tokens. All displayed
 words belonging to that token share its timing and act as one unit for media
 movement, deletion, and highlighting. Media-editing operations MUST act on the
 whole token, not on substrings of its display text. Display rewriting MUST NOT
-trigger automatic timing estimation or remapping.
+trigger automatic timing estimation or remapping. An editor MAY accept an
+explicit one-to-one replacement for several selected tokens. It MUST reject an
+ambiguous replacement rather than infer which replacement words belong to
+which timed token, create new timed words, or redistribute their intervals.
+Rejected edits MUST leave manifest data and edit history unchanged.
+
+Word-targeted editor actions MUST select the original timed token containing
+the focused display fragment, including a click inside a multiword fragment;
+a stale cached focus MUST NOT redirect the action to another token.
 
 ### 8.5 Segment-level timing and words
 
@@ -301,6 +315,31 @@ If a media segment supplies `words`, the segment's `start_tick` and `end_tick`
 SHOULD match the first and last remaining word timing after any editing step.
 
 Consumers that implement word-level editing SHOULD preserve word order exactly.
+
+### 8.6 Caption-group editing
+
+Splitting a media segment into caption groups MUST preserve its timed words,
+word order, and union of retained source coverage. A shared cut MUST lie between
+the preceding group's last word end and the following group's first word start;
+using an existing word edge as that cut does not estimate a new word boundary.
+The original outer source bounds MUST remain unchanged.
+
+Merging caption groups MUST preserve their word records and rebuild their
+spoken/display caches for the combined group. Editors MUST reject attempts to
+coerce different source clocks, backwards source intervals, or overlapping
+source intervals into one media segment. A force option MUST NOT bypass those
+constraints. Untimed plain captions MAY merge as text; mixing timed and untimed
+caption text MUST NOT invent token bindings.
+
+Regrouping MUST NOT reinstate or change source coverage removed by existing
+word or segment cuts, including filler removal under the selected render
+policy. A consumer unable to preserve those cuts MUST reject regrouping before
+changing manifest data or edit history. A force option MUST NOT bypass this
+constraint.
+
+Consumers MUST report unsupported source-clock editing operations before
+mutating manifest data or edit history. Seconds-only edits MUST NOT be reported
+as successful edits of authoritative v1.1 ticks.
 
 ## 9. Word Objects
 
@@ -347,12 +386,15 @@ round-tripping. Renderers MUST reject unknown legacy effective kind values.
 Filler classification is descriptive metadata. It does not itself delete or
 rewrite the word.
 
-When present, `word.edit` MUST be an object. The following interoperable
+When present, `word.edit` MUST be an object, including `{}` when empty,
+not `null`. The following interoperable
 `word.edit` members are defined in TJM v1.1:
 
 - `filler`: OPTIONAL boolean or the string `"no-filler"`;
 - `kind`: OPTIONAL legacy compatibility string;
 - `deleted`: OPTIONAL boolean.
+
+Known boolean edit flags MUST remain JSON booleans when false, not `null`.
 
 When `word.edit.deleted` is `true`, that word's content is marked for removal
 from rendered output without rewriting the underlying transcription facts.
@@ -708,8 +750,8 @@ Example configuration:
   "mode": "burn",
   "style": "karaoke",
   "reference_canvas": { "width": 1920, "height": 1080 },
-  "font": { "family": "Arial", "size": 48, "bold": true },
-  "placement": { "anchor": "bottom-center", "bottom_margin": 60 },
+  "font": { "family": "Arial", "size": 144, "bold": true },
+  "placement": { "anchor": "bottom-center", "bottom_margin": 180 },
   "color": "#FFFFFF",
   "outline": { "color": "#000000", "width": 3 },
   "highlight_color": "#FFD700"
