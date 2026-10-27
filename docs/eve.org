@@ -289,8 +289,14 @@ ordinals remain unsupported.
 Experimental backend status does not require force.  A recognizer/CTC boundary
 disagreement greater than 160 ms is recorded in =alignment.diagnostics= without
 blocking publication: disagreement alone does not establish that CTC is wrong.
-Unavailable recognizer timing for comparison remains a blocking quality concern.
-=--force= may accept recorded quality concerns, never invalid native intervals,
+Missing or invalid recognizer timing used only for comparison is also a
+non-blocking =recognizer_timing_unavailable= diagnostic when independent native
+alignment passes structural validation.  The report retains the original
+comparison boundaries as strings, or null for missing values, including
+non-finite values without invalid JSON.  This does not repair either estimate
+or certify word presence or timing accuracy.  Without an independent aligner,
+invalid recognizer word timing remains authoritative and blocks publication.
+=--force= may accept other recorded quality concerns, never invalid native intervals,
 changed tokens, source-bound violations or model errors.  Informational
 diagnostics alone never set the recorded =forced= flag, even with =--force=.
 Selected media envelopes are retained rather than shrunk to character spans.

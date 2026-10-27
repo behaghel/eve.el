@@ -309,10 +309,17 @@ def test_ctc_disagreement_is_nonblocking_and_never_changes_estimates(
 
 
 @pytest.mark.parametrize("force", [False, True])
-def test_unavailable_recognizer_timing_still_requires_audited_quality_override(
+@pytest.mark.parametrize(
+    "recognized_start,recognized_end",
+    [(None, None), (0.1, 0.1), (float("nan"), 0.4), (0.1, float("inf"))],
+    ids=["missing", "zero", "nonfinite-start", "nonfinite-end"],
+)
+def test_unavailable_comparison_timing_publishes_native_estimates_without_override(
     aligned_job: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     force: bool,
+    recognized_start: float | None,
+    recognized_end: float | None,
 ) -> None:
     media, output = aligned_job
     output.write_bytes(b"previous manifest")
@@ -327,36 +334,64 @@ def test_unavailable_recognizer_timing_still_requires_audited_quality_override(
                 "start": 0.1,
                 "end": 0.9,
                 "words": [
-                    {"token": "Hello", "start": None, "end": None},
+                    {
+                        "token": "Hello",
+                        "start": recognized_start,
+                        "end": recognized_end,
+                    },
                     {"token": "world.", "start": 0.5, "end": 0.9},
                 ],
             }
         ],
     )
-    assert main(
-        [
-            "transcribe",
-            str(media),
-            "--output",
-            str(output),
-            "--word-aligner",
-            "ctc",
-            "--alignment-report",
-            str(report),
-        ]
-        + (["--force"] if force else [])
-    ) == (0 if force else 1)
+    assert (
+        main(
+            [
+                "transcribe",
+                str(media),
+                "--output",
+                str(output),
+                "--word-aligner",
+                "ctc",
+                "--alignment-report",
+                str(report),
+            ]
+            + (["--force"] if force else [])
+        )
+        == 0
+    )
     decision = json.loads(report.read_text())
     audit = decision["alignment"]
-    assert decision["publication_permitted"] is force
-    assert audit["forced"] is force
-    assert audit["quality_concerns"][0]["code"] == "recognizer_timing_unavailable"
-    if force:
-        data = json.loads(output.read_text())
-        assert data["alignment"] == audit
-        assert data["segments"][0]["words"][0]["start_tick"] == 4801
-    else:
-        assert output.read_bytes() == b"previous manifest"
+    assert decision["publication_permitted"] is True
+    assert audit["forced"] is False
+    assert audit["qualification"] == "experimental"
+    assert audit["quality_concerns"] == []
+    (diagnostic,) = audit["diagnostics"]
+    assert diagnostic["code"] == "recognizer_timing_unavailable"
+    assert diagnostic["blocking"] is False
+    assert diagnostic["source"] == "clip01" and diagnostic["word_index"] == 0
+    assert diagnostic["recognizer_start_seconds"] == (
+        None if recognized_start is None else str(recognized_start)
+    )
+    assert diagnostic["recognizer_end_seconds"] == (
+        None if recognized_end is None else str(recognized_end)
+    )
+    # Non-finite comparison values must not introduce non-standard JSON numbers.
+    for artifact in (report, output):
+        json.loads(
+            artifact.read_text(), parse_constant=lambda value: pytest.fail(value)
+        )
+    data = json.loads(output.read_text())
+    tjm_v11.validate_manifest(data)
+    assert data["alignment"] == audit
+    assert [
+        (word["spoken"], word["start_tick"], word["end_tick"])
+        for word in data["segments"][0]["words"]
+    ] == [
+        ("Hello", 4801, 19205),
+        ("world.", 24001, 43205),
+    ]
+    assert media.read_bytes() == b"source-must-not-change"
 
 
 @pytest.mark.parametrize(
@@ -372,6 +407,8 @@ def test_unavailable_recognizer_timing_still_requires_audited_quality_override(
         "subtick",
         "count",
         "identity",
+        "failed-model",
+        "unavailable-model",
     ],
 )
 def test_force_never_bypasses_aligned_timing_integrity(
@@ -400,7 +437,15 @@ def test_force_never_bypasses_aligned_timing_integrity(
     ]
     if bad == "count":
         predicted.pop()
-    monkeypatch.setattr(alignment, "align_ctc", lambda *a, **kw: predicted)
+
+    def align(*args: object, **kwargs: object) -> list[SimpleNamespace]:
+        if bad == "failed-model":
+            raise alignment.AlignmentError("native inference failed")
+        if bad == "unavailable-model":
+            raise OSError("native model unavailable")
+        return predicted
+
+    monkeypatch.setattr(alignment, "align_ctc", align)
     assert (
         main(
             [

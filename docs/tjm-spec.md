@@ -897,10 +897,19 @@ When recognition and alignment boundary estimates differ by more than 160 ms,
 the producer MUST record a non-blocking `boundary_disagreement` observation in
 `alignment.diagnostics`. Disagreement alone MUST NOT block publication or require
 force: it does not establish that the acoustic aligner's estimate is wrong.
-Missing or invalid recognizer timing used only for comparison remains a quality
-concern, not permission to fabricate alignment timing. Quality concerns MUST
-block normal publication; an explicit per-run force option MAY override them
-only after all structural checks pass. Failed checks MUST leave any previous
+Missing or invalid recognizer timing used only for comparison MUST be recorded
+as a non-blocking `recognizer_timing_unavailable` diagnostic when independent
+acoustic alignment has passed all structural checks. The original comparison
+boundary values MUST be retained in a valid JSON representation. Unavailable
+comparison timing MUST NOT require force or permit fabricated alignment timing.
+Recognizer timing used as authoritative word timing remains subject to all word
+interval validation rules; an invalid authoritative interval MUST fail publication.
+The [comparison-policy decision](internal/alignment-comparison-policy.md) explains
+the distinction.
+
+Other concrete quality concerns MUST block normal publication; an explicit
+per-run force option MAY override them only after all structural checks pass.
+Failed checks MUST leave any previous
 output manifest unchanged. A quality override MUST NOT change the estimates.
 The `forced` flag records an actual quality override, not merely that a force
 option was supplied; informational diagnostics alone MUST NOT set it.

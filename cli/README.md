@@ -64,11 +64,16 @@ automatically. Manual region retranscription remains unchanged.
 Experimental status is a non-blocking notice. A recognizer/CTC start or end
 boundary disagreement **greater than 160 ms** is recorded in
 `alignment.diagnostics`, but does not block publication or require force:
-disagreement alone does not establish that CTC is wrong. Unavailable recognizer
-timing for comparison remains a blocking quality concern. `--force` may accept
-such concerns after structural validation; it cannot override missing/invalid
-native estimates,
-overlap, source bounds, collapsed sample ticks, changed tokens or model errors.
+disagreement alone does not establish that CTC is wrong. Missing or invalid
+recognizer timing used only for comparison is a non-blocking
+`recognizer_timing_unavailable` diagnostic after independent native alignment
+passes structural validation. Original comparison boundaries are retained as
+strings (or null for missing values), so non-finite values do not introduce
+invalid JSON. This does not certify word presence or timing accuracy. Without
+an independent aligner, invalid recognizer word timing still blocks publication.
+`--force` may accept other recorded quality concerns after structural validation;
+it cannot override missing/invalid native estimates, overlap, source bounds,
+collapsed sample ticks, changed tokens or model errors.
 Word alignment retains existing selected media rather than shrinking cuts to
 character spans. Envelopes expand to contain aligned words, then intersecting
 envelopes are partitioned jointly at midpoints between adjacent word intervals.

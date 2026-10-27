@@ -533,19 +533,30 @@ def _align_transcription(
                         f"{label}: overlapping or out-of-source aligned timing"
                     )
                 previous_end = end
+                recognizer_start, recognizer_end = word.get("start"), word.get("end")
                 try:
                     asr_start, asr_end = (
-                        Fraction(str(word.get("start"))),
-                        Fraction(str(word.get("end"))),
+                        Fraction(str(recognizer_start)),
+                        Fraction(str(recognizer_end)),
                     )
                     if asr_start < 0 or asr_end <= asr_start or asr_end > duration:
                         raise ValueError("invalid recognizer interval")
                 except (ValueError, ZeroDivisionError):
-                    concerns.append(
+                    diagnostics.append(
                         {
                             "code": "recognizer_timing_unavailable",
+                            "blocking": False,
                             "source": source,
                             "word_index": index,
+                            # Strings retain even NaN/Inf without invalid JSON.
+                            "recognizer_start_seconds": (
+                                None
+                                if recognizer_start is None
+                                else str(recognizer_start)
+                            ),
+                            "recognizer_end_seconds": (
+                                None if recognizer_end is None else str(recognizer_end)
+                            ),
                             "message": (
                                 f"{label}: recognizer timing unavailable "
                                 "for independent comparison"
