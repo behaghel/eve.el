@@ -19,6 +19,18 @@ The CLI is also the primary TJM v1.1 producer and renderer implementation in
 this repository. It owns exact-timing interpretation, filler-policy behavior,
 and deterministic render planning.
 
+## Development checks
+
+Run the full CLI health suite with `devenv -q shell -- ./scripts/check.sh`.
+It uses `pytest --require-media`: tests marked `media` must run, not silently
+skip when FFmpeg, fontconfig or a test font is missing. The Linux Python CI job
+uses the same declared devenv toolchain and portable DejaVu font. This does not
+substitute fonts requested by production manifests.
+
+Bare `pytest` remains useful for developer runs with optional media dependencies;
+legitimate platform-only skips, such as macOS system Arial on Linux, are allowed
+even in the full health suite.
+
 ## Transcription timing and v1.1 output
 
 `eve transcribe input.mp4 --output edit.tjm.json` writes a validated v1.1

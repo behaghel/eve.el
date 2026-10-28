@@ -906,6 +906,7 @@ def test_text_edit_prefers_nested_segment_edit_broll_with_legacy_fallback(
     )
 
 
+@pytest.mark.media
 @pytest.mark.skipif(
     shutil.which("ffmpeg") is None,
     reason="ffmpeg not available",

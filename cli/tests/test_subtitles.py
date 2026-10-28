@@ -405,6 +405,7 @@ def test_v11_subtitle_validation_is_not_silently_ignored() -> None:
         tjm_v11.parse_manifest(manifest)
 
 
+@pytest.mark.media
 @pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("fc-match") is None,
     reason="FFmpeg and fontconfig are required for the real render test",

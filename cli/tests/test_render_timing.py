@@ -16,9 +16,10 @@ import pytest
 from eve_cli import alignment, subtitles, tjm_v11
 from eve_cli.commands import text_edit, transcribe
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None, reason="FFmpeg unavailable"
-)
+pytestmark = [
+    pytest.mark.media,
+    pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg unavailable"),
+]
 
 
 def streams(path: Path) -> dict[str, dict[str, Any]]:

@@ -20,6 +20,7 @@
     pkgs.texinfo
     pkgs.ffmpeg
     pkgs.fontconfig
+    pkgs.dejavu_fonts
   ];
 
   env = {
@@ -30,6 +31,7 @@
       <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
       <fontconfig>
         <include>${pkgs.fontconfig.out}/etc/fonts/fonts.conf</include>
+        <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
         <dir>/System/Library/Fonts</dir>
         <dir>/Library/Fonts</dir>
       </fontconfig>
