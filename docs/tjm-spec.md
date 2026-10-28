@@ -673,6 +673,14 @@ that is absent from the manifest. Subtitle burning MUST preserve the assembled
 media timeline, including video presentation timestamps and audio duration,
 rather than stretch or shift it to match an assumed frame rate.
 
+Retained source frames MUST keep their source-relative presentation phase on
+the rendered timeline, to the representable precision of the source and output
+clocks. A cut between source frames MAY therefore yield a nonzero first video
+PTS; encoder time-base or container edit-list rounding MUST NOT add another
+shift. Input seeking or codec padding MUST NOT extend the exclusive end of a
+retained interval by admitting later source frames. Adding an embedded subtitle
+track MUST preserve the assembled clock just as subtitle burning does.
+
 ## 14. Subtitle and Display Cue Generation
 
 For consumers that derive subtitles from TJM:

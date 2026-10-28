@@ -501,3 +501,224 @@ def test_submillisecond_cuts_keep_samples_and_do_not_accumulate_padding(
     burned_info = streams(final)
     assert burned_info["audio"]["duration_ts"] == info["audio"]["duration_ts"]
     assert Fraction(burned_info["video"]["start_time"]) == 0
+
+
+def test_fractional_clock_fix_invalidates_old_clips_and_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"unchanged source identity")
+    item = {
+        "type": "segment",
+        "source_path": source,
+        "segment": {"start": 0.05, "end": 1.04},
+    }
+    current = (
+        text_edit.segment_cache_key(item, "final"),
+        text_edit._render_config_hash("final", "h264", 1.0),
+    )
+    monkeypatch.setattr(text_edit, "TIMELINE_RENDER_VERSION", "sample-accurate-v1")
+    old = (
+        text_edit.segment_cache_key(item, "final"),
+        text_edit._render_config_hash("final", "h264", 1.0),
+    )
+    assert all(new != stale for new, stale in zip(current, old))
+
+
+@pytest.mark.parametrize("burn_style", [None, "plain", "karaoke"])
+@pytest.mark.parametrize("source_b_frames", [0, 2])
+def test_fractional_frame_cuts_keep_source_clock_audio_and_highlights(
+    tmp_path: Path, burn_style: str | None, source_b_frames: int
+) -> None:
+    """A fractional cut retains native frame phase, not an invented zero/CFR grid."""
+    import numpy as np
+
+    from eve_cli.main import main
+
+    rate, width, height = 48000, 320, 180
+    ranges = [(2400, 49920), (118560, 212640), (220800, 283200)]
+    events = [(24024, 32664), (144144, 152784), (240240, 248880)]
+    samples = np.zeros(rate * 6, dtype=np.int16)
+    for index, (start, end) in enumerate(events):
+        time = np.arange(end - start) / rate
+        samples[start:end] = np.rint(
+            12000 * np.sin(2 * np.pi * ((900 + index * 400) * time + 900 * time**2))
+        ).astype(np.int16)
+    audio, source = tmp_path / "source.wav", tmp_path / "source.mp4"
+    with wave.open(str(audio), "wb") as stream:
+        stream.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+        stream.writeframes(samples.tobytes())
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "nullsrc=size=320x180:rate=30000/1001:duration=6,"
+            "geq=lum='16+219*mod(floor(N/pow(2,floor(X/40))),2)':cb=128:cr=128",
+            "-i",
+            str(audio),
+            "-c:v",
+            "libx264",
+            "-bf",
+            str(source_b_frames),
+            "-c:a",
+            "alac",
+            "-shortest",
+            str(source),
+        ],
+        check=True,
+    )
+    original_source = source.read_bytes()
+    source_times = subtitles.probe_frame_times(source)
+    manifest = {
+        "version": "1.1",
+        "sources": [
+            {
+                "id": "s",
+                "file": source.name,
+                "timebase": {"numerator": 1, "denominator": rate},
+            }
+        ],
+        "render": {"filler_policy": "keep", "preserve_short_gaps": 0},
+        "segments": [
+            {
+                "id": f"caption-{i}",
+                "source": "s",
+                "start_tick": start,
+                "end_tick": end,
+                "words": [
+                    {"spoken": label, "start_tick": event[0], "end_tick": event[1]}
+                ],
+            }
+            for i, ((start, end), event, label) in enumerate(
+                zip(ranges, events, ("ALPHA", "BETA", "GAMMA"))
+            )
+        ],
+    }
+    if burn_style:
+        if shutil.which("fc-match") is None:
+            pytest.skip("fontconfig required")
+        for family in ("DejaVu Sans", "Arial", "Inter", "Liberation Sans"):
+            try:
+                subtitles.resolve_font(family, True)
+                break
+            except subtitles.SubtitleError:
+                continue
+        else:
+            pytest.skip("No supported test font installed")
+        manifest["subtitles"] = {
+            "mode": "burn",
+            "style": burn_style,
+            "reference_canvas": {"width": width, "height": height},
+            "font": {"family": family, "size": 28, "bold": True},
+            "placement": {"anchor": "bottom-center", "bottom_margin": 15},
+            "color": "#FFFFFF",
+            "highlight_color": "#FFD700",
+            "outline": {"color": "#000000", "width": 1},
+        }
+    path, output = tmp_path / "edit.tjm.json", tmp_path / "output.mp4"
+    path.write_text(json.dumps(manifest))
+    original_manifest = path.read_bytes()
+    assert (
+        main(
+            [
+                "text-edit",
+                str(path),
+                "--output",
+                str(output),
+                "--quality",
+                "final",
+                "--no-cache",
+            ]
+            + (["--subtitles"] if burn_style else [])
+        )
+        == 0
+    )
+
+    def pictures(video: Path) -> np.ndarray:
+        raw = subprocess.check_output(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(video),
+                "-map",
+                "0:v:0",
+                "-fps_mode",
+                "passthrough",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "-",
+            ]
+        )
+        return np.frombuffer(raw, dtype=np.uint8).reshape(-1, height, width, 3)
+
+    def frame_ids(frames: np.ndarray) -> list[int]:
+        return [
+            sum((int(frame[20, 20 + bit * 40, 0]) > 128) << bit for bit in range(8))
+            for frame in frames
+        ]
+
+    assert frame_ids(pictures(source)) == list(range(len(source_times)))
+    expected_ids, expected_times, intervals, expected_audio = [], [], [], []
+    cursor = Fraction(0)
+    for (start, end), (on, off) in zip(ranges, events):
+        left, right = Fraction(start, rate), Fraction(end, rate)
+        for index, time in enumerate(source_times):
+            if left <= time < right:
+                expected_ids.append(index)
+                expected_times.append(cursor + time - left)
+        intervals.append(
+            (cursor + Fraction(on - start, rate), cursor + Fraction(off - start, rate))
+        )
+        expected_audio.extend(samples[start:end])
+        cursor += right - left
+    frames = pictures(output)
+    assert frame_ids(frames) == expected_ids
+    actual_times = subtitles.probe_frame_times(output)
+    assert len(actual_times) == len(expected_times)
+    info = streams(output)
+    tolerance = Fraction(info["video"]["time_base"]) + Fraction(1, 1000000)
+    assert all(
+        abs(actual - expected) <= tolerance
+        for actual, expected in zip(actual_times, expected_times)
+    )
+    # Nonzero first-frame PTS is legitimate; its source-relative phase is not
+    # permission for additional encoder/movie-timescale rounding.
+    assert abs(actual_times[0] - Fraction(251, 15000)) <= tolerance
+    audio_duration = int(info["audio"]["duration_ts"]) * Fraction(
+        info["audio"]["time_base"]
+    )
+    assert abs(audio_duration - cursor) <= Fraction(1, rate)
+    assert Fraction(info["audio"]["start_time"]) == 0
+    decoded = np.array(pcm(output), dtype=np.float64)
+    expected_signal = np.array(expected_audio, dtype=np.float64)
+    for on, off in intervals:
+        left, right = round(on * rate) + 600, round(off * rate) - 600
+        margin = 1600
+        template = expected_signal[left:right]
+        search = decoded[left - margin : right + margin]
+        correlation = np.correlate(search, template, mode="valid")
+        lag = int(np.argmax(correlation)) - margin
+        assert abs(lag) <= 1
+    if burn_style:
+        for frame, time in zip(frames, actual_times):
+            rgb = frame[height // 2 :].astype(np.int16)
+            gold = (
+                (rgb[:, :, 0] > 180)
+                & (rgb[:, :, 1] > 100)
+                & (rgb[:, :, 1] < 240)
+                & (rgb[:, :, 2] < 70)
+            )
+            active = burn_style == "karaoke" and any(
+                on <= time < off for on, off in intervals
+            )
+            assert (int(np.count_nonzero(gold)) > 10) is active
+    assert source.read_bytes() == original_source
+    assert path.read_bytes() == original_manifest

@@ -30,7 +30,7 @@ QUALITY_FINAL = "final"
 CODEC_H264 = "h264"
 CODEC_MJPEG = "mjpeg"
 INTERMEDIATE_AUDIO_CODEC = "alac"
-TIMELINE_RENDER_VERSION = "sample-accurate-v1"
+TIMELINE_RENDER_VERSION = "native-frame-clock-v2"
 
 _VIDEO_PROBE_CACHE: dict[pathlib.Path, dict[str, Any]] = {}
 
@@ -1041,6 +1041,8 @@ def mux_subtitles(video_path: pathlib.Path, subtitles_path: pathlib.Path) -> Non
             "mov_text",
             "-map",
             "1:0",
+            "-movie_timescale",
+            "1000000",
             str(tmp_path),
         ]
         run_ffmpeg(cmd, context="muxing subtitles into the final video")
@@ -1065,12 +1067,30 @@ def build_trim_command(
     _svf = _make_scale_vf(scale)
     duration = max(0.0, end - start)
     cmd = [FFMPEG, "-y", "-ss", f"{start:.9f}", "-to", f"{end:.9f}", "-i", str(source)]
+    # Input -to alone can admit a picture beyond the exclusive source end.
+    # Keep its native phase after seeking; do not round it onto an encoder CFR grid.
+    filters = [f"trim=end={duration:.9f}"]
     if _svf:
-        cmd.extend(["-vf", _svf])
+        filters.append(_svf)
+    cmd.extend(["-vf", ",".join(filters)])
     if audio_filter := audio_edge_fade_filter(duration):
         cmd.extend(["-af", audio_filter])
     cmd.extend(encoding_args(quality, codec))
-    cmd.extend(["-pix_fmt", out_pix_fmt, "-c:a", INTERMEDIATE_AUDIO_CODEC, str(dest)])
+    cmd.extend(
+        [
+            "-pix_fmt",
+            out_pix_fmt,
+            "-c:a",
+            INTERMEDIATE_AUDIO_CODEC,
+            "-fps_mode",
+            "passthrough",
+            "-enc_time_base",
+            "demux",
+            "-movie_timescale",
+            "1000000",
+            str(dest),
+        ]
+    )
     return cmd
 
 

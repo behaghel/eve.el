@@ -849,6 +849,12 @@ replace them, disable burning and then enable it again with the new defaults.
 These commands do not change media selections, token timings, or optional
 embedded subtitle tracks.  Burning re-encodes video; audio timing is preserved.
 
+Fractional cuts retain native frame phase, including at 29.97 fps.  The first
+video frame may legitimately have a nonzero presentation time when the source
+cut falls between frames.  Encoding, embedded-track muxing and burning preserve
+that phase rather than rounding it onto a new frame-rate grid.  Clock-rule
+changes invalidate older render caches and resume checkpoints automatically.
+
 Compilation output appears once in the bottom context view when context-panels
 supports buffer adoption, or in one standalone bottom window otherwise.
 Repeated renders keep one log view and preserve focus in the source buffer.

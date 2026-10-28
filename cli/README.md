@@ -261,3 +261,10 @@ preserves video presentation timestamps. Highlight boundaries are evaluated
 against actual frames, including variable-rate video. A timing boundary the
 subtitle backend cannot represent causes an explicit error instead of an
 approximate highlight.
+
+Fractional cuts retain the source frames' presentation phase rather than
+rounding each cut onto a new constant-rate grid. A nonzero first video PTS can
+be the correct source-relative phase; it must not acquire an extra offset from
+encoding or subtitle-track muxing. Source trimming excludes frames past the
+retained interval's end. Renderer clock revisions invalidate older cached clips
+and resume checkpoints automatically.
