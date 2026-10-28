@@ -15,7 +15,6 @@
   languages.python = {
     enable = true;
     package = pkgs.python312;
-    manylinux.enable = pkgs.stdenv.isLinux;
   };
 
   packages = [
