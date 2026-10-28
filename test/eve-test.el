@@ -2448,6 +2448,95 @@
    (setq-local eve--ruler-total-duration 0.0)
    (should (string= "" (eve--ruler-mode-line-string)))))
 
+(defun eve-test--documented-recipe (file)
+  "Read the first use-package Eve recipe in documentation FILE."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name file eve-test--root))
+    (goto-char (point-min))
+    (search-forward "(use-package eve")
+    (goto-char (match-beginning 0))
+    (plist-get (cddr (read (current-buffer))) :straight)))
+
+(defun eve-test--assert-documented-runtime (file)
+  "Check FILE's explicit runtime directory selectors in a scratch build.
+This stages the documented nested glob form, not a general straight emulator;
+actual straight file expansion and installation have a separate acceptance run."
+  (let* ((files (plist-get (eve-test--documented-recipe file) :files))
+         (build (make-temp-file "eve-package-build-" t))
+         (eve--source-directory (file-name-as-directory build))
+         (eve-cli-program "eve"))
+    (unwind-protect
+        (progn
+          (should (memq :defaults files))
+          (dolist (entry files)
+            (when (and (consp entry) (stringp (car entry)))
+              (dolist (pattern (cdr entry))
+                (dolist (source (file-expand-wildcards
+                                 (expand-file-name pattern eve-test--root)))
+                  (let ((target (expand-file-name
+                                 (concat (car entry) "/" (file-name-nondirectory source))
+                                 build)))
+                    (make-directory (file-name-directory target) t)
+                    (make-symbolic-link source target))))))
+          (cl-letf (((symbol-function 'executable-find) (lambda (_) nil)))
+            (should (equal (expand-file-name "scripts/run-cli.sh" build)
+                           (eve--resolve-cli))))
+          (let ((wheels (file-expand-wildcards
+                         (expand-file-name "cli/dist/eve_cli-*.whl" build))))
+            (should (= 1 (length wheels)))
+            (should (file-readable-p (car wheels))))
+          (should (equal (expand-file-name "docs" build) (eve--info-directory)))
+          (should (file-readable-p (expand-file-name "docs/dir" build)))
+          (should-not (file-exists-p (expand-file-name "cli/.venv" build)))
+          (should-not (file-exists-p (expand-file-name "scripts/benchmark-alignment.py" build))))
+      (delete-directory build t))))
+
+(ert-deftest eve-readme-recipe-delivers-bundled-runtime ()
+  "The quick-start recipe provides the CLI without a global executable."
+  (eve-test--assert-documented-runtime "README.org"))
+
+(ert-deftest eve-manual-recipe-delivers-bundled-runtime ()
+  "The full manual's recipe provides the same minimal runtime layout."
+  (eve-test--assert-documented-runtime "docs/eve.org"))
+
+(ert-deftest eve-info-recipe-delivers-bundled-runtime ()
+  "The shipped Info manual must contain a usable recipe, not a stale one."
+  (eve-test--assert-documented-runtime "docs/eve.info"))
+
+(ert-deftest eve-cold-package-compiles-and-loads-without-hydra ()
+  "A byte-compiled installation must not require optional Hydra."
+  (let* ((directory (make-temp-file "eve-cold-package-" t))
+         (source (expand-file-name "eve.el" directory))
+         (program (expand-file-name invocation-name invocation-directory)))
+    (unwind-protect
+        (progn
+          (copy-file (expand-file-name "eve.el" eve-test--root) source)
+          (with-temp-buffer
+            (let ((status
+                   (call-process
+                    program nil t nil "--batch" "-Q" "--eval"
+                    (format
+                     "(progn
+                        (require 'cl-lib)
+                        (require 'bytecomp)
+                        (setq features (delq 'hydra features))
+                        (when (fboundp 'defhydra) (fmakunbound 'defhydra))
+                        (let ((original-require (symbol-function 'require))
+                              (byte-compile-error-on-warn t))
+                          (cl-letf (((symbol-function 'require)
+                                     (lambda (feature &optional filename noerror)
+                                       (unless (eq feature 'hydra)
+                                         (funcall original-require feature filename noerror)))))
+                            (unless (byte-compile-file %S) (kill-emacs 1))
+                            (load-file %S)
+                            (unless (fboundp 'eve-mode) (kill-emacs 2))
+                            (eve--show-help))))"
+                     source (concat source "c")))))
+              (unless (equal status 0)
+                (ert-fail (format "Cold package failed (%s): %s"
+                                  status (buffer-string)))))))
+      (delete-directory directory t))))
+
 (ert-deftest eve-resolve-cli-uses-executable-find ()
   "Resolver returns executable-find result when it succeeds."
   (cl-letf (((symbol-function 'executable-find)

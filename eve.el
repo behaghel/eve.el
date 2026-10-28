@@ -44,6 +44,7 @@
   "Non-nil when optional context-panels support is available.")
 
 (declare-function image-file-name-p "image-mode" (filename))
+(declare-function eve-hydra/body "eve" ())
 (defvar context-panels-side-panel-buffer)
 (defvar context-panels-bottom-panel-buffer)
 (defvar context-panels-source-buffer)
@@ -1733,8 +1734,10 @@ CPU priority when `eve-auto-render-low-priority' is non-nil."
 	    (message "No compiled output for '%s'; compiling section..." (or title slug))
 	    (eve-compile))))))
 
+;; Keep the optional macro as data for cold byte-compilation without Hydra.
 (when (featurep 'hydra)
-  (defhydra eve-hydra (:hint nil :color teal)
+  (eval
+   '(defhydra eve-hydra (:hint nil :color teal)
     "
 Navigation        Edit              Fillers           Playback
 ──────────────   ──────────────   ──────────────   ──────────────────────
@@ -1804,7 +1807,7 @@ _?_ this help     _C-c C-p_ panels     _C-c C-s_ play source
     ("C-c C-b" eve-edit-broll-placeholders)
     ("C-c C-n" eve-edit-notes)
     ("?" nil "close")
-    ("q" nil "close")))
+    ("q" nil "close")) t))
 
 (defun eve--show-help ()
   "Show the eve keybinding cheatsheet.

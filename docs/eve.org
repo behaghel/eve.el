@@ -107,8 +107,19 @@ eve doctor --json
 
 #+begin_src emacs-lisp
 (use-package eve
-  :straight (:type git :host github :repo "behaghel/eve.el"))
+  :straight (:type git :host github :repo "behaghel/eve.el"
+             :files (:defaults
+                     ("scripts" "scripts/run-cli.sh")
+                     ("cli/dist" "cli/dist/*.whl")
+                     ("docs" "docs/eve.info" "docs/dir"))))
 #+end_src
+
+The explicit file groups are required: straight's defaults select Elisp files
+but do not preserve these runtime and manual subdirectories.  The launcher must
+remain at =scripts/run-cli.sh=, the wheel under =cli/dist/=, and the compiled
+manual under =docs/=.  Do not include a development =cli/.venv= or unrelated
+benchmark scripts.  After changing an existing recipe, run
+=M-x straight-rebuild-package RET eve RET= to refresh its file selection.
 
 **** Manual
 
@@ -124,7 +135,12 @@ Opening any =*.tjm.json= file then activates =eve-mode= automatically.
 *** Accessing the manual in Emacs
 
 Eve registers its bundled Info manual automatically when the package is loaded.
-Browse it with =M-x eve-info= or =C-h i m eve RET=.
+The recipe above includes the tracked, generated =docs/eve.info= and =docs/dir=;
+custom package recipes must retain those paths to provide the same integration.
+Browse it with =M-x eve-info= or =C-h i m eve RET=.  The source manual is also
+available as =docs/eve.org= and online in the repository.  Contributors regenerate
+the tracked Texinfo/Info artifacts after manual edits with
+=devenv -q shell -- docs=.
 
 ** Quick Start
 

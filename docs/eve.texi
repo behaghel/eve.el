@@ -76,6 +76,7 @@ The TJM Manifest
 Transcription
 
 * Starting transcription from Emacs::
+* Timing and output validity::
 * Backends::
 * Configuration::
 * Installing optional backends::
@@ -122,6 +123,7 @@ JSON templates
 Compilation and Rendering
 
 * Two modes draft and final::
+* Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
 * Dry-run analysis::
@@ -254,6 +256,9 @@ does not reproduce it in full.
 @item
 @strong{eve CLI} for transcription and rendering (see below)
 @item
+@strong{FFmpeg with libass} and @strong{fontconfig} (@samp{fc-match}) for burned-in captions;
+both tools are provided by this project's devenv environment
+@item
 @strong{hydra} (optional) for the @samp{?} keybinding cheatsheet popup
 @end itemize
 
@@ -267,7 +272,12 @@ creates a local virtualenv and installs the pre-built wheel from @samp{cli/dist/
 
 For standard in-Emacs use, that local bootstrap path means a separate global
 @samp{eve} install is optional.  The fallback path assumes Python 3.12 or later is
-available and that the package checkout is writable.
+available and that the package checkout is writable.  It reuses an existing
+@samp{cli/.venv}; it does not automatically refresh that environment when a new wheel
+is shipped.  After updating the package, refresh an existing CLI installation
+using its original installation method.  In a devenv development checkout,
+use the project's Python synchronization workflow rather than replacing its
+managed environment with a runtime wheel installation.
 
 If you want @samp{eve} on your @samp{PATH} for shell use, install it globally:
 
@@ -296,8 +306,19 @@ eve doctor --json
 
 @lisp
 (use-package eve
-  :straight (:type git :host github :repo "behaghel/eve.el"))
+  :straight (:type git :host github :repo "behaghel/eve.el"
+             :files (:defaults
+                     ("scripts" "scripts/run-cli.sh")
+                     ("cli/dist" "cli/dist/*.whl")
+                     ("docs" "docs/eve.info" "docs/dir"))))
 @end lisp
+
+The explicit file groups are required: straight's defaults select Elisp files
+but do not preserve these runtime and manual subdirectories.  The launcher must
+remain at @samp{scripts/run-cli.sh}, the wheel under @samp{cli/dist/}, and the compiled
+manual under @samp{docs/}.  Do not include a development @samp{cli/.venv} or unrelated
+benchmark scripts.  After changing an existing recipe, run
+@samp{M-x straight-rebuild-package RET eve RET} to refresh its file selection.
 
 @node Manual
 @subsubsection Manual
@@ -315,7 +336,12 @@ Opening any @samp{*.tjm.json} file then activates @samp{eve-mode} automatically.
 @subsection Accessing the manual in Emacs
 
 Eve registers its bundled Info manual automatically when the package is loaded.
-Browse it with @samp{M-x eve-info} or @samp{C-h i m eve RET}.
+The recipe above includes the tracked, generated @samp{docs/eve.info} and @samp{docs/dir};
+custom package recipes must retain those paths to provide the same integration.
+Browse it with @samp{M-x eve-info} or @samp{C-h i m eve RET}.  The source manual is also
+available as @samp{docs/eve.org} and online in the repository.  Contributors regenerate
+the tracked Texinfo/Info artifacts after manual edits with
+@samp{devenv -q shell -- docs}.
 
 @node Quick Start
 @section Quick Start
@@ -383,16 +409,19 @@ segments that haven't been cached yet need re-encoding.
 @node Structure
 @section Structure
 
-A TJM manifest is a JSON file with two top-level arrays:
+New transcriptions are TJM v1.1 JSON files.  Alongside the version and explicit
+render configuration, a manifest has two top-level arrays:
 
 @itemize
 @item
 @samp{sources} — a list of media files referenced by the edit.  Each entry has
-an @samp{id} used throughout the manifest and a @samp{file} path.
+an @samp{id} used throughout the manifest, a @samp{file} path relative to the manifest,
+and a rational @samp{timebase} for interpreting source-local ticks.
 
 @item
 @samp{segments} — the ordered timeline.  Each segment references a source, a
-start and end time (in seconds or ticks), and the spoken text.  Optional
+start and end ticks, and the spoken text.  Optional derived seconds are
+convenience values, not timing authority.  Optional
 fields carry per-word timestamps, b-roll metadata, speaker identity, tags,
 and notes.
 @end itemize
@@ -401,19 +430,25 @@ A minimal manifest:
 
 @example
 @{
-  "version": 1,
+  "version": "1.1",
   "sources": [
-    @{ "id": "clip01", "file": "raw/recording.mp4" @}
+    @{ "id": "clip01", "file": "raw/recording.mp4",
+      "timebase": @{ "numerator": 1, "denominator": 48000 @} @}
   ],
   "segments": [
     @{
-      "id": "clip01-s0001",
-      "source": "clip01",
-      "start": 12.34,
-      "end": 15.60,
-      "text": "This is what was said."
+      "id": "clip01-s0001", "source": "clip01",
+      "start_tick": 0, "end_tick": 48000, "start": 0, "end": 1,
+      "spoken_text": "Hello world.", "display_text": "Hello world.",
+      "words": [
+        @{ "spoken": "Hello", "start_tick": 0, "end_tick": 24000,
+          "start": 0, "end": 0.5 @},
+        @{ "spoken": "world.", "start_tick": 24000, "end_tick": 48000,
+          "start": 0.5, "end": 1 @}
+      ]
     @}
-  ]
+  ],
+  "render": @{ "filler_policy": "keep", "preserve_short_gaps": 0 @}
 @}
 @end example
 
@@ -445,6 +480,7 @@ the eve-mode view.
 
 @menu
 * Starting transcription from Emacs::
+* Timing and output validity::
 * Backends::
 * Configuration::
 * Installing optional backends::
@@ -470,6 +506,82 @@ file at point when nothing is marked).
 On failure, the @samp{*eve transcribe*} buffer appears so you can inspect the error
 output.
 
+@node Timing and output validity
+@section Timing and output validity
+
+The transcriber writes v1.1 with a per-source audio sample clock, canonical
+spoken words, and tick intervals.  Backend precision is retained through
+segmentation and converted once to nearest source-sample ticks.  The 16 kHz
+ASR working audio preserves leading media-time offsets.
+
+New manifests explicitly keep fillers and set @samp{render.preserve_short_gaps} to
+@samp{0}.  Change these saved render settings in the raw JSON companion when needed;
+they are authoritative for v1.1 rendering.
+
+Missing, reversed, zero-duration, or sub-tick-collapsed word intervals block
+publication of a successful transcription.  Eve does not add a tick or stretch
+neighbouring words to make validation pass.  Existing output is left untouched
+on validation failure.  Default transcription preserves ASR estimates without
+certifying acoustic accuracy.  The CLI's opt-in @samp{--word-aligner ctc} path uses
+unchanged native CTC estimates after English faster-whisper recognition; no human
+timing annotations are needed.  Unsigned English integers, including grouped
+thousands and sentence punctuation, use alignment-only verbalization.  @samp{11,}
+remains the same token and spelling while CTC matches @samp{ELEVEN}.  Multiword
+readings remain atomic.  Four-digit numbers compare cardinal and year readings
+against the same acoustic emissions, rather than assuming a year pronunciation.
+Selected readings and the pinned normalizer's version are saved in the alignment
+audit.  Ambiguous score ties or more than 32 reading paths fail without guessing.
+Decimals, signed/currency/percentage forms, leading zeros, numeric compounds and
+ordinals remain unsupported.
+
+Experimental backend status does not require force.  A recognizer/CTC boundary
+disagreement greater than 160 ms is recorded in @samp{alignment.diagnostics} without
+blocking publication: disagreement alone does not establish that CTC is wrong.
+Missing or invalid recognizer timing used only for comparison is also a
+non-blocking @samp{recognizer_timing_unavailable} diagnostic when independent native
+alignment passes structural validation.  The report retains the original
+comparison boundaries as strings, or null for missing values, including
+non-finite values without invalid JSON@.  This does not repair either estimate
+or certify word presence or timing accuracy.  Without an independent aligner,
+invalid recognizer word timing remains authoritative and blocks publication.
+@samp{--force} may accept other recorded quality concerns, never invalid native intervals,
+changed tokens, source-bound violations or model errors.  Informational
+diagnostics alone never set the recorded @samp{forced} flag, even with @samp{--force}.
+Selected media envelopes are retained rather than shrunk to character spans.
+If expanded caption envelopes intersect, they are partitioned jointly between
+adjacent word intervals, retaining exactly the same source coverage without
+repeating footage.  Non-overlapping captions and intended gaps stay unchanged.
+Word estimates, grouping and order do not change; genuinely overlapping word
+timings still fail instead of being repaired.
+
+Alignment writes a decision report beside the output (or at
+@samp{--alignment-report PATH}).  Successful manifests store the same @samp{alignment}
+audit record, including model/revision, concerns and any actual override.
+@samp{eve text-edit ... --report render.json} carries that record into its render
+report.  Subtitle settings still live in TJM@.
+
+In Emacs, set @samp{eve-transcribe-word-aligner} to @samp{"ctc"} to opt into this path
+for @samp{M-x eve-transcribe} and @samp{M-x eve-dired-transcribe}.  The default @samp{nil}
+keeps backend word timings.  The CTC path requires English @samp{faster-whisper}
+and the CLI's declared @samp{alignment} dependencies.  Its progress shows the word
+alignment stage, and success opens the manifest as usual.
+
+A normal run never passes @samp{--force}.  Use @samp{C-u M-x eve-transcribe} or
+@samp{C-u M-x eve-dired-transcribe} to request a quality override for that run;
+this requires the CTC opt-in and still cannot override invalid timing.
+A failure shows @samp{*eve transcribe*} and is never retried automatically.
+The alignment audit, including false booleans and empty arrays, survives
+editor saving and undo.  Empty segment tag lists also remain arrays in saved
+and render manifests.  CTC completion skips legacy suspicious-region ASR
+repair offers; the word-aligner setting does not change manual region
+retranscription commands.
+
+The pause diagnostic is provisional and non-blocking: Silero-VAD gaps of at
+least 250 ms, with 80 ms excluded at each edge.  Representative validation is
+still needed before it becomes a blocking gate.  Runtime completion does not
+certify the separate release target of 95% of reference boundaries within 80 ms
+(40 ms stretch), nor the operational target of 95% normal completion.
+
 @node Backends
 @section Backends
 
@@ -481,7 +593,7 @@ output.
 @tab Notes
 @item @samp{faster-whisper}
 @tab @samp{--backend faster-whisper}
-@tab Default.  Fast, local, good accuracy.
+@tab Default.  Fast, local inference.
 @item @samp{transformers}
 @tab @samp{--backend transformers}
 @tab HuggingFace models.  Needs optional deps.
@@ -496,18 +608,20 @@ receives default filler hotwords such as @samp{um}, @samp{uh}, @samp{like}, and 
 set @samp{eve-transcribe-hotwords} or pass @samp{--hotwords} to override them.  For
 @samp{transformers} and @samp{nemo}, choose a verbatim-friendly model instead.
 
-Good starting points:
-@itemize
-@item
-@samp{transformers}: @samp{nyrahealth/CrisperWhisper}
-@item
-@samp{nemo}: @samp{nvidia/parakeet-ctc-1.1b}
-@end itemize
+Choose recognition and alignment models whose published licenses permit the
+intended use of both their weights and generated outputs.  This is a
+non-commercial project; non-commercial research models may be evaluated here.
+Check model and output terms, not only the inference code's license, and verify
+production or operational deployment rights separately before routine use.
+
+Licensing eligibility and backend availability do not establish verbatim recall
+or timing accuracy.  Model quality must be qualified separately; a backend's
+@samp{--verbatim} option or a model's name is not a guarantee of filler preservation.
 
 @node Configuration
 @section Configuration
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
@@ -517,6 +631,9 @@ Good starting points:
 @item @samp{eve-transcribe-model}
 @tab @samp{"medium.en"}
 @tab Model identifier.
+@item @samp{eve-transcribe-word-aligner}
+@tab @samp{nil}
+@tab Set to @samp{"ctc"} for opt-in native word alignment on full-source transcription.
 @item @samp{eve-transcribe-verbatim}
 @tab @samp{t}
 @tab Pass @samp{--verbatim} to the backend.
@@ -603,11 +720,30 @@ Deleted content is shown or hidden with @samp{C-c C-h} (@samp{eve-hide-deleted-m
 @item
 @samp{s} or @samp{|} (@samp{eve-split-segment}) — splits the current segment at point,
 creating two segments with the text and timing divided at the cut.
+In the segment panel, the word under point takes precedence over older
+keyboard focus.  Modal keymaps can override @samp{s}; @samp{|} or
+@samp{M-x eve-segment-panel-split} invokes the panel split command directly.
 
 @item
 @samp{m} or @samp{)} (@samp{eve-merge-with-next}) — merges the current segment with the
 one below, combining text and adjusting the end time.
 @end itemize
+
+For v1.1, splitting partitions the original source interval at an existing
+word edge without retiming words or losing retained footage.  Merging preserves
+word records and refreshes the combined caption.  Different source clocks,
+backwards/overlapping source intervals, and mixed timed/untimed captions cannot
+be forced into one timed group.  Reordering remains valid without changing any
+source-local ticks.
+
+@strong{Regroup first, then delete:} v1.1 split/merge commands reject groups with active
+word cuts, including fillers removed by @samp{render.filler_policy = "drop"}.  Restore
+the cuts before regrouping, then reapply them.  A filler mark with policy
+@samp{"keep"} is not an active cut; explicit non-filler decisions remain respected.
+Merging also refuses to span a deleted group, including one hidden between the
+selected groups.  Force cannot bypass these checks.  This prevents the
+renderer’s per-group trimming rules from silently reinstating omitted footage;
+rejection leaves both data and undo history unchanged.
 
 @node Reordering
 @section Reordering
@@ -643,13 +779,28 @@ working on one chapter of a longer video.
 @section Inline editing
 
 Press @samp{e} (@samp{eve-dwim-edit}) to edit the text or metadata of the segment at
-point.  The command adapts to context: on a word it edits the spoken text; on
-a marker it edits the title.
+point.  On a marker it edits the title.  For timed v1.1 segments it changes
+@samp{display} fragments, never the factual @samp{spoken} tokens or their source ticks.
+The panel's @samp{i} action edits one focused token or the selected token range;
+@samp{E} edits the segment's token displays.
+
+A single v1.1 token can display a complete phrase, which highlights and deletes
+as one unit.  For a bulk replacement, supply one replacement word per selected
+timed token; otherwise edit the tokens individually.  Ambiguous replacements
+are rejected before changing data or undo history.  Capitalization and
+punctuation actions also change only token displays.  Karaoke caption text is
+kept synchronized with surviving token displays after word edits.
+
+The legacy seconds-only time editor and local transcript regeneration are not
+available for v1.1: they fail without changing data rather than silently
+rewriting aliases or losing exact clocks.  Explicit source-tick changes can be
+made through the raw JSON view.  Existing-timeline editing and export do not
+require transcription or timing review.
 
 @node Metadata
 @section Metadata
 
-@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Key
 @tab Command
 @tab Description
@@ -661,7 +812,7 @@ a marker it edits the title.
 @tab Set the speaker label for the segment.
 @item @samp{r}
 @tab @samp{eve-edit-start-end}
-@tab Edit the segment's start/end timecodes.
+@tab Edit legacy v1 timecodes; rejected safely for v1.1.
 @item @samp{C-c C-n}
 @tab @samp{eve-edit-notes}
 @tab Edit free-form notes for the segment.
@@ -700,9 +851,10 @@ Eve validates the manifest automatically on every save (controlled by
 @section Concept
 
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
-workflow is non-destructive: words are @emph{tagged} as fillers first, then
-@emph{optionally deleted}.  Tagged fillers are highlighted in the buffer with a
-distinct face and excluded from compilation.  You can untag them at any time.
+workflow is non-destructive: words are @emph{marked} as fillers first, then
+@emph{optionally deleted}.  Marked fillers are highlighted in the buffer with a
+distinct face and excluded from compilation.  You can mark a word as non-filler
+for this TJM file so future auto-tagging leaves it alone.
 
 @node Configuration (1)
 @section Configuration
@@ -714,11 +866,15 @@ distinct face and excluded from compilation.  You can untag them at any time.
 
 @samp{eve-filler-phrases} stores phrases as plain strings.  Matching is
 case-insensitive, punctuation-insensitive, and prefers the longest phrase first.
-For example, @samp{"you know"} matches adjacent words like @samp{you know,} and tags both
-words as a filler phrase; it does not tag separated words such as @samp{you ...
-know}.  The CLI @samp{eve tag-fillers --filler "you know"} follows the same adjacent
-phrase semantics and writes the canonical @samp{word.edit.kind = "filler"} metadata.
+For example, @samp{"you know"} matches adjacent words like @samp{you know,} and marks both
+words as a filler phrase; it does not mark separated words such as @samp{you ...
+know}.  Eve stores editable filler decisions in @samp{word.edit.filler}; legacy
+@samp{word.edit.kind = "filler"} metadata is still recognized.
 The list is persisted when you use the interactive add commands.
+
+@samp{eve-filler-exception-phrases} stores phrases that should not be auto-marked as
+fillers.  Exceptions win over filler phrases: if @samp{like} is a filler but
+@samp{would like} is an exception, the @samp{like} in @samp{would like} stays non-filler.
 
 The legacy @samp{eve-filler-regex} variable is still honoured for backwards
 compatibility but @samp{eve-filler-phrases} is preferred.
@@ -738,7 +894,7 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @tab Mark all tagged fillers as deleted.
 @item @samp{A}
 @tab @samp{eve-accept-filler}
-@tab Accept the filler at point by removing its filler tag.
+@tab Mark the filler at point as non-filler in this TJM file.
 @item @samp{]f} / @samp{[f}
 @tab @samp{eve-next-filler} / @samp{eve-previous-filler}
 @tab Jump to next / previous visible filler.
@@ -747,13 +903,16 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @tab Same as @samp{F} from the @samp{C-c} prefix map.
 @item —
 @tab @samp{M-x eve-tag-fillers}
-@tab Tag all matching words in the buffer.
+@tab Mark all matching words in the buffer.
 @item —
 @tab @samp{M-x eve-add-filler-at-point}
 @tab Add the word at point to @samp{eve-filler-phrases} and retag.
 @item —
 @tab @samp{M-x eve-add-filler-region}
 @tab Add the selected phrase to @samp{eve-filler-phrases} and retag.
+@item —
+@tab @samp{M-x eve-add-filler-exception}
+@tab Add the word/region as a future filler exception.
 @end multitable
 
 @node Auto-tagging on file open
@@ -761,8 +920,8 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 
 Fillers are tagged automatically every time a TJM manifest is opened.  If you
 add a new phrase to @samp{eve-filler-phrases}, reopen the file or run
-@samp{M-x eve-tag-fillers} to apply the updated list.  Accepted fillers are simply
-untagged, so explicit re-tagging may mark them as fillers again.
+@samp{M-x eve-tag-fillers} to apply the updated list.  Words explicitly marked as
+non-filler with @samp{A} are persisted in the TJM file and are not auto-tagged again.
 
 @node B-Roll
 @chapter B-Roll
@@ -1099,6 +1258,7 @@ across segment boundaries without restarting.
 
 @menu
 * Two modes draft and final::
+* Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
 * Dry-run analysis::
@@ -1117,6 +1277,70 @@ enough to catch mistakes before committing to a full export.
 @samp{C-u C-c C-c} compiles at final quality (H.264 medium/CRF 18) for delivery.
 
 The quality used can be changed permanently with @samp{eve-compile-quality}.
+
+@node Burned-in captions
+@section Burned-in captions
+
+An existing valid v1.1 timeline can be opened and exported directly; no new
+transcription or alignment is required.  Eve reads source-local ticks using
+each source's timebase, even without legacy @samp{start}, @samp{end}, @samp{text} or @samp{token}
+aliases.  Displayed seconds are a view: opening, configuring subtitles and
+saving do not round or replace the authoritative ticks.  Existing @samp{word.display}
+fragments appear together as one timed token, including multiword fragments;
+spoken text remains separate.
+
+Run @samp{M-x eve-enable-subtitle-burning} in a v1.1 TJM buffer or its context panel,
+then save with @samp{C-x C-s} or compile normally.  The command copies
+@samp{eve-subtitle-defaults} into the manifest's optional @samp{subtitles} object; the
+resulting video follows those saved settings, not the current Emacs session.
+Existing subtitle settings are left unchanged, including extension fields.
+Legacy v1 does not support burning: supply a valid v1.1 timeline instead.
+Changing only the version field does not add the required clock/tick data.
+
+The defaults use word highlighting, bold 144-pixel white text, a 3-pixel black
+outline, and a gold active token.  Captions are bottom-centered with a 180-pixel
+margin, scaled from a 1920×1080 reference canvas.  The large text-first profile
+is intentional: speech and captions can dominate the video rather than serve
+as a small annotation.  On a 1080×1920 portrait export, uniform scaling gives
+an 81-pixel font and a 101.25-pixel bottom margin.  One TJM segment is one caption;
+pauses leave the caption visible without highlighting, and captions disappear
+between segments.
+
+The requested font must be installed.  For example, to use DejaVu Sans for
+manifests that do not yet have subtitle settings:
+
+@lisp
+(with-eval-after-load 'eve
+  (setf (alist-get 'family (alist-get 'font eve-subtitle-defaults))
+        "DejaVu Sans"))
+@end lisp
+
+Customize the complete default profile with @samp{M-x customize-variable RET
+eve-subtitle-defaults RET}.  Its values are JSON-compatible alists: @samp{t} is true,
+@samp{:json-false} is false, and @samp{nil} is null.  To use plain captions instead of
+highlighting, set its @samp{style} member to @samp{"plain"}.
+
+Run @samp{M-x eve-disable-subtitle-burning} to remove the manifest's subtitle object.
+Enabling/disabling is undoable with Eve's normal undo command.  Changing Emacs
+defaults never replaces settings already saved in a TJM file; to deliberately
+replace them, disable burning and then enable it again with the new defaults.
+These commands do not change media selections, token timings, or optional
+embedded subtitle tracks.  Burning re-encodes video; audio timing is preserved.
+
+Fractional cuts retain native frame phase, including at 29.97 fps.  The first
+video frame may legitimately have a nonzero presentation time when the source
+cut falls between frames.  Encoding, embedded-track muxing and burning preserve
+that phase rather than rounding it onto a new frame-rate grid.  Clock-rule
+changes invalidate older render caches and resume checkpoints automatically.
+
+Compilation output appears once in the bottom context view when context-panels
+supports buffer adoption, or in one standalone bottom window otherwise.
+Repeated renders keep one log view and preserve focus in the source buffer.
+Render validation failures appear in that log without automatically opening
+Python source or the CLI launcher.  Invalid token timings identify the
+segment, token, and interval that need repair; missing fonts must be installed
+or replaced in the manifest settings.  Eve does not invent timing or silently
+substitute fonts to make a render succeed.
 
 @node Under the hood
 @section Under the hood
@@ -1523,7 +1747,7 @@ under each segment.  Useful when inspecting or adjusting precise cut points.
 These bindings are active in eve-mode.  The table below is auto-generated
 from the keymap by @samp{scripts/gen-docs}.
 
-@multitable {aaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Key
 @tab Command
 @item @samp{?}
@@ -1586,12 +1810,24 @@ from the keymap by @samp{scripts/gen-docs}.
 @tab @samp{eve-delete-segment}
 @item @samp{d}
 @tab @samp{eve-delete-word}
+@item @samp{S-TAB}
+@tab @samp{eve-toggle-all-marker-folds}
+@item @samp{<backtab>}
+@tab @samp{eve-toggle-all-marker-folds}
+@item @samp{TAB}
+@tab @samp{eve-toggle-marker-fold}
+@item @samp{@}}
+@tab @samp{eve-next-marker}
+@item @samp{@{}
+@tab @samp{eve-previous-marker}
 @item @samp{K}
 @tab @samp{eve-move-segment-up}
 @item @samp{J}
 @tab @samp{eve-move-segment-down}
+@item @samp{P}
+@tab @samp{eve-paste-segment-before}
 @item @samp{p}
-@tab @samp{eve-previous-segment}
+@tab @samp{eve-paste-segment}
 @item @samp{n}
 @tab @samp{eve-next-segment}
 @item @samp{k}
@@ -1687,7 +1923,7 @@ All eve variables belong to the @samp{eve} customization group.  Access it with
 The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @samp{scripts/gen-docs}.
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
@@ -1739,12 +1975,18 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-context-thumbnails-enabled}
 @tab @samp{t}
 @tab Whether Eve context-panel timestamp rows show video thumbnails.
+@item @samp{eve-filler-exception-phrases}
+@tab @samp{nil}
+@tab Phrases that should not be auto-tagged as fillers.
 @item @samp{eve-filler-phrases}
 @tab @samp{("um" "uh")}
 @tab Filler words/phrases to tag in transcripts.
 @item @samp{eve-filler-regex}
 @tab @samp{("\\`um\\'" "\\`uh\\'")}
 @tab Regexps matched against word text when tagging filler words.
+@item @samp{eve-gap-indicator-duration}
+@tab @samp{5.0}
+@tab Source gap duration in seconds above which Eve shows gap indicators.
 @item @samp{eve-line-spacing}
 @tab @samp{2}
 @tab Additional pixel spacing between lines in `eve-mode' buffers.
@@ -1781,6 +2023,9 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-show-words-by-default}
 @tab @samp{nil}
 @tab If non-nil, show per-word timings when rendering segments.
+@item @samp{eve-subtitle-defaults}
+@tab @samp{(...)}
+@tab TJM subtitle configuration copied when enabling burning in a manifest.
 @item @samp{eve-transcribe-backend}
 @tab @samp{"faster-whisper"}
 @tab Backend passed to `eve transcribe'.
@@ -1790,15 +2035,27 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-transcribe-model}
 @tab @samp{"medium.en"}
 @tab Model passed to `eve transcribe'.
+@item @samp{eve-transcribe-offer-reprocess-suspicious}
+@tab @samp{t}
+@tab Whether to offer suspicious-region retranscription after transcription.
+@item @samp{eve-transcribe-suspicious-gap-duration}
+@tab @samp{5.0}
+@tab Source gap duration in seconds above which transcription cleanup is offered.
 @item @samp{eve-transcribe-tag-fillers}
 @tab @samp{t}
 @tab Whether `eve transcribe' should tag filler words.
 @item @samp{eve-transcribe-verbatim}
 @tab @samp{t}
 @tab Whether `eve transcribe' should preserve verbatim output.
+@item @samp{eve-transcribe-word-aligner}
+@tab @samp{nil}
+@tab Optional word aligner for full-source transcription commands.
 @item @samp{eve-validation-on-save}
 @tab @samp{t}
 @tab Whether TJM buffers should be validated automatically on save.
+@item @samp{eve-validation-suspicious-segment-duration}
+@tab @samp{10.0}
+@tab Segment duration in seconds above which validation flags a warning.
 @item @samp{eve-validation-time-tolerance}
 @tab @samp{0.1}
 @tab Permitted slack (in seconds) when comparing segment and word timings.
