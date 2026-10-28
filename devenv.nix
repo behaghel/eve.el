@@ -12,9 +12,14 @@
     };
   };
 
+  languages.python = {
+    enable = true;
+    package = pkgs.python312;
+    manylinux.enable = pkgs.stdenv.isLinux;
+  };
+
   packages = [
     pkgs.git
-    pkgs.python312
     pkgs.uv
     pkgs.pixi
     pkgs.texinfo
