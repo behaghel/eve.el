@@ -8,10 +8,21 @@ on:
 jobs:
   elisp:
     runs-on: ubuntu-latest
+    env:
+      EVE_CONTEXT_PANELS_DIR: ${{ github.workspace }}/.test-deps/context-panels
+      EVE_REQUIRE_CONTEXT_PANELS: '1'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout pinned optional test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: behaghel/context-panels
+          ref: a507d85e5add9ef72340a8087683fed437a922e2
+          path: .test-deps/context-panels
+          persist-credentials: false
 
       - name: Setup Emacs
         uses: jcs090218/setup-emacs@master

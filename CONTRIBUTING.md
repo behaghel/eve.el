@@ -44,6 +44,24 @@ devenv shell -- docs
 
 Use `devenv shell -- test-all` for the combined test suite. The old `devenv shell -- test` command is stale and should not be used.
 
+## Optional context-panel integration tests
+
+Context panels remain optional at runtime. For full integration coverage, use
+an explicit checkout rather than a machine-specific load path. CI checks out
+`behaghel/context-panels` at `a507d85e5add9ef72340a8087683fed437a922e2`.
+Point the test runner at a checkout of that revision:
+
+```bash
+EVE_CONTEXT_PANELS_DIR=/path/to/context-panels \
+EVE_REQUIRE_CONTEXT_PANELS=1 devenv -q shell -- test-elisp
+```
+
+The same variables apply to `devenv -q shell -- ci`. Required mode fails if
+the dependency cannot load or any ERT test skips, including an incompatible
+integration API. With no variables set, standalone developer runs may skip
+optional integration tests. The runner never downloads dependencies or loads
+your personal Emacs configuration.
+
 ## Recommended Flow
 
 1. Make the smallest change that solves the problem.
@@ -56,6 +74,10 @@ Use `devenv shell -- test-all` for the combined test suite. The old `devenv shel
 GitHub Actions currently runs the following checks from `.github/workflows/test.yml`.
 
 ### Emacs Lisp job
+
+The job checks out the pinned context-panels test dependency under
+`.test-deps/context-panels` and sets `EVE_CONTEXT_PANELS_DIR` to its absolute
+path plus `EVE_REQUIRE_CONTEXT_PANELS=1` before running:
 
 ```bash
 chmod +x scripts/install-elpa-deps
@@ -88,8 +110,7 @@ chmod +x scripts/gen-docs scripts/check-doc-drift
 ### Python job
 
 ```bash
-chmod +x scripts/check.sh scripts/startup-health-check.sh scripts/sync-python.sh scripts/lint.sh scripts/build.sh scripts/run-cli.sh
-./scripts/check.sh
+nix run --accept-flake-config github:cachix/devenv/v2.4.0 -- -q shell -- ./scripts/check.sh
 ```
 
 If you want local parity with the repo's full checks, `devenv shell -- ci` is the closest single entry point.

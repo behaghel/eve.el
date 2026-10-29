@@ -3,9 +3,34 @@ set -euo pipefail
 
 export HOME=${HOME:-$PWD}
 
-if ls test/*-test.el >/dev/null 2>&1; then
-  emacs --batch -Q -L . -l ert $(for f in test/*-test.el; do printf " -l %q" "$f"; done) -f ert-run-tests-batch-and-exit
-else
+args=(--batch -Q -L . -l ert)
+if [[ -n "${EVE_CONTEXT_PANELS_DIR:-}" ]]; then
+  if [[ ! -r "$EVE_CONTEXT_PANELS_DIR/context-panels.el" ]]; then
+    echo "Context-panels test dependency missing at $EVE_CONTEXT_PANELS_DIR" >&2
+    exit 1
+  fi
+  args+=(-L "$EVE_CONTEXT_PANELS_DIR")
+fi
+if [[ "${EVE_REQUIRE_CONTEXT_PANELS:-0}" == 1 ]]; then
+  args+=(--eval "(unless (require 'context-panels nil t) (message \"Required context-panels test dependency is unavailable\") (kill-emacs 1))")
+fi
+
+shopt -s nullglob
+tests=(test/*-test.el)
+if (( ${#tests[@]} == 0 )); then
   echo "No tests found under test/" >&2
   exit 1
 fi
+for file in "${tests[@]}"; do
+  args+=(-l "$file")
+done
+if [[ "${EVE_REQUIRE_CONTEXT_PANELS:-0}" == 1 ]]; then
+  args+=(--eval '(let ((stats (ert-run-tests-batch t)))
+    (when (> (ert-stats-skipped stats) 0)
+      (message "Required context-panels tests skipped: %d" (ert-stats-skipped stats)))
+    (kill-emacs (if (and (zerop (ert-stats-completed-unexpected stats))
+                         (zerop (ert-stats-skipped stats))) 0 1)))')
+else
+  args+=(-f ert-run-tests-batch-and-exit)
+fi
+exec emacs "${args[@]}"

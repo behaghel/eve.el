@@ -32,9 +32,52 @@
   (provide 'hydra))
 
 (add-to-list 'load-path eve-test--root)
-(when (file-directory-p "/Users/hubertbehaghel/ws/context-panels")
-  (add-to-list 'load-path "/Users/hubertbehaghel/ws/context-panels"))
 (require 'eve)
+
+(defun eve-test--ert-runner-fixture (required library skip)
+  "Run an isolated ERT fixture with REQUIRED, LIBRARY and SKIP controls."
+  (let* ((root (make-temp-file "eve-ert-runner-" t))
+         (default-directory (file-name-as-directory root))
+         (process-environment (copy-sequence process-environment))
+         (dependency (expand-file-name "optional dependency" root)))
+    (unwind-protect
+        (progn
+          (make-directory "test")
+          (when (eq library t)
+            (make-directory dependency)
+            (with-temp-file (expand-file-name "context-panels.el" dependency)
+              (insert "(provide 'context-panels)\n")))
+          (with-temp-file "test/fixture-test.el"
+            (insert "(require 'ert)\n"
+                    "(ert-deftest fixture ()\n"
+                    "  (require 'context-panels nil t)\n"
+                    "  (skip-unless (featurep 'context-panels))\n"
+                    (if skip "  (ert-skip \"simulated missing integration API\"))\n"
+                      "  (should (featurep 'context-panels)))\n")))
+          (setenv "EVE_REQUIRE_CONTEXT_PANELS" (if required "1" nil))
+          (setenv "EVE_CONTEXT_PANELS_DIR" (and library dependency))
+          (with-temp-buffer
+            (let ((status (call-process
+                           "bash" nil t nil
+                           (expand-file-name "scripts/ert" eve-test--root))))
+              (list status (buffer-string)))))
+      (delete-directory root t))))
+
+(ert-deftest eve-ert-runner-context-dependency-contract ()
+  "Integration mode requires the dependency and rejects skipped coverage."
+  (dolist (case '((nil nil nil 0 nil)
+                  (nil t nil 0 "1 results as expected")
+                  (t nil nil 1 "Required context-panels test dependency")
+                  (t missing nil 1 "Context-panels test dependency missing at")
+                  (t t nil 0 "1 results as expected")
+                  (t t t 1 "Required context-panels tests skipped")))
+    (pcase-let* ((`(,required ,library ,skip ,expected ,message) case)
+                 (`(,status ,output)
+                  (eve-test--ert-runner-fixture required library skip)))
+      (ert-info ((format "required=%S library=%S skip=%S\n%s"
+                         required library skip output))
+        (should (equal status expected))
+        (when message (should (string-match-p message output)))))))
 
 (defconst eve-test--sample-data
   '((version . 1)
