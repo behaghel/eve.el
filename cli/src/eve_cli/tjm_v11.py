@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from .subtitles import SubtitleError, validate_configuration
+
 type JsonObject = dict[str, object]
 type JsonArray = list[object]
 
@@ -29,6 +31,11 @@ def parse_manifest(data: object) -> JsonObject:
 
     render = _expect_object(normalized.get("render"), "render")
     _validate_render(render)
+    if "subtitles" in normalized:
+        try:
+            validate_configuration(normalized["subtitles"])
+        except SubtitleError as exc:
+            raise ValidationError(str(exc)) from exc
 
     segments = _expect_array(normalized.get("segments"), "segments")
     _validate_segments(segments, source_ids)
@@ -189,7 +196,9 @@ def _validate_media_segment(
     if words_value is not None:
         words = _expect_array(words_value, f"segments[{index}].words")
         for word_index, raw_word in enumerate(words):
-            _validate_word(raw_word, index, word_index, start_tick, end_tick)
+            _validate_word(
+                raw_word, index, word_index, start_tick, end_tick, str(segment["id"])
+            )
 
     _validate_segment_edit(segment.get("edit"), f"segments[{index}].edit")
 
@@ -235,6 +244,7 @@ def _validate_word(
     word_index: int,
     segment_start_tick: int,
     segment_end_tick: int,
+    segment_id: str,
 ) -> None:
     word = _expect_object(raw_word, f"segments[{segment_index}].words[{word_index}]")
     start_tick = _expect_int(
@@ -246,7 +256,9 @@ def _validate_word(
     )
     if end_tick <= start_tick:
         raise ValidationError(
-            f"segments[{segment_index}].words[{word_index}] has non-positive duration"
+            f"segments[{segment_index}].words[{word_index}] "
+            f"(segment '{segment_id}', token {word.get('spoken')!r}) "
+            f"has non-positive duration (start_tick={start_tick}, end_tick={end_tick})"
         )
     if start_tick < segment_start_tick or end_tick > segment_end_tick:
         raise ValidationError(

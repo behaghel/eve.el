@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
+import sys
 from collections.abc import Sequence
 
-from eve_cli import __version__
+from eve_cli import __version__, subtitles, tjm_v11
 from eve_cli.commands import batch, denoise, doctor, text_edit, transcribe, trim_fillers
 
 tag_fillers = importlib.import_module("eve_cli.commands.tag_fillers")
@@ -39,4 +41,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if handler is None:
         parser.print_help()
         return 1
-    return int(handler(args))
+    try:
+        return int(handler(args))
+    except (subtitles.SubtitleError, tjm_v11.ValidationError, OSError) as error:
+        if getattr(args, "json", False):
+            payload = (
+                {"valid": False, "errors": [{"message": str(error)}], "warnings": []}
+                if getattr(args, "validate", False)
+                else {"error": str(error)}
+            )
+            print(json.dumps(payload))
+        else:
+            print(f"[eve {args.command}] ERROR: {error}", file=sys.stderr)
+        return 1

@@ -96,7 +96,8 @@ A TJM v1.1 manifest MUST be a JSON object with the following top-level members:
 - `version`: REQUIRED string format version;
 - `sources`: REQUIRED array of source descriptors;
 - `segments`: REQUIRED array of timeline entries;
-- `render`: REQUIRED deterministic render configuration object.
+- `render`: REQUIRED deterministic render configuration object;
+- `subtitles`: OPTIONAL subtitle rendering configuration object (Section 14.1).
 
 Additional top-level members are allowed for forward compatibility. Editors
 SHOULD preserve unknown members when practical.
@@ -125,7 +126,9 @@ Conforming consumers MUST accept `"1.1"` and MUST treat any other value as
 unsupported.
 
 TJM v1.1 is not an additive alias for TJM v1. The v1 and v1.1 contracts differ
-in field names, timing authority, and render semantics.
+in field names, timing authority, and render semantics. Consumers MUST select
+the format by `version`, not by the presence of tick-like or similarly named
+extension members.
 
 ## 6. Sources
 
@@ -170,7 +173,10 @@ Producers targeting portability SHOULD prefer manifest-relative paths.
 One source tick equals `numerator / denominator` seconds.
 
 Every exact timing field tied to a source MUST be interpreted in that source's
-timebase.
+timebase. Editor playback and displayed source times and durations MUST use
+that same clock, including when seconds convenience fields are absent or
+contradict the ticks. Converting ticks to seconds for a read-only view MUST NOT
+replace or round the stored ticks or source timebase during a save/reopen cycle.
 
 Producers MUST NOT emit duplicate source identifiers.
 
@@ -235,7 +241,8 @@ when round-tripping.
 
 ### 8.3 Segment edit namespace
 
-When present, `segment.edit` MUST be an object. It carries mutable editorial
+When present, `segment.edit` MUST be an object, including `{}` when empty,
+not `null`. It carries mutable editorial
 instructions while `source`, `start_tick`, `end_tick`, `spoken_text`, and
 `words` remain the factual transcript and timing record.
 
@@ -282,12 +289,57 @@ The display token for a word is:
 1. `word.display` when present and non-empty;
 2. otherwise `word.spoken`.
 
+A word object is an atomic timed editing token. Its `display` string MAY contain
+multiple written words or differ from `spoken` in spelling, punctuation, or
+meaning. Rewriting `display` MUST NOT change the token's identity, source timing,
+spoken content, or underlying media. For example, changing the display from
+`"$25"` to `"$2"` leaves the original spoken audio unchanged.
+
+Whitespace inside `display` MUST NOT create new timed tokens. All displayed
+words belonging to that token share its timing and act as one unit for media
+movement, deletion, and highlighting. Media-editing operations MUST act on the
+whole token, not on substrings of its display text. Display rewriting MUST NOT
+trigger automatic timing estimation or remapping. An editor MAY accept an
+explicit one-to-one replacement for several selected tokens. It MUST reject an
+ambiguous replacement rather than infer which replacement words belong to
+which timed token, create new timed words, or redistribute their intervals.
+Rejected edits MUST leave manifest data and edit history unchanged.
+
+Word-targeted editor actions MUST select the original timed token containing
+the focused display fragment, including a click inside a multiword fragment;
+a stale cached focus MUST NOT redirect the action to another token.
+
 ### 8.5 Segment-level timing and words
 
 If a media segment supplies `words`, the segment's `start_tick` and `end_tick`
 SHOULD match the first and last remaining word timing after any editing step.
 
 Consumers that implement word-level editing SHOULD preserve word order exactly.
+
+### 8.6 Caption-group editing
+
+Splitting a media segment into caption groups MUST preserve its timed words,
+word order, and union of retained source coverage. A shared cut MUST lie between
+the preceding group's last word end and the following group's first word start;
+using an existing word edge as that cut does not estimate a new word boundary.
+The original outer source bounds MUST remain unchanged.
+
+Merging caption groups MUST preserve their word records and rebuild their
+spoken/display caches for the combined group. Editors MUST reject attempts to
+coerce different source clocks, backwards source intervals, or overlapping
+source intervals into one media segment. A force option MUST NOT bypass those
+constraints. Untimed plain captions MAY merge as text; mixing timed and untimed
+caption text MUST NOT invent token bindings.
+
+Regrouping MUST NOT reinstate or change source coverage removed by existing
+word or segment cuts, including filler removal under the selected render
+policy. A consumer unable to preserve those cuts MUST reject regrouping before
+changing manifest data or edit history. A force option MUST NOT bypass this
+constraint.
+
+Consumers MUST report unsupported source-clock editing operations before
+mutating manifest data or edit history. Seconds-only edits MUST NOT be reported
+as successful edits of authoritative v1.1 ticks.
 
 ## 9. Word Objects
 
@@ -334,12 +386,15 @@ round-tripping. Renderers MUST reject unknown legacy effective kind values.
 Filler classification is descriptive metadata. It does not itself delete or
 rewrite the word.
 
-When present, `word.edit` MUST be an object. The following interoperable
+When present, `word.edit` MUST be an object, including `{}` when empty,
+not `null`. The following interoperable
 `word.edit` members are defined in TJM v1.1:
 
 - `filler`: OPTIONAL boolean or the string `"no-filler"`;
 - `kind`: OPTIONAL legacy compatibility string;
 - `deleted`: OPTIONAL boolean.
+
+Known boolean edit flags MUST remain JSON booleans when false, not `null`.
 
 When `word.edit.deleted` is `true`, that word's content is marked for removal
 from rendered output without rewriting the underlying transcription facts.
@@ -605,10 +660,40 @@ insert the source gap only when that choice is documented as part of the
 renderer's supported b-roll behavior. Repository consumers SHOULD keep this
 behavior stable across runs.
 
+### 13.6 Temporal integrity
+
+Renderers MUST derive retained media intervals from source ticks and timebases,
+not from millisecond-rounded convenience values. Audio boundaries are selected
+on the source sample grid; video is represented by its actual presentation
+frames. Repeated cuts and concatenations MUST NOT accumulate codec priming,
+padding, or per-clip duration-rounding errors into the intended timeline.
+
+Codec/container bookkeeping MUST NOT introduce an initial audio/video offset
+that is absent from the manifest. Subtitle burning MUST preserve the assembled
+media timeline, including video presentation timestamps and audio duration,
+rather than stretch or shift it to match an assumed frame rate.
+
+Retained source frames MUST keep their source-relative presentation phase on
+the rendered timeline, to the representable precision of the source and output
+clocks. A cut between source frames MAY therefore yield a nonzero first video
+PTS; encoder time-base or container edit-list rounding MUST NOT add another
+shift. Input seeking or codec padding MUST NOT extend the exclusive end of a
+retained interval by admitting later source frames. Adding an embedded subtitle
+track MUST preserve the assembled clock just as subtitle burning does.
+
 ## 14. Subtitle and Display Cue Generation
 
 For consumers that derive subtitles from TJM:
 
+- each non-deleted media segment with displayable text defines one caption;
+  consumers MUST NOT silently regroup words into separate caption units;
+- splitting or merging media segments changes the caption units accordingly;
+- captions MAY wrap across multiple lines, but all of a segment's caption text
+  appears together; consumers MUST NOT automatically split the segment or shrink
+  its configured font to fit long text; editors SHOULD warn about captions that
+  exceed the available display area;
+- captions appear only during their segment's rendered interval; preserved gaps
+  between segments MUST NOT extend the preceding caption;
 - subtitle time starts at `0` in rendered timeline space, not source-media time;
 - marker segments do not emit normal subtitle cues;
 - renderable marker segments still occupy subtitle time, so later cues MUST be
@@ -628,6 +713,113 @@ timeline-space labels using the accumulated rendered duration at the point where
 the marker appears. When deriving a marker label, consumers SHOULD prefer
 `title`, then `display_text`, then `id`.
 
+### 14.1 Subtitle rendering configuration
+
+The OPTIONAL top-level `subtitles` object specifies subtitle burning and visual
+styling as part of the resulting video. These settings belong to the manifest,
+not to a renderer's or editor's session preferences. Omitting this object does
+not request burned-in subtitles and does not change the cue-generation rules
+above or prevent consumers from exporting separate or embedded subtitle tracks.
+
+Subtitle burning requires a supported TJM v1.1-or-later format. It is not defined
+for legacy TJM v1; consumers MUST reject burn-in requests on v1 manifests rather
+than interpret their seconds-based fields as v1.1 ticks. Adding `subtitles` or
+changing only `version` does not upgrade a legacy manifest. This specification
+defines only version `"1.1"`; consumers MUST reject unsupported future versions.
+
+When present, `subtitles` has these members:
+
+- `mode`: REQUIRED string, `"burn"`; captions are permanently rendered into the
+  video pixels, independent of player subtitle-track selection;
+- `style`: REQUIRED string, `"plain"` or `"karaoke"`;
+- `reference_canvas`: OPTIONAL object with positive integer `width` and `height`,
+  defaulting to `1920` and `1080` when the object is absent;
+- `font`: REQUIRED object with non-empty string `family`, positive numeric `size`,
+  and boolean `bold`;
+- `placement`: REQUIRED object with `anchor`, whose supported value is
+  `"bottom-center"`, and non-negative numeric `bottom_margin`;
+- `color`: REQUIRED base text color;
+- `outline`: REQUIRED object with `color` and non-negative numeric `width`;
+- `highlight_color`: REQUIRED active-word color when `style` is `"karaoke"`;
+  OPTIONAL otherwise.
+
+Colors MUST use `"#RRGGBB"` notation, with hexadecimal RGB components. Font size
+and outline width, as well as the bottom margin from the output frame's bottom
+edge to the caption block's bottom edge, are measured in pixels on the reference
+canvas. Renderers MUST scale these dimensions uniformly by the smaller of
+output-width/reference-width and output-height/reference-height; changing
+output resolution MUST NOT stretch
+letter shapes or change the intended relative text size.
+
+Example configuration:
+
+```json
+"subtitles": {
+  "mode": "burn",
+  "style": "karaoke",
+  "reference_canvas": { "width": 1920, "height": 1080 },
+  "font": { "family": "Arial", "size": 144, "bold": true },
+  "placement": { "anchor": "bottom-center", "bottom_margin": 180 },
+  "color": "#FFFFFF",
+  "outline": { "color": "#000000", "width": 3 },
+  "highlight_color": "#FFD700"
+}
+```
+
+Producers MUST serialize the selected styling values into the manifest rather
+than rely on private user preferences to reproduce them. Editors MUST preserve
+existing subtitle configuration unless the user changes it. The example values
+are a usable starting configuration, not a requirement that editors replace
+existing choices.
+
+### 14.2 Word-synchronized highlighting
+
+The `"plain"` style uses the base text color throughout each cue. The
+`"karaoke"` style uses `highlight_color` only for the currently spoken word;
+that token's entire display fragment MUST return to the base color when its
+spoken interval ends. If the display fragment contains several written words,
+they highlight together using the original token timing, not invented timings
+for the individual displayed words. No token is highlighted during gaps.
+During a pause within a segment, its caption remains visible in the base color.
+The outline color remains independent of the active-word text color.
+Karaoke MUST NOT progressively recolor already spoken
+words or assign unrelated colors to individual characters.
+
+Highlight intervals MUST derive from authoritative word ticks and source
+timebases, mapped onto the same rendered timeline as the video. Cuts, deleted
+segments and words, dropped fillers, preserved gaps, and renderable markers MUST
+have the same timing effects on video, subtitle cues, and word highlights.
+Removed words MUST NOT emit highlights. A token is active on a frame exactly
+when that frame's presentation timestamp falls in one of its retained spoken
+intervals, including the start and excluding the end. Consumers MUST use actual
+presentation timestamps rather than infer a constant-rate grid for variable-rate
+video. If a subtitle backend cannot distinguish frames across a required timing
+boundary, the renderer MUST report that limitation rather than choose a guessed
+boundary.
+
+Consumers MUST NOT substitute evenly
+spaced or estimated word timings for missing timing or unresolved alignment
+between display text and word objects.
+
+Token display strings provide the binding between caption text and source-word
+timing; consumers MUST NOT infer new bindings from the rewritten text. For
+karaoke, caption text MUST be derived from the surviving tokens' display strings
+using Section 8.4. When `display_text` is supplied, it MUST agree with that derived
+text; producers that maintain it MUST keep it synchronized after token edits.
+Plain captions MAY use arbitrary segment-level `display_text` without timed
+word highlighting.
+
+### 14.3 Subtitle configuration validation
+
+Validators MUST reject invalid types, missing required subtitle members,
+unsupported `mode` or `style` values, invalid colors, non-positive reference
+canvas dimensions or font size, negative outline width or bottom margin, and
+unsupported placement anchors. Renderers MUST report an error rather than
+silently omit burning or requested word highlighting when they cannot honor the
+configuration. If the requested font family or bold face is unavailable,
+renderers MUST report a clear error rather than silently substitute a different
+font. An editor MAY preserve a configuration it cannot render.
+
 ## 15. Producer Requirements
 
 A conforming TJM v1.1 producer:
@@ -642,8 +834,8 @@ A conforming TJM v1.1 producer:
 - MUST emit supported `segment.edit.broll.mode` and
   `segment.edit.broll.audio` values only;
 - MUST emit supported `render.filler_policy` values only;
-- SHOULD emit filler classification in `word.edit.kind` rather than legacy
-  top-level `word.kind`;
+- SHOULD emit filler classification in `word.edit.filler` rather than legacy
+  `word.edit.kind` or top-level `word.kind`;
 - SHOULD emit stable, unique `id` values for sources and segments;
 - SHOULD emit `display_text` explicitly on spoken media segments;
 - SHOULD preserve unknown members when editing an existing manifest unless the
@@ -653,6 +845,102 @@ A conforming TJM v1.1 producer:
 
 Plain transcription producers MAY omit word kind on all words. In that case,
 consumers treat the words as lexical by default.
+
+Producers MUST preserve available timing precision through transcription
+segmentation until conversion to the declared source clock. They MUST NOT first
+round backend timings to milliseconds. A word whose interval is missing,
+reversed, zero-duration, or collapses to zero ticks MUST NOT be published as a
+valid timed word. Producers MUST NOT stretch or redistribute intervals solely
+to satisfy validation; any alignment repair requires evidence from the source
+audio. Output MUST satisfy the manifest validation rules before being reported
+as successfully produced.
+
+### 15.1 Automatic alignment and quality overrides
+
+Automatic word-alignment output MUST use acoustic estimates from the source,
+without a required human timing or review step. It MUST preserve recognized
+token identity and order. Caption segmentation MAY follow alignment; it MUST
+NOT redistribute word intervals. Missing, non-finite, negative, zero, reversed,
+overlapping, out-of-source, or source-tick-collapsed aligned intervals MUST fail
+publication, even when a quality override is requested. An unavailable model or
+an unsupported transcript MUST NOT be replaced by fabricated estimates.
+
+Overlapping CTC inference windows MUST preserve each output frame's native
+source-grid identity and cover that grid exactly once. Context emissions MAY be
+discarded only where another window owns the same source-grid frames. Missing,
+duplicated or shifted native frames MUST fail rather than be interpolated,
+resampled or retimed. Producer metadata MUST record the inference policy,
+source-sample windows, retained frame ranges and native grid geometry.
+
+English CTC alignment MAY verbalize unsigned integers and grouped thousands
+for acoustic matching only. Original `spoken`/display spelling and token identity
+MUST remain unchanged. A multiword reading MUST remain one original timed token;
+its interval MUST come from the first and last native acoustic spans, never
+from proportional allocation or interpolation. Four-digit numbers MAY have
+both cardinal and year readings, including supported English conjunction
+variants. The reading MUST be selected by native CTC path score over the same
+acoustic emissions, not by assuming every four-digit number is a year. These
+scores rank readings; they are not calibrated proof that a word was spoken.
+Selected readings, normalizer library/version and search limits MUST be recorded
+in producer metadata. Unsupported numeric forms, unresolved score ties and
+pronunciation searches exceeding the supported bound MUST fail without guessing.
+
+Generated caption envelopes MAY retain valid recognizer-selected media and
+expand to include their aligned words. Overlapping envelopes MUST be partitioned
+jointly without changing the union of retained source intervals, duplicating
+coverage, or changing word timing, identity, grouping or order. A shared caption
+boundary MUST lie between the preceding caption's last word end and the next
+caption's first word start. The midpoint is a presentation partition, not an
+estimated word boundary. Non-overlapping envelopes and intended gaps MUST remain
+unchanged. Shared boundaries MUST be serialized consistently on the source clock.
+Overlapping word intervals remain invalid and MUST NOT be repaired by this step.
+
+Runtime quality checks are distinct from reference-based accuracy qualification.
+The release accuracy target is at least 95% of word boundaries within 80 ms of
+reviewed reference boundaries; 40 ms is a separately reported stretch target.
+Ordinary runtime success MUST NOT claim to certify that accuracy. An experimental
+backend's qualification status alone MUST NOT require a quality override.
+
+When recognition and alignment boundary estimates differ by more than 160 ms,
+the producer MUST record a non-blocking `boundary_disagreement` observation in
+`alignment.diagnostics`. Disagreement alone MUST NOT block publication or require
+force: it does not establish that the acoustic aligner's estimate is wrong.
+Missing or invalid recognizer timing used only for comparison MUST be recorded
+as a non-blocking `recognizer_timing_unavailable` diagnostic when independent
+acoustic alignment has passed all structural checks. The original comparison
+boundary values MUST be retained in a valid JSON representation. Unavailable
+comparison timing MUST NOT require force or permit fabricated alignment timing.
+Recognizer timing used as authoritative word timing remains subject to all word
+interval validation rules; an invalid authoritative interval MUST fail publication.
+The [comparison-policy decision](internal/alignment-comparison-policy.md) explains
+the distinction.
+
+Other concrete quality concerns MUST block normal publication; an explicit
+per-run force option MAY override them only after all structural checks pass.
+Failed checks MUST leave any previous
+output manifest unchanged. A quality override MUST NOT change the estimates.
+The `forced` flag records an actual quality override, not merely that a force
+option was supplied; informational diagnostics alone MUST NOT set it.
+
+Clear pauses MUST remain unhighlighted. A provisional pause diagnostic uses
+pauses of at least 250 ms, excluding an 80 ms uncertainty margin at each edge.
+Unvalidated pause-detector observations MUST be identified as provisional, not
+presented as established quality failures or as evidence of accuracy. Runtime
+pause checks require validation on representative recordings before their
+observations are used as blocking quality concerns. Ordinary completion and
+quality-rejection rates SHOULD be measured separately from boundary accuracy;
+at least 95% normal completion on representative recordings is the operational
+target, not justification to weaken checks.
+
+An automatic alignment producer MUST record its engine, model identifier,
+revision, qualification status, non-blocking diagnostics, quality concerns and
+whether a quality override was actually used in a top-level `alignment` object. This producer metadata is
+an extension under Section 4; it does not change authoritative word ticks or
+render settings. An alignment decision report MUST preserve the same record
+and state whether publication is permitted. A requested render report MUST
+preserve that record too. Consumers MUST NOT interpret recorded override
+metadata as permission to bypass validation. Absence of an alignment record
+MUST NOT be interpreted as acoustic certification.
 
 ## 16. Consumer Requirements
 
@@ -669,6 +957,14 @@ A conforming TJM v1.1 consumer:
   carry renderable `segment.edit.broll` with usable duration data;
 - SHOULD preserve unknown members for forward compatibility when operating as an
   editor or round-tripper.
+
+Editing frontends MUST preserve the JSON types inside `alignment` metadata
+through loading, saving and undo, including false booleans, empty arrays, empty
+objects and null. An explicit new alignment operation MAY replace this record.
+Full-source transcription frontends MUST request quality overrides only on an
+explicit per-run action, never through an automatic forced retry. Completing a
+CTC-aligned transcription MUST NOT trigger a legacy ASR timing-repair offer that
+could replace the aligned estimates under the original audit record.
 
 ## 17. Validation and Error Handling
 
@@ -730,7 +1026,22 @@ At minimum, a v1.1 implementation SHOULD be tested against these cases:
 - invalid version value;
 - invalid or missing source timebase;
 - invalid filler word timing outside its segment;
-- invalid unsupported render policy or b-roll mode.
+- invalid unsupported render policy or b-roll mode;
+- valid plain and karaoke subtitle burning configurations;
+- omitted subtitle configuration without implicit burning;
+- subtitle size scaling from the default reference canvas;
+- karaoke boundaries after cuts, filler removal, gaps, and renderable markers;
+- karaoke gaps with no active-word highlight;
+- invalid subtitle configuration or unavailable word timing/alignment;
+- bottom-centered placement with reference-scaled bottom margins;
+- one caption per segment, including after segment splitting and merging;
+- multiline wrapping without automatic segmentation or font shrinking;
+- no caption during inter-segment gaps, and visible unhighlighted captions during
+  intra-segment pauses;
+- single-token display rewrites to multiple written words without media or
+  timing changes, with the whole display fragment highlighted together;
+- whole-token media movement and deletion after display rewriting;
+- an unavailable requested font reported without silent substitution.
 
 ## Appendix A. Valid Minimal Manifest
 

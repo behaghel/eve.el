@@ -8,6 +8,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'info)
+(require 'compile)
 
 (defvar context-panels-side-panel-buffer)
 (defvar context-panels-bottom-panel-buffer)
@@ -31,9 +32,52 @@
   (provide 'hydra))
 
 (add-to-list 'load-path eve-test--root)
-(when (file-directory-p "/Users/hubertbehaghel/ws/context-panels")
-  (add-to-list 'load-path "/Users/hubertbehaghel/ws/context-panels"))
 (require 'eve)
+
+(defun eve-test--ert-runner-fixture (required library skip)
+  "Run an isolated ERT fixture with REQUIRED, LIBRARY and SKIP controls."
+  (let* ((root (make-temp-file "eve-ert-runner-" t))
+         (default-directory (file-name-as-directory root))
+         (process-environment (copy-sequence process-environment))
+         (dependency (expand-file-name "optional dependency" root)))
+    (unwind-protect
+        (progn
+          (make-directory "test")
+          (when (eq library t)
+            (make-directory dependency)
+            (with-temp-file (expand-file-name "context-panels.el" dependency)
+              (insert "(provide 'context-panels)\n")))
+          (with-temp-file "test/fixture-test.el"
+            (insert "(require 'ert)\n"
+                    "(ert-deftest fixture ()\n"
+                    "  (require 'context-panels nil t)\n"
+                    "  (skip-unless (featurep 'context-panels))\n"
+                    (if skip "  (ert-skip \"simulated missing integration API\"))\n"
+                      "  (should (featurep 'context-panels)))\n")))
+          (setenv "EVE_REQUIRE_CONTEXT_PANELS" (if required "1" nil))
+          (setenv "EVE_CONTEXT_PANELS_DIR" (and library dependency))
+          (with-temp-buffer
+            (let ((status (call-process
+                           "bash" nil t nil
+                           (expand-file-name "scripts/ert" eve-test--root))))
+              (list status (buffer-string)))))
+      (delete-directory root t))))
+
+(ert-deftest eve-ert-runner-context-dependency-contract ()
+  "Integration mode requires the dependency and rejects skipped coverage."
+  (dolist (case '((nil nil nil 0 nil)
+                  (nil t nil 0 "1 results as expected")
+                  (t nil nil 1 "Required context-panels test dependency")
+                  (t missing nil 1 "Context-panels test dependency missing at")
+                  (t t nil 0 "1 results as expected")
+                  (t t t 1 "Required context-panels tests skipped")))
+    (pcase-let* ((`(,required ,library ,skip ,expected ,message) case)
+                 (`(,status ,output)
+                  (eve-test--ert-runner-fixture required library skip)))
+      (ert-info ((format "required=%S library=%S skip=%S\n%s"
+                         required library skip output))
+        (should (equal status expected))
+        (when message (should (string-match-p message output)))))))
 
 (defconst eve-test--sample-data
   '((version . 1)
@@ -63,6 +107,497 @@
        (setq-local eve--data (copy-tree eve-test--sample-data t))
        (eve--render)
        ,@body)))
+
+(defmacro eve-test-with-v11-buffer (&rest body)
+  "Execute BODY with valid v1.1 fields plus legacy convenience aliases."
+  (declare (indent 0))
+  `(eve-test-with-buffer
+    (setf (alist-get 'version eve--data) "1.1"
+          (alist-get 'render eve--data) '((filler_policy . "keep") (preserve_short_gaps . 0)))
+    (dolist (source (eve--sources))
+      (eve--alist-set source 'timebase '((numerator . 1) (denominator . 1000))))
+    (dolist (segment (eve--segments))
+      (eve--alist-set segment 'start_tick (round (* 1000 (alist-get 'start segment))))
+      (eve--alist-set segment 'end_tick (round (* 1000 (alist-get 'end segment))))
+      (eve--alist-set segment 'spoken_text (alist-get 'text segment))
+      (eve--alist-set segment 'display_text (alist-get 'text segment))
+      (dolist (word (alist-get 'words segment))
+        (eve--alist-set word 'spoken (alist-get 'token word))
+        (eve--alist-set word 'start_tick (round (* 1000 (alist-get 'start word))))
+        (eve--alist-set word 'end_tick (round (* 1000 (alist-get 'end word))))))
+    ,@body))
+
+(ert-deftest eve-v11-buffer-fixture-has-authoritative-native-fields ()
+  "The hybrid fixture must contain real canonical fields, not local-only conses."
+  (eve-test-with-v11-buffer
+   (should (equal '((numerator . 1) (denominator . 1000))
+                  (alist-get 'timebase (car (eve--sources)))))
+   (let* ((segment (car (eve--segments)))
+          (word (cadr (alist-get 'words segment))))
+     (should (= 1000 (alist-get 'start_tick segment)))
+     (should (equal "alpha beta gamma delta" (alist-get 'spoken_text segment)))
+     (should (equal "beta" (alist-get 'spoken word)))
+     (should (= 1500 (alist-get 'start_tick word)))
+     (should-not (eve-validate t)))))
+
+(defconst eve-test--canonical-v11-data
+  '((version . "1.1")
+    (sources . (((id . "clip") (file . "clip.mp4")
+                 (timebase . ((numerator . 1) (denominator . 48000))))))
+    (render . ((filler_policy . "keep") (preserve_short_gaps . 0)))
+    (segments . (((id . "seg-1") (source . "clip")
+                  (start_tick . 48000) (end_tick . 192000)
+                  (spoken_text . "alpha beta gamma delta")
+                  (display_text . "Alpha two written words gamma delta")
+                  (words . (((id . "a") (spoken . "alpha") (display . "Alpha")
+                             (start_tick . 48000) (end_tick . 72000))
+                            ((id . "b") (spoken . "beta") (display . "two written words")
+                             (start_tick . 72000) (end_tick . 96000))
+                            ((id . "c") (spoken . "gamma") (display . "")
+                             (start_tick . 120000) (end_tick . 144000))
+                            ((id . "d") (spoken . "delta")
+                             (start_tick . 144000) (end_tick . 192000))))))))
+  "Canonical v1.1 input without legacy text, token or seconds aliases.")
+
+(defmacro eve-test-with-canonical-v11-buffer (&rest body)
+  "Execute BODY with an alias-free v1.1 manifest."
+  (declare (indent 0))
+  `(eve-test-with-buffer
+    (setq-local eve--data (copy-tree eve-test--canonical-v11-data t))
+    (eve--render)
+    ,@body))
+
+(ert-deftest eve-canonical-v11-renders-atomic-display-fragments ()
+  "Canonical tokens show display text without splitting their timed identity."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments)))
+          (words (alist-get 'words segment))
+          (view (eve--segment-render-data segment))
+          (spans (plist-get view :word-spans)))
+     (should (eve-test--match-range "Alpha two written words gamma delta"))
+     (should (= 4 (length spans)))
+     (should (eq (nth 2 (nth 1 spans)) (nth 1 words)))
+     (goto-char (car (eve-test--match-range "written")))
+     (let ((info (eve--word-info-at-point)))
+       (should (= 1 (plist-get info :word-index)))
+       (should (equal "two written words" (plist-get info :word-text))))
+     (should (equal '("beta") (eve--word-strings (nth 1 words)))))))
+
+(ert-deftest eve-canonical-v11-plays-source-clock-not-convenience-values ()
+  "Source playback and durations use ticks, including a non-unit numerator."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((buffer-file-name "/tmp/eve-canonical.tjm.json")
+          (segment (car (eve--segments)))
+          (source (car (eve--sources)))
+          observed)
+     (setf (alist-get 'numerator (alist-get 'timebase source)) 2)
+     (nconc segment '((start . 99.0) (end . 100.0)))
+     (cl-letf (((symbol-function 'file-exists-p) (lambda (_) t))
+               ((symbol-function 'eve--play-with-mpv)
+                (lambda (file start end &optional _socket)
+                  (setq observed (list file start end)))))
+       (eve-play-segment segment)
+       (should (equal '("/tmp/clip.mp4" 2.0 8.0) observed))
+       (eve-play-source)
+       (should (equal '("/tmp/clip.mp4" 2.0 nil) observed)))
+     (should (= 6.0 (eve--rendered-segment-duration segment nil)))
+     (should (eq segment (eve--playback-source-segment-at-time 3.0 (eve--segments)))))))
+
+(ert-deftest eve-canonical-v11-uses-each-source-clock-for-tracking ()
+  "Mixed source clocks retain their own tick units, without millisecond rounding."
+  (eve-test-with-canonical-v11-buffer
+   (let ((other '((id . "seg-2") (source . "other")
+                  (start_tick . 30) (end_tick . 60)
+                  (spoken_text . "omega")
+                  (words . (((spoken . "omega") (start_tick . 30) (end_tick . 60)))))))
+     (push '((id . "other") (file . "other.mp4")
+             (timebase . ((numerator . 1001) (denominator . 30000))))
+           (alist-get 'sources eve--data))
+     (setf (alist-get 'segments eve--data) (append (eve--segments) (list other)))
+     (should (< (abs (- 1.001 (eve--rendered-segment-duration other nil))) 1e-12))
+     (should (< (abs (- 4.001 (eve--rendered-total-duration (eve--segments) nil))) 1e-12))
+     (should (eq other (eve--playback-source-segment-at-time 1.5 (list other)))))))
+
+(ert-deftest eve-canonical-v11-word-times-and-gaps-use-ticks ()
+  "Visible word timing and gap indicators honor canonical source ticks."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments)))
+          (eve-gap-indicator-duration 0.5))
+     (should (string-match-p
+              (regexp-quote "two written words[00:01.500-00:02.000]")
+              (eve--format-words (alist-get 'words segment))))
+     (setf (alist-get 'segments eve--data)
+           (append (eve--segments)
+                   '(((id . "later") (source . "clip")
+                      (start_tick . 240000) (end_tick . 288000)
+                      (display_text . "Later caption")))))
+     (should (= 1.0 (plist-get (car (eve--source-gaps)) :duration)))
+     (eve--render)
+     (should (eve-test--match-range "Later caption")))))
+
+(ert-deftest eve-canonical-v11-panel-and-summary-use-source-clock ()
+  "Panel buffers resolve timing through their source, never their own data."
+  (eve-test-with-canonical-v11-buffer
+   (let ((source (current-buffer))
+         (segment (car (eve--segments))))
+     (should (string-match-p "00:01.000-00:04.000" (eve--segment-summary segment)))
+     (with-temp-buffer
+       (eve--segment-panel-render source nil)
+       (should (eve-test--match-range "3.0s"))
+       (should (eve-test--match-range "00:01.000–00:04.000"))
+       (should (eve-test--match-range "two written words"))))))
+
+(ert-deftest eve-canonical-v11-save-reopen-keeps-authoritative-record ()
+  "Normal saving accepts canonical clocks and retains atomic words unchanged."
+  (let ((file (make-temp-file "eve-canonical-" nil ".tjm.json")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert (json-encode eve-test--canonical-v11-data)))
+          (with-temp-buffer
+            (setq-local buffer-file-name file)
+            (insert-file-contents file)
+            (eve-mode)
+            (let ((before (copy-tree (alist-get 'words (car (eve--segments))) t)))
+              (cl-letf (((symbol-function 'yes-or-no-p)
+                         (lambda (&rest _) (ert-fail "Valid canonical data prompted for repair"))))
+                (should-not (eve-validate t))
+                (eve-enable-subtitle-burning)
+                (save-buffer))
+              (eve-reload)
+              (should (equal before (alist-get 'words (car (eve--segments)))))
+              (should (eve-test--match-range "Alpha two written words gamma delta"))
+              (should-not (assq 'start (car (eve--segments))))
+              (should-not (assq 'text (car (eve--segments))))
+              (with-temp-buffer
+                (insert-file-contents file)
+                (let* ((saved (json-parse-buffer))
+                       (segment (aref (gethash "segments" saved) 0)))
+                  (should (= 48000 (gethash "start_tick" segment)))
+                  (should (equal "alpha beta gamma delta" (gethash "spoken_text" segment)))
+                  (should (hash-table-p (gethash "edit" segment)))
+                  (should (hash-table-p (gethash "edit" (aref (gethash "words" segment) 0))))
+                  (should (gethash "subtitles" saved)))))))
+      (delete-file file)
+      (when (file-exists-p (concat file "~")) (delete-file (concat file "~"))))))
+
+(defun eve-test--word-records (segment)
+  "Return SEGMENT word records without their mutable display strings."
+  (mapcar (lambda (word) (assq-delete-all 'display (copy-tree word t)))
+          (alist-get 'words segment)))
+
+(ert-deftest eve-canonical-v11-rephrase-preserves-word-records ()
+  "A multiword display rewrite preserves all four atomic source records."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments)))
+          (before (eve-test--word-records segment)))
+     (eve--segment-panel-rephrase-range segment 1 1 "a longer written phrase")
+     (should (equal before (eve-test--word-records segment)))
+     (should (= 4 (length (alist-get 'words segment))))
+     (should (equal "alpha beta gamma delta" (alist-get 'spoken_text segment)))
+     (should (equal "Alpha a longer written phrase gamma delta" (alist-get 'display_text segment)))
+     (should (= 48000 (alist-get 'start_tick segment)))
+     (should-not (assq 'start segment)))))
+
+(ert-deftest eve-canonical-v11-rejected-rephrase-keeps-history-clean ()
+  "Ambiguous range edits fail before any data, dirty or undo-state mutation."
+  (eve-test-with-canonical-v11-buffer
+   (let ((source (current-buffer))
+         (before (copy-tree eve--data t)))
+     (with-temp-buffer
+       (eve--segment-panel-render source nil)
+       (cl-letf (((symbol-function 'eve--segment-panel-word-range) (lambda () '(0 . 1)))
+                 ((symbol-function 'read-string) (lambda (&rest _) "one two three")))
+         (should-error (eve-segment-panel-edit-words) :type 'user-error)))
+     (should (equal before eve--data))
+     (should-not eve--dirty)
+     (should-not eve--undo-stack))))
+
+(ert-deftest eve-canonical-v11-panel-case-and-punctuation-are-display-only ()
+  "Panel case/punctuation edits and undo retain factual transcript and ticks."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((source (current-buffer))
+          (before (eve-test--word-records (car (eve--segments)))))
+     (with-temp-buffer
+       (eve--segment-panel-render source nil)
+       (search-forward "written")
+       (backward-char 2)
+       (eve-segment-panel-capitalize-words)
+       (eve-segment-panel-add-dot))
+     (let ((segment (car (eve--segments))))
+       (should (equal before (eve-test--word-records segment)))
+       (should (equal "Alpha Two written words. gamma delta" (alist-get 'display_text segment))))
+     (eve-undo)
+     (should (equal "Two written words" (alist-get 'display (nth 1 (alist-get 'words (car (eve--segments)))))))
+     (eve-redo)
+     (should (equal before (eve-test--word-records (car (eve--segments))))))))
+
+(ert-deftest eve-canonical-v11-main-text-edit-updates-displays-only ()
+  "The main edit command cannot bypass token binding or corrupt source words."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments)))
+          (before (eve-test--word-records segment)))
+     (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "One Two Three Four")))
+       (eve-edit-text segment))
+     (should (equal before (eve-test--word-records segment)))
+     (should (equal "One Two Three Four" (alist-get 'display_text segment)))
+     (let ((history (copy-tree eve--undo-stack t)))
+       (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "ambiguous replacement")))
+         (should-error (eve-edit-text segment) :type 'user-error))
+       (should (equal history eve--undo-stack))))))
+
+(ert-deftest eve-canonical-v11-delete-removes-whole-display-token ()
+  "Deleting inside a display phrase removes its entire timed token from captions."
+  (eve-test-with-canonical-v11-buffer
+   (goto-char (car (eve-test--match-range "written")))
+   (eve-delete-word)
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment))))
+     (should (eve--edit-deleted-p word))
+     (should (equal "beta" (alist-get 'spoken word)))
+     (should (= 72000 (alist-get 'start_tick word)))
+     (should (equal "Alpha gamma delta" (alist-get 'display_text segment))))
+   (eve-undo)
+   (should (equal "Alpha two written words gamma delta" (alist-get 'display_text (car (eve--segments)))))))
+
+(ert-deftest eve-canonical-v11-split-merge-preserves-clock-and-coverage ()
+  "Caption splitting and merging preserve native words and retained media union."
+  (eve-test-with-canonical-v11-buffer
+   (let ((before (copy-tree (alist-get 'words (car (eve--segments))) t)))
+     (goto-char (car (eve-test--match-range "gamma")))
+     (eve-split-segment)
+     (let ((a (car (eve--segments))) (b (cadr (eve--segments))))
+       (should (equal before (append (alist-get 'words a) (alist-get 'words b))))
+       (should (= 48000 (alist-get 'start_tick a)))
+       (should (= 120000 (alist-get 'end_tick a)))
+       (should (= 120000 (alist-get 'start_tick b)))
+       (should (= 192000 (alist-get 'end_tick b)))
+       (should (equal "alpha beta" (alist-get 'spoken_text a)))
+       (should (equal "gamma delta" (alist-get 'display_text b)))
+       (should-not (assq 'start a)))
+     (eve--merge-segments-at-index 0)
+     (should (= 1 (length (eve--segments))))
+     (should (equal before (alist-get 'words (car (eve--segments)))))
+     (should (= 192000 (alist-get 'end_tick (car (eve--segments)))))
+     (should (equal "alpha beta gamma delta" (alist-get 'spoken_text (car (eve--segments))))))))
+
+(ert-deftest eve-legacy-tick-like-extensions-do-not-change-format ()
+  "Unknown tick-like metadata must not turn a legacy edit into a v1.1 edit."
+  (eve-test-with-buffer
+   (let ((segment (car (eve--segments))))
+     (eve--alist-set segment 'start_tick 123)
+     (eve--alist-set segment 'end_tick 456)
+     (eve--segment-panel-rephrase-range segment 1 1 "bravo")
+     (should (equal "alpha bravo gamma delta" (alist-get 'text segment)))
+     (should-not (assq 'display_text segment))
+     (should (= 123 (alist-get 'start_tick segment)))
+     (eve--render)
+     (goto-char (car (eve-test--match-range "gamma")))
+     (eve-split-segment)
+     (should (equal "gamma delta" (alist-get 'text (cadr (eve--segments)))))
+     (should (= 2.0 (alist-get 'end (car (eve--segments)))))
+     (should (= 123 (alist-get 'start_tick (cadr (eve--segments)))))
+     (eve--merge-segments-at-index 0)
+     (should (equal "alpha bravo gamma delta" (alist-get 'text (car (eve--segments)))))
+     (should (= 4.0 (alist-get 'end (car (eve--segments))))))))
+
+(ert-deftest eve-canonical-v11-panel-split-uses-word-at-point ()
+  "The actual panel split binding honors a click inside an atomic fragment."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((source (current-buffer))
+          (before (copy-tree (alist-get 'words (car (eve--segments))) t)))
+     (with-temp-buffer
+       (eve-segment-panel-mode)
+       (eve--segment-panel-render source nil)
+       (should (= 0 eve-segment-panel-word-index))
+       (goto-char (point-min))
+       (search-forward "written")
+       (backward-char 2)
+       (should (= 1 (eve--segment-panel-word-index-at-point)))
+       (should (eq (key-binding (kbd "|")) #'eve-segment-panel-split))
+       (call-interactively (key-binding (kbd "|")))
+       (should (equal "seg-1-split-1" eve-segment-panel-segment-id))
+       (should (= 0 eve-segment-panel-word-index))
+       (should (eve-test--match-range "two written words")))
+     (let ((a (car (eve--segments))) (b (cadr (eve--segments))))
+       (should (= 2 (length (eve--segments))))
+       (should (= 72000 (alist-get 'end_tick a)))
+       (should (= 72000 (alist-get 'start_tick b)))
+       (should (equal before (append (alist-get 'words a) (alist-get 'words b))))))))
+
+(ert-deftest eve-canonical-v11-split-rejects-active-word-cuts-atomically ()
+  "Regrouping cannot reinstate footage removed by a word edit."
+  (eve-test-with-canonical-v11-buffer
+   (let ((segment (car (eve--segments))))
+     (eve--set-edit-deleted (nth 1 (alist-get 'words segment)) t)
+     (eve--render)
+     (goto-char (car (eve-test--match-range "gamma")))
+     (let ((before (eve--encode-manifest eve--data))
+           (history (copy-tree eve--undo-stack t))
+           (dirty eve--dirty))
+       (should-error (eve-split-segment) :type 'user-error)
+       (should (equal before (eve--encode-manifest eve--data)))
+       (should (equal history eve--undo-stack))
+       (should (eq dirty eve--dirty))))))
+
+(ert-deftest eve-canonical-v11-merge-cannot-force-active-word-cuts ()
+  "Cuts in either merge operand cannot be bypassed by force."
+  (dolist (side '(0 1))
+    (eve-test-with-canonical-v11-buffer
+     (goto-char (car (eve-test--match-range "gamma")))
+     (eve-split-segment)
+     (eve--set-edit-deleted (car (alist-get 'words (nth side (eve--segments)))) t)
+     (let ((before (eve--encode-manifest eve--data))
+           (history (copy-tree eve--undo-stack t))
+           (dirty eve--dirty))
+       (should-error (eve--merge-segments-at-index 0 t) :type 'user-error)
+       (should (equal before (eve--encode-manifest eve--data)))
+       (should (equal history eve--undo-stack))
+       (should (eq dirty eve--dirty))))))
+
+(ert-deftest eve-canonical-v11-regroup-honors-effective-filler-cuts ()
+  "Only effective renderer cuts block regrouping; marks alone do not."
+  (dolist (case '(("keep" t nil nil nil)
+                  ("drop" t nil nil t)
+                  ("drop" :json-false "filler" nil nil)
+                  ("drop" "no-filler" "filler" nil nil)
+                  ("drop" absent "filler" nil t)
+                  ("drop" absent "filler" "lexical" nil)
+                  ("drop" absent nil "filler" t)))
+    (eve-test-with-canonical-v11-buffer
+     (let* ((segment (car (eve--segments)))
+            (word (nth 1 (alist-get 'words segment)))
+            (blocked (nth 4 case)))
+       (setf (alist-get 'filler_policy (alist-get 'render eve--data)) (nth 0 case))
+       (unless (eq (nth 1 case) 'absent) (eve--set-word-filler word (nth 1 case)))
+       (when (nth 2 case) (eve--alist-set word 'kind (nth 2 case)))
+       (when (nth 3 case) (eve--set-word-edit-kind word (nth 3 case)))
+       (goto-char (car (eve-test--match-range "gamma")))
+       (let ((before (eve--encode-manifest eve--data))
+             (history (copy-tree eve--undo-stack t)))
+         (if blocked
+             (progn
+               (should-error (eve-split-segment) :type 'user-error)
+               (should (equal before (eve--encode-manifest eve--data)))
+               (should (equal history eve--undo-stack)))
+           (should (string-match-p "two written words" (eve--segment-display-text segment)))
+           (eve-split-segment)
+           (should (= 2 (length (eve--segments))))))))))
+
+(ert-deftest eve-canonical-v11-merge-cannot-reinstate-skipped-deleted-segment ()
+  "A merge across a hidden deleted group cannot restore that group's footage."
+  (eve-test-with-canonical-v11-buffer
+   (goto-char (car (eve-test--match-range "gamma")))
+   (eve-split-segment)
+   (goto-char (car (eve-test--match-range "delta")))
+   (eve-split-segment)
+   (eve--set-edit-deleted (nth 1 (eve--segments)) t)
+   (let ((before (eve--encode-manifest eve--data))
+         (history (copy-tree eve--undo-stack t)))
+     (should-error (eve--merge-segments-at-index 0 t 2) :type 'user-error)
+     (should (equal before (eve--encode-manifest eve--data)))
+     (should (equal history eve--undo-stack)))))
+
+(ert-deftest eve-canonical-v11-reorder-and-merge-reject-source-conflicts ()
+  "Reorder preserves records; merge cannot force incompatible source geometry."
+  (eve-test-with-canonical-v11-buffer
+   (goto-char (car (eve-test--match-range "gamma")))
+   (eve-split-segment)
+   (let ((before (copy-tree (eve--segments) t)))
+     (eve--goto-segment "seg-1")
+     (eve-move-segment-down)
+     (should (equal (reverse before) (eve--segments)))
+     (let ((history (copy-tree eve--undo-stack t)))
+       (should-error (eve--merge-segments-at-index 0 t) :type 'user-error)
+       (should (equal history eve--undo-stack)))
+     (eve-undo)
+     (let ((other (cadr (eve--segments)))
+           (history (copy-tree eve--undo-stack t)))
+       (setf (alist-get 'source other) "another-clock")
+       (should-error (eve--merge-segments-at-index 0 t) :type 'user-error)
+       (should (equal history eve--undo-stack))))))
+
+(ert-deftest eve-canonical-v11-saves-false-edit-flags-as-booleans ()
+  "Explicit false edit flags must not become invalid JSON null."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments))) (word (car (alist-get 'words segment))))
+     (eve--set-edit-deleted segment nil)
+     (eve--set-edit-deleted word nil)
+     (eve--set-word-filler word nil)
+     (eve--set-segment-broll segment '((file . "broll.mp4") (still) (continue)))
+     (let* ((saved (json-parse-string (eve--encode-manifest eve--data) :false-object :json-false))
+            (seg (aref (gethash "segments" saved) 0))
+            (w (aref (gethash "words" seg) 0)))
+       (should (eq :json-false (gethash "deleted" (gethash "edit" seg))))
+       (should (eq :json-false (gethash "deleted" (gethash "edit" w))))
+       (should (eq :json-false (gethash "filler" (gethash "edit" w))))
+       (let ((broll (gethash "broll" (gethash "edit" seg))))
+         (should (eq :json-false (gethash "still" broll)))
+         (should (eq :json-false (gethash "continue" broll))))))))
+
+(ert-deftest eve-canonical-v11-karaoke-cache-follows-word-edit-flags ()
+  "All word-edit paths keep karaoke's derived caption cache renderable."
+  (eve-test-with-canonical-v11-buffer
+   (eve-enable-subtitle-burning)
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment))))
+     (eve--record-state)
+     (eve--set-edit-deleted word t)
+     (eve--mark-dirty)
+     (should (equal "Alpha gamma delta" (alist-get 'display_text segment)))
+     (should (equal "alpha beta gamma delta" (alist-get 'spoken_text segment))))))
+
+(ert-deftest eve-canonical-v11-enable-karaoke-does-not-discard-caption-override ()
+  "Enabling highlights must reject an unbound caption, not silently replace it."
+  (eve-test-with-canonical-v11-buffer
+   (let ((segment (car (eve--segments))))
+     (setf (alist-get 'display_text segment) "An arbitrary plain caption")
+     (let ((before (copy-tree eve--data t)))
+       (should-error (eve-enable-subtitle-burning) :type 'user-error)
+       (should (equal before eve--data))
+       (should-not eve--undo-stack)))))
+
+(ert-deftest eve-canonical-v11-merge-preserves-untimed-plain-captions ()
+  "Untimed plain captions merge as text, but mixed timing bindings are rejected."
+  (eve-test-with-canonical-v11-buffer
+   (goto-char (car (eve-test--match-range "gamma")))
+   (eve-split-segment)
+   (setf (alist-get 'segments eve--data)
+         (mapcar (lambda (segment) (assq-delete-all 'words (copy-tree segment t)))
+                 (eve--segments)))
+   (eve--merge-segments-at-index 0)
+   (should (equal "Alpha two written words gamma delta" (alist-get 'display_text (car (eve--segments)))))
+   (should (equal "alpha beta gamma delta" (alist-get 'spoken_text (car (eve--segments))))))
+  (eve-test-with-canonical-v11-buffer
+   (goto-char (car (eve-test--match-range "gamma")))
+   (eve-split-segment)
+   (setf (alist-get 'segments eve--data)
+         (list (car (eve--segments))
+               (assq-delete-all 'words (copy-tree (cadr (eve--segments)) t))))
+   (let ((before (copy-tree eve--data t)) (history (copy-tree eve--undo-stack t)))
+     (should-error (eve--merge-segments-at-index 0 t) :type 'user-error)
+     (should (equal before eve--data))
+     (should (equal history eve--undo-stack)))))
+
+(ert-deftest eve-canonical-v11-legacy-timing-commands-fail-before-mutation ()
+  "Unsupported seconds-only editors cannot corrupt canonical source records."
+  (eve-test-with-canonical-v11-buffer
+   (let ((source (current-buffer)) (before (copy-tree eve--data t)))
+     (cl-letf (((symbol-function 'read-number) (lambda (&rest _) 1.0)))
+       (should-error (eve-edit-start-end (car (eve--segments))) :type 'user-error))
+     (should (equal before eve--data))
+     (should-not eve--undo-stack)
+     (with-temp-buffer
+       (eve--segment-panel-render source nil)
+       (cl-letf (((symbol-function 'eve--segment-panel-regenerate-transcript)
+                  (lambda (&rest _) (ert-fail "Unsupported regeneration launched")))
+                 ((symbol-function 'eve--regenerate-segment-range)
+                  (lambda (&rest _) (ert-fail "Unsupported regeneration launched"))))
+         (should-error (eve-segment-panel-regenerate-transcript "whisper" "medium.en") :type 'user-error)
+         (should-error (eve-segment-panel-regenerate-until "seg-1" "whisper" "medium.en") :type 'user-error)))
+     (should (equal before eve--data))
+     (should-not eve--undo-stack)
+     (should-not eve--dirty))))
 
 (defun eve-test--segment-tokens (segment)
   "Return the token list for SEGMENT."
@@ -894,6 +1429,92 @@
         (should (equal (cadr err)
                        "Cannot find eve CLI executable: missing-eve"))))))
 
+(ert-deftest eve-subtitle-burning-rejects-legacy-without-changing-it ()
+  "Enabling cannot silently upgrade v1 or add unsupported render settings."
+  (eve-test-with-buffer
+   (let ((before (json-encode eve--data)))
+     (should-error (eve-enable-subtitle-burning) :type 'user-error)
+     (should (equal before (json-encode eve--data)))
+     (should-not eve--dirty)
+     (should-not eve--undo-stack))))
+
+(ert-deftest eve-subtitle-burning-defaults-save-with-manifest ()
+  "Enabling burn-in persists a complete configuration through normal saving."
+  (eve-test-with-v11-buffer
+   (let ((file (make-temp-file "eve-subtitles-" nil ".tjm.json"))
+         (eve-validation-on-save nil)
+         (before (copy-tree eve--data t)))
+     (unwind-protect
+         (progn
+           (setq-local buffer-file-name file)
+           (set-visited-file-modtime)
+           (eve-enable-subtitle-burning)
+           (should eve--dirty)
+           (should (buffer-modified-p))
+           (should (equal (alist-get 'segments before) (eve--segments)))
+           (save-buffer)
+           (with-temp-buffer
+             (insert-file-contents file)
+             (let* ((saved (json-parse-buffer))
+                    (config (gethash "subtitles" saved)))
+               (should (equal "burn" (gethash "mode" config)))
+               (should (equal "karaoke" (gethash "style" config)))
+               (should (= 144 (gethash "size" (gethash "font" config))))
+               (should (= 1920 (gethash "width" (gethash "reference_canvas" config))))
+               (should (= 180 (gethash "bottom_margin" (gethash "placement" config)))))))
+       (delete-file file)
+       (when (file-exists-p (concat file "~"))
+         (delete-file (concat file "~")))))))
+
+(ert-deftest eve-subtitle-burning-copies-customized-defaults ()
+  "Manifest choices are copied from customization, never shared or overwritten."
+  (eve-test-with-v11-buffer
+   (let ((eve-subtitle-defaults
+          '((mode . "burn") (style . "plain")
+            (font . ((family . "DejaVu Sans") (size . 64) (bold . :json-false))))))
+     (eve-enable-subtitle-burning)
+     (let ((config (alist-get 'subtitles eve--data)))
+       (should (equal config eve-subtitle-defaults))
+       (should-not (eq config eve-subtitle-defaults))
+       (setf (alist-get 'size (alist-get 'font config)) 72)
+       (should (= 64 (alist-get 'size (alist-get 'font eve-subtitle-defaults))))))))
+
+(ert-deftest eve-subtitle-burning-keeps-existing-json-and-supports-undo ()
+  "Existing booleans, extension objects and arrays survive toggling and undo."
+  (with-temp-buffer
+    (insert "{\"version\":\"1.1\",\"sources\":[],\"segments\":[],\"subtitles\":{"
+            "\"mode\":\"burn\",\"style\":\"plain\",\"font\":{\"size\":48,\"bold\":false},"
+            "\"placement\":{\"bottom_margin\":60},"
+            "\"extension\":{\"empty\":[],\"object\":{},\"switch\":false,\"nothing\":null}}}")
+    (eve-mode)
+    (let ((before (json-encode (alist-get 'subtitles eve--data))))
+      (eve-enable-subtitle-burning)
+      (should-not eve--dirty)
+      (should-not eve--undo-stack)
+      (should (equal before (json-encode (alist-get 'subtitles eve--data))))
+      (eve-disable-subtitle-burning)
+      (should-not (assq 'subtitles eve--data))
+      (should eve--dirty)
+      (eve-undo)
+      (let* ((config (alist-get 'subtitles eve--data))
+             (extension (gethash "extension" config)))
+        (should (eq :json-false (gethash "bold" (gethash "font" config))))
+        (should (eq :json-false (gethash "switch" extension)))
+        (should (equal [] (gethash "empty" extension)))
+        (should (hash-table-p (gethash "object" extension)))
+        (should-not (gethash "nothing" extension 'missing)))
+      (eve-redo)
+      (should-not (assq 'subtitles eve--data)))))
+
+(ert-deftest eve-subtitle-burning-can-be-enabled-from-panel ()
+  "Commands issued in a context panel configure its source manifest."
+  (eve-test-with-v11-buffer
+   (let ((source (current-buffer)))
+     (with-temp-buffer
+       (setq-local context-panels-source-buffer source)
+       (eve-enable-subtitle-burning))
+     (should (assq 'subtitles eve--data)))))
+
 (ert-deftest eve-compile-saves-modified-buffer-before-rendering ()
   "Compilation saves modified Eve buffers before validating and rendering."
   (eve-test-with-buffer
@@ -1044,6 +1665,114 @@
         (eve--pre-flight-validate "draft")
         (should prompted)))))
 
+(ert-deftest eve-v11-empty-tags-stay-arrays-in-save-and-render-manifests ()
+  "Newly transcribed empty tag arrays must remain valid after editor saving."
+  (eve-test-with-v11-buffer
+   (let ((file (make-temp-file "eve-v11-tags-" nil ".tjm.json")))
+     (unwind-protect
+         (progn
+           (eve--set-segment-tags (car (eve--segments)) nil)
+           (dolist (writer '(render save))
+             (if (eq writer 'render)
+                 (eve--write-json-file eve--data file)
+               (eve--serialize-to-file file))
+             (with-temp-buffer
+               (insert-file-contents file)
+               (let* ((data (json-parse-buffer))
+                      (segment (aref (gethash "segments" data) 0)))
+                 (should (equal [] (gethash "tags" (gethash "edit" segment)))))))
+           (should-not (eve--segment-tags (car (eve--segments)))))
+       (delete-file file)
+       (when (file-exists-p (concat file "~")) (delete-file (concat file "~")))))))
+
+(ert-deftest eve-alignment-audit-survives-editor-save-and-undo ()
+  "Producer booleans, arrays and extension objects survive normal editing."
+  (let ((file (make-temp-file "eve-alignment-audit-" nil ".tjm.json"))
+        (eve-validation-on-save nil))
+    (unwind-protect
+        (with-temp-buffer
+          (insert "{\"version\":\"1.1\",\"sources\":[],\"segments\":[],"
+                  "\"alignment\":{\"engine\":\"ctc\",\"forced\":false,"
+                  "\"quality_concerns\":[],\"diagnostics\":[{\"blocking\":false}],"
+                  "\"extension\":{\"object\":{},\"array\":[],\"nothing\":null}}}")
+          (eve-mode)
+          (setq-local buffer-file-name file)
+          (set-visited-file-modtime)
+          (eve-enable-subtitle-burning)
+          (eve-undo)
+          (eve-redo)
+          (save-buffer)
+          (let* ((saved (json-parse-string
+                         (with-temp-buffer (insert-file-contents file) (buffer-string))
+                         :null-object nil :false-object :json-false))
+                 (audit (gethash "alignment" saved))
+                 (extension (gethash "extension" audit)))
+            (should (equal "ctc" (gethash "engine" audit)))
+            (should (eq :json-false (gethash "forced" audit)))
+            (should (equal [] (gethash "quality_concerns" audit)))
+            (should (eq :json-false (gethash "blocking" (aref (gethash "diagnostics" audit) 0))))
+            (should (hash-table-p (gethash "object" extension)))
+            (should (equal [] (gethash "array" extension)))
+            (should-not (gethash "nothing" extension 'missing))))
+      (delete-file file)
+      (when (file-exists-p (concat file "~")) (delete-file (concat file "~"))))))
+
+(ert-deftest eve-transcribe-ctc-uses-only-explicit-quality-overrides ()
+  "CTC is opt-in; only an explicit run argument adds --force."
+  (dolist (force '(nil t))
+    (let ((eve-transcribe-word-aligner "ctc")
+          (eve-transcribe-backend "faster-whisper")
+          (eve--transcribe-process-count 0)
+          (eve--transcribe-mode-line-string nil)
+          (global-mode-string nil)
+          command)
+      (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "/opt/eve/bin/eve"))
+                ((symbol-function 'make-process)
+                 (lambda (&rest args) (setq command (plist-get args :command)) 'fake-process)))
+        (eve--transcribe-async '("/tmp/clip.mov") "/tmp/clip.tjm.json" force))
+      (should (equal (cadr (member "--word-aligner" command)) "ctc"))
+      (should (eq (and (member "--force" command) t) force))
+      (should (member "--progress-json" command)))))
+
+(ert-deftest eve-transcribe-force-requires-ctc-opt-in ()
+  "A prefix must not become a blanket force flag on ordinary transcription."
+  (let ((eve-transcribe-word-aligner nil))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest _args) (ert-fail "must not launch"))))
+      (should-error (eve--transcribe-async '("/tmp/clip.mov") "/tmp/clip.tjm.json" t)
+                    :type 'user-error))))
+
+(ert-deftest eve-transcribe-shows-native-alignment-progress ()
+  "The acoustic stage has an operator-readable progress label."
+  (should (equal (eve--transcribe-progress-detail
+                  '((phase . "align") (engine . "ctc") (source . "clip01")))
+                 "aligning words with ctc — clip01")))
+
+(ert-deftest eve-transcribe-ctc-completion-does-not-offer-asr-timing-replacement ()
+  "The launch choice survives customization changes while the job runs."
+  (let ((eve-transcribe-word-aligner "ctc")
+        (eve-transcribe-backend "faster-whisper")
+        (eve--transcribe-process-count 0)
+        (eve--transcribe-mode-line-string nil)
+        (global-mode-string nil)
+        (buffer (get-buffer-create eve--transcribe-buffer-name))
+        sentinel opened)
+    (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "/opt/eve/bin/eve"))
+              ((symbol-function 'make-process)
+               (lambda (&rest args) (setq sentinel (plist-get args :sentinel)) 'fake-process))
+              ((symbol-function 'process-buffer) (lambda (_process) buffer))
+              ((symbol-function 'process-status) (lambda (_process) 'exit))
+              ((symbol-function 'process-exit-status) (lambda (_process) 0))
+              ((symbol-function 'find-file) (lambda (path) (setq opened path)))
+              ((symbol-function 'derived-mode-p) (lambda (&rest _modes) t))
+              ((symbol-function 'eve--maybe-offer-reprocess-suspicious-transcripts)
+               (lambda (&rest _args) (ert-fail "CTC must not fall back to ASR timing repair"))))
+      (eve--transcribe-async '("/tmp/clip.mov") "/tmp/clip.tjm.json")
+      (setq eve-transcribe-word-aligner nil)
+      (funcall sentinel 'fake-process "finished\n")
+      (should (equal opened "/tmp/clip.tjm.json"))
+      (should (= eve--transcribe-process-count 0)))))
+
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
   (let ((eve-cli-program "eve-custom")
@@ -1173,7 +1902,8 @@
          (clip (expand-file-name "clip.mp4" expanded-directory))
          (voice (expand-file-name "voice.WAV" expanded-directory))
          captured-files
-         captured-output)
+         captured-output
+         captured-force)
     (unwind-protect
         (progn
           (with-temp-file clip
@@ -1184,10 +1914,13 @@
           (with-temp-file (expand-file-name "notes.txt" expanded-directory)
             (insert "ignore"))
           (cl-letf (((symbol-function 'eve--transcribe-async)
-                     (lambda (files output-path)
+                     (lambda (files output-path &optional force)
                        (setq captured-files files
-                             captured-output output-path))))
-            (eve-transcribe expanded-directory))
+                             captured-output output-path
+                             captured-force force))))
+            (dolist (force '(nil (4)))
+              (eve-transcribe expanded-directory force)
+              (should (equal captured-force force))))
           (should (equal captured-files (list clip voice)))
           (should (equal captured-output
                          (expand-file-name
@@ -1227,7 +1960,8 @@
 (ert-deftest eve-dired-transcribe-delegates-marked-media-files ()
   "Dired entry point filters marked files and preserves media order."
   (let (captured-files
-        captured-output)
+        captured-output
+        captured-force)
     (cl-letf (((symbol-function 'derived-mode-p)
                (lambda (&rest _modes)
                  t))
@@ -1237,10 +1971,14 @@
                    "/tmp/session/notes.txt"
                    "/tmp/session/clip.mp4")))
               ((symbol-function 'eve--transcribe-async)
-               (lambda (files output-path)
+               (lambda (files output-path &optional force)
                  (setq captured-files files
-                       captured-output output-path))))
-      (eve-dired-transcribe)
+                       captured-output output-path
+                       captured-force force))))
+      (dolist (force '(nil (4)))
+        (let ((current-prefix-arg force))
+          (call-interactively #'eve-dired-transcribe))
+        (should (equal captured-force force)))
       (should (equal captured-files
                      '("/tmp/session/voice.WAV"
                        "/tmp/session/clip.mp4")))
@@ -1293,8 +2031,9 @@
         (kill-buffer buffer)))))
 
 (ert-deftest eve-transcribe-async-surfaces-buffer-on-failure ()
-  "Non-zero completion shows the transcribe buffer and reports the failure."
-  (let ((buffer (get-buffer-create eve--transcribe-buffer-name))
+  "A CTC failure shows its log without opening output or forcing a retry."
+  (let ((eve-transcribe-word-aligner "ctc")
+        (buffer (get-buffer-create eve--transcribe-buffer-name))
          (eve--transcribe-process-count 0)
          (eve--transcribe-mode-line-string nil)
          (global-mode-string nil)
@@ -1334,6 +2073,8 @@
                      'fake-process
                      "exited abnormally with code 1\n"))
           (should-not opened)
+          (should (= eve--transcribe-process-count 0))
+          (should-not (member "--force" (plist-get captured-plist :command)))
           (should (eq popped buffer))
            (should (member "eve transcribe failed: exited abnormally with code 1"
                            messages)))
@@ -1750,6 +2491,95 @@
    (setq-local eve--ruler-total-duration 0.0)
    (should (string= "" (eve--ruler-mode-line-string)))))
 
+(defun eve-test--documented-recipe (file)
+  "Read the first use-package Eve recipe in documentation FILE."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name file eve-test--root))
+    (goto-char (point-min))
+    (search-forward "(use-package eve")
+    (goto-char (match-beginning 0))
+    (plist-get (cddr (read (current-buffer))) :straight)))
+
+(defun eve-test--assert-documented-runtime (file)
+  "Check FILE's explicit runtime directory selectors in a scratch build.
+This stages the documented nested glob form, not a general straight emulator;
+actual straight file expansion and installation have a separate acceptance run."
+  (let* ((files (plist-get (eve-test--documented-recipe file) :files))
+         (build (make-temp-file "eve-package-build-" t))
+         (eve--source-directory (file-name-as-directory build))
+         (eve-cli-program "eve"))
+    (unwind-protect
+        (progn
+          (should (memq :defaults files))
+          (dolist (entry files)
+            (when (and (consp entry) (stringp (car entry)))
+              (dolist (pattern (cdr entry))
+                (dolist (source (file-expand-wildcards
+                                 (expand-file-name pattern eve-test--root)))
+                  (let ((target (expand-file-name
+                                 (concat (car entry) "/" (file-name-nondirectory source))
+                                 build)))
+                    (make-directory (file-name-directory target) t)
+                    (make-symbolic-link source target))))))
+          (cl-letf (((symbol-function 'executable-find) (lambda (_) nil)))
+            (should (equal (expand-file-name "scripts/run-cli.sh" build)
+                           (eve--resolve-cli))))
+          (let ((wheels (file-expand-wildcards
+                         (expand-file-name "cli/dist/eve_cli-*.whl" build))))
+            (should (= 1 (length wheels)))
+            (should (file-readable-p (car wheels))))
+          (should (equal (expand-file-name "docs" build) (eve--info-directory)))
+          (should (file-readable-p (expand-file-name "docs/dir" build)))
+          (should-not (file-exists-p (expand-file-name "cli/.venv" build)))
+          (should-not (file-exists-p (expand-file-name "scripts/benchmark-alignment.py" build))))
+      (delete-directory build t))))
+
+(ert-deftest eve-readme-recipe-delivers-bundled-runtime ()
+  "The quick-start recipe provides the CLI without a global executable."
+  (eve-test--assert-documented-runtime "README.org"))
+
+(ert-deftest eve-manual-recipe-delivers-bundled-runtime ()
+  "The full manual's recipe provides the same minimal runtime layout."
+  (eve-test--assert-documented-runtime "docs/eve.org"))
+
+(ert-deftest eve-info-recipe-delivers-bundled-runtime ()
+  "The shipped Info manual must contain a usable recipe, not a stale one."
+  (eve-test--assert-documented-runtime "docs/eve.info"))
+
+(ert-deftest eve-cold-package-compiles-and-loads-without-hydra ()
+  "A byte-compiled installation must not require optional Hydra."
+  (let* ((directory (make-temp-file "eve-cold-package-" t))
+         (source (expand-file-name "eve.el" directory))
+         (program (expand-file-name invocation-name invocation-directory)))
+    (unwind-protect
+        (progn
+          (copy-file (expand-file-name "eve.el" eve-test--root) source)
+          (with-temp-buffer
+            (let ((status
+                   (call-process
+                    program nil t nil "--batch" "-Q" "--eval"
+                    (format
+                     "(progn
+                        (require 'cl-lib)
+                        (require 'bytecomp)
+                        (setq features (delq 'hydra features))
+                        (when (fboundp 'defhydra) (fmakunbound 'defhydra))
+                        (let ((original-require (symbol-function 'require))
+                              (byte-compile-error-on-warn t))
+                          (cl-letf (((symbol-function 'require)
+                                     (lambda (feature &optional filename noerror)
+                                       (unless (eq feature 'hydra)
+                                         (funcall original-require feature filename noerror)))))
+                            (unless (byte-compile-file %S) (kill-emacs 1))
+                            (load-file %S)
+                            (unless (fboundp 'eve-mode) (kill-emacs 2))
+                            (eve--show-help))))"
+                     source (concat source "c")))))
+              (unless (equal status 0)
+                (ert-fail (format "Cold package failed (%s): %s"
+                                  status (buffer-string)))))))
+      (delete-directory directory t))))
+
 (ert-deftest eve-resolve-cli-uses-executable-find ()
   "Resolver returns executable-find result when it succeeds."
   (cl-letf (((symbol-function 'executable-find)
@@ -1891,6 +2721,116 @@
                 (lambda (_f) (list nil nil nil nil nil fixed-time))))
         (eve-play-rendered)
         (should (eq 'rendered eve--playback-mode))))))
+
+(ert-deftest eve-compilation-has-one-context-panel-window ()
+  "Fresh, repeated and previously duplicated renders use one managed window."
+  (skip-unless (and (featurep 'context-panels)
+                    (fboundp 'context-panels-adopt-bottom-view-buffer)))
+  (eve-test-with-buffer
+   (let ((source (current-buffer)))
+     (save-window-excursion
+       (delete-other-windows)
+       (switch-to-buffer source)
+       (unwind-protect
+           (progn
+             ;; Reproduce the two legacy slots before asking Eve to recover.
+             (let ((buffer (get-buffer-create "*eve text-edit*")))
+               (display-buffer-in-side-window buffer '((side . bottom) (slot . 0)))
+               (display-buffer-in-side-window buffer '((side . bottom) (slot . 1))))
+             (dotimes (_ 3)
+               (eve--run-compile "printf 'expected failure\\n'; exit 1" "/tmp/unused-eve-render.mp4")
+               (let* ((buffer (get-buffer "*eve text-edit*"))
+                      (process (get-buffer-process buffer))
+                      (deadline (+ (float-time) 5)))
+                 (while (and (process-live-p process) (< (float-time) deadline))
+                   (accept-process-output process 0.05))
+                 (should-not (process-live-p process))
+                 (let ((windows (get-buffer-window-list buffer nil (selected-frame))))
+                   (should (= 1 (length windows)))
+                   (should (eq 'bottom (window-parameter (car windows) 'window-side)))
+                   (should (= 1 (window-parameter (car windows) 'window-slot)))))
+               (should (eq source (window-buffer (selected-window))))))
+         (when-let* ((buffer (get-buffer "*eve text-edit*"))) (kill-buffer buffer)))))))
+
+(ert-deftest eve-compilation-standalone-display-remains-available ()
+  "Without buffer adoption, compilation uses its normal single bottom window."
+  (eve-test-with-buffer
+   (let ((source (current-buffer)))
+     (save-window-excursion
+       (delete-other-windows)
+       (switch-to-buffer source)
+       (unwind-protect
+           (cl-letf (((symbol-function 'eve--context-panels-available-p) (lambda () nil)))
+             (eve--run-compile "printf 'expected failure\\n'; exit 1" "/tmp/unused-eve-render.mp4")
+             (let* ((buffer (get-buffer "*eve text-edit*"))
+                    (process (get-buffer-process buffer))
+                    (deadline (+ (float-time) 5)))
+               (while (and (process-live-p process) (< (float-time) deadline))
+                 (accept-process-output process 0.05))
+               (should-not (process-live-p process))
+               (let ((windows (get-buffer-window-list buffer nil (selected-frame))))
+                 (should (= 1 (length windows)))
+                 (should (= 0 (window-parameter (car windows) 'window-slot)))))
+             (should (eq source (window-buffer (selected-window)))))
+         (when-let* ((buffer (get-buffer "*eve text-edit*"))) (kill-buffer buffer)))))))
+
+(ert-deftest eve-render-traceback-does-not-open-python-launcher ()
+  "Even a genuine traceback stays in the log instead of visiting its source."
+  (eve-test-with-buffer
+   (let* ((source (current-buffer))
+          (window (selected-window))
+          (launcher (make-temp-file "eve-launcher-" nil ".py"))
+          (compilation-auto-jump-to-first-error t)
+          (compilation-scroll-output 'first-error)
+          (trace (format "Traceback (most recent call last):\n  File \"%s\", line 1, in <module>\nValueError: test failure\n" launcher))
+          compilation-buffer)
+     (unwind-protect
+         (progn
+           (eve--run-compile
+            (concat "printf %s " (shell-quote-argument trace) "; exit 1")
+            "/tmp/unused-eve-render.mp4")
+           (setq compilation-buffer (get-buffer "*eve text-edit*"))
+           (let ((process (get-buffer-process compilation-buffer))
+                 (deadline (+ (float-time) 5)))
+             (while (and (process-live-p process) (< (float-time) deadline))
+               (accept-process-output process 0.05))
+             (should-not (process-live-p process))
+             (accept-process-output process 0.05))
+           (should-not (get-file-buffer launcher))
+           (should (= 1 (length (get-buffer-window-list
+                                 compilation-buffer nil (selected-frame)))))
+           (should (eq source (window-buffer window))))
+       (when (buffer-live-p compilation-buffer) (kill-buffer compilation-buffer))
+       (when-let* ((buffer (get-file-buffer launcher))) (kill-buffer buffer))
+       (delete-file launcher)))))
+
+(ert-deftest eve-run-compile-never-auto-visits-error-files ()
+  "Eve keeps global compilation preferences but disables error-file following."
+  (eve-test-with-buffer
+   (let ((compilation-auto-jump-to-first-error t)
+         (compilation-scroll-output 'first-error)
+         (buffer (generate-new-buffer " *eve compile navigation test*"))
+         (auto-jump-at-start 'unset)
+         (scroll-at-start 'unset))
+     (unwind-protect
+         (cl-letf (((symbol-function 'compilation-start)
+                    (lambda (&rest _args)
+                      (setq auto-jump-at-start compilation-auto-jump-to-first-error
+                            scroll-at-start compilation-scroll-output)
+                      (with-current-buffer buffer
+                        (compilation-mode)
+                        (next-error-follow-minor-mode 1))
+                      buffer)))
+           (eve--run-compile "fake-command" "/tmp/out.mp4")
+           (should-not auto-jump-at-start)
+           (should-not scroll-at-start)
+           (with-current-buffer buffer
+             (should-not compilation-auto-jump-to-first-error)
+             (should-not compilation-scroll-output)
+             (should-not next-error-follow-minor-mode))
+           (should compilation-auto-jump-to-first-error)
+           (should (eq compilation-scroll-output 'first-error)))
+       (when (buffer-live-p buffer) (kill-buffer buffer))))))
 
 (ert-deftest eve-run-compile-propagates-pending-play-socket ()
   "Compilation buffers inherit pending playback sockets from source buffers."
@@ -2667,30 +3607,24 @@
    (let* ((segment (car (eve--segments)))
           (word (nth 1 (alist-get 'words segment))))
      (setf (alist-get 'edit word) '((kind . "filler")))
+     (eve--alist-set word 'spoken "retained legacy annotation")
      (eve--segment-panel-rephrase-range segment 1 1 "bravo")
      (let ((updated (nth 1 (alist-get 'words segment))))
        (should (equal (alist-get 'token updated) "bravo"))
+       (should (equal (alist-get 'spoken updated) "retained legacy annotation"))
        (should (= (alist-get 'start updated) 1.5))
        (should (= (alist-get 'end updated) 2.0))
        (should (equal (alist-get 'edit updated) '((kind . "filler"))))
        (should (equal (alist-get 'text segment) "alpha bravo gamma delta"))))))
 
-(ert-deftest eve-segment-panel-rephrase-different-count-retimes-range ()
-  "Different-count panel rephrase retimes replacement words proportionally."
+(ert-deftest eve-segment-panel-rephrase-different-count-rejects-retiming ()
+  "Legacy range edits must not invent intervals for replacement tokens."
   (eve-test-with-buffer
-   (let* ((segment (car (eve--segments))))
-     (eve--segment-panel-rephrase-range segment 1 2 "bravo charlie echo")
-     (let ((words (alist-get 'words segment)))
-       (should (= (length words) 5))
-       (should (equal (mapcar (lambda (word) (alist-get 'token word)) words)
-                      '("alpha" "bravo" "charlie" "echo" "delta")))
-       (should (= (alist-get 'start (nth 1 words)) 1.5))
-       (should (= (alist-get 'end (nth 1 words)) 2.0))
-       (should (= (alist-get 'start (nth 2 words)) 2.0))
-       (should (= (alist-get 'end (nth 2 words)) 2.5))
-       (should (= (alist-get 'start (nth 3 words)) 2.5))
-       (should (= (alist-get 'end (nth 3 words)) 3.0))
-       (should (equal (alist-get 'text segment) "alpha bravo charlie echo delta"))))))
+   (let* ((segment (car (eve--segments)))
+          (before (copy-tree segment t)))
+     (should-error (eve--segment-panel-rephrase-range segment 1 2 "bravo charlie echo")
+                   :type 'user-error)
+     (should (equal before segment)))))
 
 (ert-deftest eve-segment-panel-delete-all-words-deletes-segment ()
   "Deleting every word in the panel marks the whole segment deleted."

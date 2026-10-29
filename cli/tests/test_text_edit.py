@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 from argparse import Namespace
 from contextlib import redirect_stdout
 from io import StringIO
@@ -153,8 +154,16 @@ def test_renderable_marker_broll_shifts_subtitle_timeline() -> None:
 def test_run_orchestrates_render_subtitles_and_manifest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    audit = {
+        "engine": "ctc",
+        "qualification": "experimental",
+        "forced": True,
+        "quality_concerns": [{"code": "recognizer_timing_unavailable"}],
+        "diagnostics": [{"code": "boundary_disagreement", "blocking": False}],
+    }
     manifest = {
         "version": 1,
+        "alignment": audit,
         "sources": [{"id": "clip01", "file": "sample.mp4"}],
         "segments": [
             {
@@ -206,8 +215,11 @@ def test_run_orchestrates_render_subtitles_and_manifest(
         segment.write_text("segment", encoding="utf-8")
         return [segment]
 
-    def fake_concat_segments(segments: list[Path], destination: Path) -> None:
+    def fake_concat_segments(
+        segments: list[Path], destination: Path, *, durations: list[Any] | None = None
+    ) -> None:
         calls["concat"] = (segments, destination)
+        calls["durations"] = durations
         destination.write_text("video", encoding="utf-8")
 
     def fake_write_webvtt(cues: list[tuple[float, float, str]], path: Path) -> None:
@@ -228,6 +240,7 @@ def test_run_orchestrates_render_subtitles_and_manifest(
         output=str(output),
         workdir=None,
         pretty_manifest=str(pretty_manifest),
+        report=str(tmp_path / "render-report.json"),
         preserve_short_gaps=0.5,
         subtitles="",
         no_subtitle_mux=False,
@@ -252,12 +265,62 @@ def test_run_orchestrates_render_subtitles_and_manifest(
         ]["edit"]
         == manifest["segments"][0]["words"][1]["edit"]
     )
+    report = json.loads(Path(args.report).read_text())
+    assert report["alignment"] == audit
+    assert report["output"] == str(output)
     assert calls["manifest_path"] == Path(args.manifest)
     assert calls["concat"][1] == output
+    assert calls["durations"] == [0.25]
     subtitle_cues, subtitle_path = calls["subtitles"]
     assert subtitle_cues == [(0.0, 0.25, "hello")]
     assert subtitle_path == output.with_suffix(".vtt")
     assert calls["mux"] == (output, output.with_suffix(".vtt"))
+
+
+def test_recorded_quality_override_never_bypasses_render_validation(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "invalid.tjm.json"
+    output, report = tmp_path / "out.mp4", tmp_path / "render-report.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": "1.1",
+                "sources": [
+                    {
+                        "id": "clip01",
+                        "file": "source.mp4",
+                        "timebase": {"numerator": 1, "denominator": 10},
+                    }
+                ],
+                "render": {"filler_policy": "keep", "preserve_short_gaps": 0},
+                "alignment": {"engine": "ctc", "forced": True},
+                "segments": [
+                    {
+                        "id": "a",
+                        "source": "clip01",
+                        "start_tick": 0,
+                        "end_tick": 10,
+                        "words": [{"spoken": "hello", "start_tick": 4, "end_tick": 3}],
+                    }
+                ],
+            }
+        )
+    )
+    assert (
+        main(
+            [
+                "text-edit",
+                str(manifest),
+                "--output",
+                str(output),
+                "--report",
+                str(report),
+            ]
+        )
+        == 1
+    )
+    assert not output.exists() and not report.exists()
 
 
 def test_render_segments_skips_deleted_segments(
@@ -296,9 +359,9 @@ def test_render_segments_skips_deleted_segments(
         for cmd, context in commands
         if context and "clip01-s0003" in context and "(part" in context
     ]
-    assert [cmd[2:6] for cmd in partial_commands] == [
-        ["-ss", "1.000", "-to", "1.150"],
-        ["-ss", "1.300", "-to", "1.500"],
+    assert [(float(cmd[3]), float(cmd[5])) for cmd in partial_commands] == [
+        (1.0, 1.15),
+        (1.3, 1.5),
     ]
     assert any(context == "concatenating rendered segments" for _, context in commands)
 
@@ -843,6 +906,7 @@ def test_text_edit_prefers_nested_segment_edit_broll_with_legacy_fallback(
     )
 
 
+@pytest.mark.media
 @pytest.mark.skipif(
     shutil.which("ffmpeg") is None,
     reason="ffmpeg not available",
@@ -1537,6 +1601,11 @@ def test_checkpoint_written_during_render(
     source = tmp_path / "sample.mp4"
     source.write_bytes(b"fake-video-data")
     cache_dir = tmp_path / ".eve-cache"
+    first_writer = threading.Event()
+    second_writer = threading.Event()
+    observer = threading.Lock()
+    active = maximum_active = render_calls = write_calls = 0
+    original_write = text_edit._write_checkpoint
 
     def fake_probe(_path: Path) -> dict[str, Any]:
         return {
@@ -1548,18 +1617,48 @@ def test_checkpoint_written_during_render(
         }
 
     def fake_run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
+        nonlocal render_calls
+        with observer:
+            render_calls += 1
+            call = render_calls
+        if call == 2:
+            assert first_writer.wait(5)
         Path(cmd[-1]).write_text("clip", encoding="utf-8")
+
+    def observed_write(*args: Any) -> None:
+        nonlocal active, maximum_active, write_calls
+        with observer:
+            active += 1
+            maximum_active = max(maximum_active, active)
+            write_calls += 1
+            call = write_calls
+        try:
+            if call == 1:
+                first_writer.set()
+                second_writer.wait(0.2)
+            else:
+                second_writer.set()
+            original_write(*args)
+        finally:
+            with observer:
+                active -= 1
 
     monkeypatch.setattr(text_edit, "probe_video_characteristics", fake_probe)
     monkeypatch.setattr(text_edit, "run_ffmpeg", fake_run_ffmpeg)
-
+    monkeypatch.setattr(text_edit, "_write_checkpoint", observed_write)
     manifest = _make_simple_manifest(str(source))
     text_edit.render_segments(
-        manifest, tmp_path, tmp_path, cache_dir=cache_dir, quality="draft", resume=True
+        manifest,
+        tmp_path,
+        tmp_path,
+        cache_dir=cache_dir,
+        quality="draft",
+        resume=True,
+        jobs=2,
     )
-
+    assert maximum_active == 1
     checkpoint = text_edit._read_checkpoint(cache_dir)
-    assert len(checkpoint.get("completed", [])) == 2
+    assert checkpoint.get("completed") == [0, 1]
 
 
 def test_no_resume_flag_in_parser() -> None:

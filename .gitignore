@@ -18,6 +18,7 @@ cli/.coverage
 cli/.python-version.local
 cli/src/*.egg-info/
 __pycache__/
+.pixi/
 
 # Devenv
 .devenv*

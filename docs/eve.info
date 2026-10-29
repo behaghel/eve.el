@@ -63,6 +63,7 @@ The TJM Manifest
 Transcription
 
 * Starting transcription from Emacs::
+* Timing and output validity::
 * Backends::
 * Configuration::
 * Installing optional backends::
@@ -109,6 +110,7 @@ JSON templates
 Compilation and Rendering
 
 * Two modes draft and final::
+* Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
 * Dry-run analysis::
@@ -249,6 +251,9 @@ File: eve.info,  Node: Requirements,  Next: Installing the CLI,  Up: Installatio
    • *Emacs* 29.1 or later
    • *mpv* for live playback tracking
    • *eve CLI* for transcription and rendering (see below)
+   • *FFmpeg with libass* and *fontconfig* (‘fc-match’) for burned-in
+     captions; both tools are provided by this project's devenv
+     environment
    • *hydra* (optional) for the ‘?’ keybinding cheatsheet popup
 
 
@@ -265,7 +270,13 @@ pre-built wheel from ‘cli/dist/’.
 
    For standard in-Emacs use, that local bootstrap path means a separate
 global ‘eve’ install is optional.  The fallback path assumes Python 3.12
-or later is available and that the package checkout is writable.
+or later is available and that the package checkout is writable.  It
+reuses an existing ‘cli/.venv’; it does not automatically refresh that
+environment when a new wheel is shipped.  After updating the package,
+refresh an existing CLI installation using its original installation
+method.  In a devenv development checkout, use the project's Python
+synchronization workflow rather than replacing its managed environment
+with a runtime wheel installation.
 
    If you want ‘eve’ on your ‘PATH’ for shell use, install it globally:
 
@@ -295,7 +306,19 @@ File: eve.info,  Node: straightel,  Next: Manual,  Up: Installing the Emacs pack
 ...................
 
      (use-package eve
-       :straight (:type git :host github :repo "behaghel/eve.el"))
+       :straight (:type git :host github :repo "behaghel/eve.el"
+                  :files (:defaults
+                          ("scripts" "scripts/run-cli.sh")
+                          ("cli/dist" "cli/dist/*.whl")
+                          ("docs" "docs/eve.info" "docs/dir"))))
+
+   The explicit file groups are required: straight's defaults select
+Elisp files but do not preserve these runtime and manual subdirectories.
+The launcher must remain at ‘scripts/run-cli.sh’, the wheel under
+‘cli/dist/’, and the compiled manual under ‘docs/’.  Do not include a
+development ‘cli/.venv’ or unrelated benchmark scripts.  After changing
+an existing recipe, run ‘M-x straight-rebuild-package RET eve RET’ to
+refresh its file selection.
 
 
 File: eve.info,  Node: Manual,  Prev: straightel,  Up: Installing the Emacs package
@@ -318,7 +341,13 @@ File: eve.info,  Node: Accessing the manual in Emacs,  Prev: Installing the Emac
 -----------------------------------
 
 Eve registers its bundled Info manual automatically when the package is
-loaded.  Browse it with ‘M-x eve-info’ or ‘C-h i m eve RET’.
+loaded.  The recipe above includes the tracked, generated
+‘docs/eve.info’ and ‘docs/dir’; custom package recipes must retain those
+paths to provide the same integration.  Browse it with ‘M-x eve-info’ or
+‘C-h i m eve RET’.  The source manual is also available as
+‘docs/eve.org’ and online in the repository.  Contributors regenerate
+the tracked Texinfo/Info artifacts after manual edits with ‘devenv -q
+shell -- docs’.
 
 
 File: eve.info,  Node: Quick Start,  Prev: Installation,  Up: Getting Started
@@ -382,32 +411,42 @@ File: eve.info,  Node: Structure,  Next: How eve-mode renders a manifest,  Up: T
 3.1 Structure
 =============
 
-A TJM manifest is a JSON file with two top-level arrays:
+New transcriptions are TJM v1.1 JSON files.  Alongside the version and
+explicit render configuration, a manifest has two top-level arrays:
 
    • ‘sources’ — a list of media files referenced by the edit.  Each
-     entry has an ‘id’ used throughout the manifest and a ‘file’ path.
+     entry has an ‘id’ used throughout the manifest, a ‘file’ path
+     relative to the manifest, and a rational ‘timebase’ for
+     interpreting source-local ticks.
 
    • ‘segments’ — the ordered timeline.  Each segment references a
-     source, a start and end time (in seconds or ticks), and the spoken
-     text.  Optional fields carry per-word timestamps, b-roll metadata,
-     speaker identity, tags, and notes.
+     source, a start and end ticks, and the spoken text.  Optional
+     derived seconds are convenience values, not timing authority.
+     Optional fields carry per-word timestamps, b-roll metadata, speaker
+     identity, tags, and notes.
 
    A minimal manifest:
 
      {
-       "version": 1,
+       "version": "1.1",
        "sources": [
-         { "id": "clip01", "file": "raw/recording.mp4" }
+         { "id": "clip01", "file": "raw/recording.mp4",
+           "timebase": { "numerator": 1, "denominator": 48000 } }
        ],
        "segments": [
          {
-           "id": "clip01-s0001",
-           "source": "clip01",
-           "start": 12.34,
-           "end": 15.60,
-           "text": "This is what was said."
+           "id": "clip01-s0001", "source": "clip01",
+           "start_tick": 0, "end_tick": 48000, "start": 0, "end": 1,
+           "spoken_text": "Hello world.", "display_text": "Hello world.",
+           "words": [
+             { "spoken": "Hello", "start_tick": 0, "end_tick": 24000,
+               "start": 0, "end": 0.5 },
+             { "spoken": "world.", "start_tick": 24000, "end_tick": 48000,
+               "start": 0.5, "end": 1 }
+           ]
          }
-       ]
+       ],
+       "render": { "filler_policy": "keep", "preserve_short_gaps": 0 }
      }
 
    The TJM v1.1 specification in ‘docs/tjm-spec.md’ defines every field,
@@ -448,12 +487,13 @@ File: eve.info,  Node: Transcription,  Next: Editing,  Prev: The TJM Manifest,  
 * Menu:
 
 * Starting transcription from Emacs::
+* Timing and output validity::
 * Backends::
 * Configuration::
 * Installing optional backends::
 
 
-File: eve.info,  Node: Starting transcription from Emacs,  Next: Backends,  Up: Transcription
+File: eve.info,  Node: Starting transcription from Emacs,  Next: Timing and output validity,  Up: Transcription
 
 4.1 Starting transcription from Emacs
 =====================================
@@ -472,16 +512,104 @@ Two commands launch transcription:
 the error output.
 
 
-File: eve.info,  Node: Backends,  Next: Configuration,  Prev: Starting transcription from Emacs,  Up: Transcription
+File: eve.info,  Node: Timing and output validity,  Next: Backends,  Prev: Starting transcription from Emacs,  Up: Transcription
 
-4.2 Backends
+4.2 Timing and output validity
+==============================
+
+The transcriber writes v1.1 with a per-source audio sample clock,
+canonical spoken words, and tick intervals.  Backend precision is
+retained through segmentation and converted once to nearest
+source-sample ticks.  The 16 kHz ASR working audio preserves leading
+media-time offsets.
+
+   New manifests explicitly keep fillers and set
+‘render.preserve_short_gaps’ to ‘0’.  Change these saved render settings
+in the raw JSON companion when needed; they are authoritative for v1.1
+rendering.
+
+   Missing, reversed, zero-duration, or sub-tick-collapsed word
+intervals block publication of a successful transcription.  Eve does not
+add a tick or stretch neighbouring words to make validation pass.
+Existing output is left untouched on validation failure.  Default
+transcription preserves ASR estimates without certifying acoustic
+accuracy.  The CLI's opt-in ‘--word-aligner ctc’ path uses unchanged
+native CTC estimates after English faster-whisper recognition; no human
+timing annotations are needed.  Unsigned English integers, including
+grouped thousands and sentence punctuation, use alignment-only
+verbalization.  ‘11,’ remains the same token and spelling while CTC
+matches ‘ELEVEN’.  Multiword readings remain atomic.  Four-digit numbers
+compare cardinal and year readings against the same acoustic emissions,
+rather than assuming a year pronunciation.  Selected readings and the
+pinned normalizer's version are saved in the alignment audit.  Ambiguous
+score ties or more than 32 reading paths fail without guessing.
+Decimals, signed/currency/percentage forms, leading zeros, numeric
+compounds and ordinals remain unsupported.
+
+   Experimental backend status does not require force.  A recognizer/CTC
+boundary disagreement greater than 160 ms is recorded in
+‘alignment.diagnostics’ without blocking publication: disagreement alone
+does not establish that CTC is wrong.  Missing or invalid recognizer
+timing used only for comparison is also a non-blocking
+‘recognizer_timing_unavailable’ diagnostic when independent native
+alignment passes structural validation.  The report retains the original
+comparison boundaries as strings, or null for missing values, including
+non-finite values without invalid JSON.  This does not repair either
+estimate or certify word presence or timing accuracy.  Without an
+independent aligner, invalid recognizer word timing remains
+authoritative and blocks publication.  ‘--force’ may accept other
+recorded quality concerns, never invalid native intervals, changed
+tokens, source-bound violations or model errors.  Informational
+diagnostics alone never set the recorded ‘forced’ flag, even with
+‘--force’.  Selected media envelopes are retained rather than shrunk to
+character spans.  If expanded caption envelopes intersect, they are
+partitioned jointly between adjacent word intervals, retaining exactly
+the same source coverage without repeating footage.  Non-overlapping
+captions and intended gaps stay unchanged.  Word estimates, grouping and
+order do not change; genuinely overlapping word timings still fail
+instead of being repaired.
+
+   Alignment writes a decision report beside the output (or at
+‘--alignment-report PATH’).  Successful manifests store the same
+‘alignment’ audit record, including model/revision, concerns and any
+actual override.  ‘eve text-edit ... --report render.json’ carries that
+record into its render report.  Subtitle settings still live in TJM.
+
+   In Emacs, set ‘eve-transcribe-word-aligner’ to ‘"ctc"’ to opt into
+this path for ‘M-x eve-transcribe’ and ‘M-x eve-dired-transcribe’.  The
+default ‘nil’ keeps backend word timings.  The CTC path requires English
+‘faster-whisper’ and the CLI's declared ‘alignment’ dependencies.  Its
+progress shows the word alignment stage, and success opens the manifest
+as usual.
+
+   A normal run never passes ‘--force’.  Use ‘C-u M-x eve-transcribe’ or
+‘C-u M-x eve-dired-transcribe’ to request a quality override for that
+run; this requires the CTC opt-in and still cannot override invalid
+timing.  A failure shows ‘*eve transcribe*’ and is never retried
+automatically.  The alignment audit, including false booleans and empty
+arrays, survives editor saving and undo.  Empty segment tag lists also
+remain arrays in saved and render manifests.  CTC completion skips
+legacy suspicious-region ASR repair offers; the word-aligner setting
+does not change manual region retranscription commands.
+
+   The pause diagnostic is provisional and non-blocking: Silero-VAD gaps
+of at least 250 ms, with 80 ms excluded at each edge.  Representative
+validation is still needed before it becomes a blocking gate.  Runtime
+completion does not certify the separate release target of 95% of
+reference boundaries within 80 ms (40 ms stretch), nor the operational
+target of 95% normal completion.
+
+
+File: eve.info,  Node: Backends,  Next: Configuration,  Prev: Timing and output validity,  Up: Transcription
+
+4.3 Backends
 ============
 
 ‘eve transcribe’ supports three backends:
 
 Backend            Flag                         Notes
 --------------------------------------------------------------------------------------------
-‘faster-whisper’   ‘--backend faster-whisper’   Default.  Fast, local, good accuracy.
+‘faster-whisper’   ‘--backend faster-whisper’   Default.  Fast, local inference.
 ‘transformers’     ‘--backend transformers’     HuggingFace models.  Needs optional deps.
 ‘nemo’             ‘--backend nemo’             NVIDIA NeMo.  Needs optional deps.
 
@@ -492,29 +620,38 @@ as ‘um’, ‘uh’, ‘like’, and ‘you know’; set ‘eve-transcribe-hot
 pass ‘--hotwords’ to override them.  For ‘transformers’ and ‘nemo’,
 choose a verbatim-friendly model instead.
 
-   Good starting points:
-   • ‘transformers’: ‘nyrahealth/CrisperWhisper’
-   • ‘nemo’: ‘nvidia/parakeet-ctc-1.1b’
+   Choose recognition and alignment models whose published licenses
+permit the intended use of both their weights and generated outputs.
+This is a non-commercial project; non-commercial research models may be
+evaluated here.  Check model and output terms, not only the inference
+code's license, and verify production or operational deployment rights
+separately before routine use.
+
+   Licensing eligibility and backend availability do not establish
+verbatim recall or timing accuracy.  Model quality must be qualified
+separately; a backend's ‘--verbatim’ option or a model's name is not a
+guarantee of filler preservation.
 
 
 File: eve.info,  Node: Configuration,  Next: Installing optional backends,  Prev: Backends,  Up: Transcription
 
-4.3 Configuration
+4.4 Configuration
 =================
 
-Variable                       Default               Description
-----------------------------------------------------------------------------------------------------------
-‘eve-transcribe-backend’       ‘"faster-whisper"’    Backend name passed to ‘eve transcribe’.
-‘eve-transcribe-model’         ‘"medium.en"’         Model identifier.
-‘eve-transcribe-verbatim’      ‘t’                   Pass ‘--verbatim’ to the backend.
-‘eve-transcribe-hotwords’      ‘nil’                 Optional hotwords override; nil uses CLI defaults.
-‘eve-transcribe-tag-fillers’   ‘t’                   Tag filler words during transcription.
-‘eve-media-extensions’         ‘("mp4" "mov" ...)’   File types scanned by ‘eve-transcribe’.
+Variable                        Default               Description
+--------------------------------------------------------------------------------------------------------------------------------------
+‘eve-transcribe-backend’        ‘"faster-whisper"’    Backend name passed to ‘eve transcribe’.
+‘eve-transcribe-model’          ‘"medium.en"’         Model identifier.
+‘eve-transcribe-word-aligner’   ‘nil’                 Set to ‘"ctc"’ for opt-in native word alignment on full-source transcription.
+‘eve-transcribe-verbatim’       ‘t’                   Pass ‘--verbatim’ to the backend.
+‘eve-transcribe-hotwords’       ‘nil’                 Optional hotwords override; nil uses CLI defaults.
+‘eve-transcribe-tag-fillers’    ‘t’                   Tag filler words during transcription.
+‘eve-media-extensions’          ‘("mp4" "mov" ...)’   File types scanned by ‘eve-transcribe’.
 
 
 File: eve.info,  Node: Installing optional backends,  Prev: Configuration,  Up: Transcription
 
-4.4 Installing optional backends
+4.5 Installing optional backends
 ================================
 
 The ‘transformers’ and ‘nemo’ backends need extra Python dependencies.
@@ -583,10 +720,30 @@ File: eve.info,  Node: Splitting and merging,  Next: Reordering,  Prev: Deletion
 
    • ‘s’ or ‘|’ (‘eve-split-segment’) — splits the current segment at
      point, creating two segments with the text and timing divided at
-     the cut.
+     the cut.  In the segment panel, the word under point takes
+     precedence over older keyboard focus.  Modal keymaps can override
+     ‘s’; ‘|’ or ‘M-x eve-segment-panel-split’ invokes the panel split
+     command directly.
 
    • ‘m’ or ‘)’ (‘eve-merge-with-next’) — merges the current segment
      with the one below, combining text and adjusting the end time.
+
+   For v1.1, splitting partitions the original source interval at an
+existing word edge without retiming words or losing retained footage.
+Merging preserves word records and refreshes the combined caption.
+Different source clocks, backwards/overlapping source intervals, and
+mixed timed/untimed captions cannot be forced into one timed group.
+Reordering remains valid without changing any source-local ticks.
+
+   *Regroup first, then delete:* v1.1 split/merge commands reject groups
+with active word cuts, including fillers removed by
+‘render.filler_policy = "drop"’.  Restore the cuts before regrouping,
+then reapply them.  A filler mark with policy ‘"keep"’ is not an active
+cut; explicit non-filler decisions remain respected.  Merging also
+refuses to span a deleted group, including one hidden between the
+selected groups.  Force cannot bypass these checks.  This prevents the
+renderer’s per-group trimming rules from silently reinstating omitted
+footage; rejection leaves both data and undo history unchanged.
 
 
 File: eve.info,  Node: Reordering,  Next: Markers and sections,  Prev: Splitting and merging,  Up: Editing
@@ -628,8 +785,24 @@ File: eve.info,  Node: Inline editing,  Next: Metadata,  Prev: Markers and secti
 ==================
 
 Press ‘e’ (‘eve-dwim-edit’) to edit the text or metadata of the segment
-at point.  The command adapts to context: on a word it edits the spoken
-text; on a marker it edits the title.
+at point.  On a marker it edits the title.  For timed v1.1 segments it
+changes ‘display’ fragments, never the factual ‘spoken’ tokens or their
+source ticks.  The panel's ‘i’ action edits one focused token or the
+selected token range; ‘E’ edits the segment's token displays.
+
+   A single v1.1 token can display a complete phrase, which highlights
+and deletes as one unit.  For a bulk replacement, supply one replacement
+word per selected timed token; otherwise edit the tokens individually.
+Ambiguous replacements are rejected before changing data or undo
+history.  Capitalization and punctuation actions also change only token
+displays.  Karaoke caption text is kept synchronized with surviving
+token displays after word edits.
+
+   The legacy seconds-only time editor and local transcript regeneration
+are not available for v1.1: they fail without changing data rather than
+silently rewriting aliases or losing exact clocks.  Explicit source-tick
+changes can be made through the raw JSON view.  Existing-timeline
+editing and export do not require transcription or timing review.
 
 
 File: eve.info,  Node: Metadata,  Next: Undo and redo,  Prev: Inline editing,  Up: Editing
@@ -638,10 +811,10 @@ File: eve.info,  Node: Metadata,  Next: Undo and redo,  Prev: Inline editing,  U
 ============
 
 Key         Command                Description
------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------
 ‘t’         ‘eve-toggle-tag’       Toggle a tag on the segment at point.
 ‘i’         ‘eve-edit-speaker’     Set the speaker label for the segment.
-‘r’         ‘eve-edit-start-end’   Edit the segment's start/end timecodes.
+‘r’         ‘eve-edit-start-end’   Edit legacy v1 timecodes; rejected safely for v1.1.
 ‘C-c C-n’   ‘eve-edit-notes’       Edit free-form notes for the segment.
 
 
@@ -685,10 +858,10 @@ File: eve.info,  Node: Concept,  Next: Configuration (1),  Up: Filler Words
 ===========
 
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
-workflow is non-destructive: words are _tagged_ as fillers first, then
-_optionally deleted_.  Tagged fillers are highlighted in the buffer with
-a distinct face and excluded from compilation.  You can untag them at
-any time.
+workflow is non-destructive: words are _marked_ as fillers first, then
+_optionally deleted_.  Marked fillers are highlighted in the buffer with
+a distinct face and excluded from compilation.  You can mark a word as
+non-filler for this TJM file so future auto-tagging leaves it alone.
 
 
 File: eve.info,  Node: Configuration (1),  Next: Commands,  Prev: Concept,  Up: Filler Words
@@ -702,11 +875,16 @@ File: eve.info,  Node: Configuration (1),  Next: Commands,  Prev: Concept,  Up: 
    ‘eve-filler-phrases’ stores phrases as plain strings.  Matching is
 case-insensitive, punctuation-insensitive, and prefers the longest
 phrase first.  For example, ‘"you know"’ matches adjacent words like
-‘you know,’ and tags both words as a filler phrase; it does not tag
-separated words such as ‘you ... know’.  The CLI ‘eve tag-fillers
---filler "you know"’ follows the same adjacent phrase semantics and
-writes the canonical ‘word.edit.kind = "filler"’ metadata.  The list is
-persisted when you use the interactive add commands.
+‘you know,’ and marks both words as a filler phrase; it does not mark
+separated words such as ‘you ... know’.  Eve stores editable filler
+decisions in ‘word.edit.filler’; legacy ‘word.edit.kind = "filler"’
+metadata is still recognized.  The list is persisted when you use the
+interactive add commands.
+
+   ‘eve-filler-exception-phrases’ stores phrases that should not be
+auto-marked as fillers.  Exceptions win over filler phrases: if ‘like’
+is a filler but ‘would like’ is an exception, the ‘like’ in ‘would like’
+stays non-filler.
 
    The legacy ‘eve-filler-regex’ variable is still honoured for
 backwards compatibility but ‘eve-filler-phrases’ is preferred.
@@ -721,12 +899,13 @@ Key           Command                                     Description
 ------------------------------------------------------------------------------------------------------------------------------------
 ‘f’           ‘eve-dwim-filler’                           Add the word at point to phrases and retag; or delete region as filler.
 ‘F’           ‘eve-delete-fillers’                        Mark all tagged fillers as deleted.
-‘A’           ‘eve-accept-filler’                         Accept the filler at point by removing its filler tag.
+‘A’           ‘eve-accept-filler’                         Mark the filler at point as non-filler in this TJM file.
 ‘]f’ / ‘[f’   ‘eve-next-filler’ / ‘eve-previous-filler’   Jump to next / previous visible filler.
 ‘C-c C-d’     ‘eve-delete-fillers’                        Same as ‘F’ from the ‘C-c’ prefix map.
-—             ‘M-x eve-tag-fillers’                       Tag all matching words in the buffer.
+—             ‘M-x eve-tag-fillers’                       Mark all matching words in the buffer.
 —             ‘M-x eve-add-filler-at-point’               Add the word at point to ‘eve-filler-phrases’ and retag.
 —             ‘M-x eve-add-filler-region’                 Add the selected phrase to ‘eve-filler-phrases’ and retag.
+—             ‘M-x eve-add-filler-exception’              Add the word/region as a future filler exception.
 
 
 File: eve.info,  Node: Auto-tagging on file open,  Prev: Commands,  Up: Filler Words
@@ -736,8 +915,9 @@ File: eve.info,  Node: Auto-tagging on file open,  Prev: Commands,  Up: Filler W
 
 Fillers are tagged automatically every time a TJM manifest is opened.
 If you add a new phrase to ‘eve-filler-phrases’, reopen the file or run
-‘M-x eve-tag-fillers’ to apply the updated list.  Accepted fillers are
-simply untagged, so explicit re-tagging may mark them as fillers again.
+‘M-x eve-tag-fillers’ to apply the updated list.  Words explicitly
+marked as non-filler with ‘A’ are persisted in the TJM file and are not
+auto-tagged again.
 
 
 File: eve.info,  Node: B-Roll,  Next: Compilation and Rendering,  Prev: Filler Words,  Up: Top
@@ -1037,6 +1217,7 @@ File: eve.info,  Node: Compilation and Rendering,  Next: Playback,  Prev: B-Roll
 * Menu:
 
 * Two modes draft and final::
+* Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
 * Dry-run analysis::
@@ -1046,7 +1227,7 @@ File: eve.info,  Node: Compilation and Rendering,  Next: Playback,  Prev: B-Roll
 * CLI reference::
 
 
-File: eve.info,  Node: Two modes draft and final,  Next: Under the hood,  Up: Compilation and Rendering
+File: eve.info,  Node: Two modes draft and final,  Next: Burned-in captions,  Up: Compilation and Rendering
 
 8.1 Two modes: draft and final
 ==============================
@@ -1061,9 +1242,80 @@ delivery.
 ‘eve-compile-quality’.
 
 
-File: eve.info,  Node: Under the hood,  Next: Pre-flight validation,  Prev: Two modes draft and final,  Up: Compilation and Rendering
+File: eve.info,  Node: Burned-in captions,  Next: Under the hood,  Prev: Two modes draft and final,  Up: Compilation and Rendering
 
-8.2 Under the hood
+8.2 Burned-in captions
+======================
+
+An existing valid v1.1 timeline can be opened and exported directly; no
+new transcription or alignment is required.  Eve reads source-local
+ticks using each source's timebase, even without legacy ‘start’, ‘end’,
+‘text’ or ‘token’ aliases.  Displayed seconds are a view: opening,
+configuring subtitles and saving do not round or replace the
+authoritative ticks.  Existing ‘word.display’ fragments appear together
+as one timed token, including multiword fragments; spoken text remains
+separate.
+
+   Run ‘M-x eve-enable-subtitle-burning’ in a v1.1 TJM buffer or its
+context panel, then save with ‘C-x C-s’ or compile normally.  The
+command copies ‘eve-subtitle-defaults’ into the manifest's optional
+‘subtitles’ object; the resulting video follows those saved settings,
+not the current Emacs session.  Existing subtitle settings are left
+unchanged, including extension fields.  Legacy v1 does not support
+burning: supply a valid v1.1 timeline instead.  Changing only the
+version field does not add the required clock/tick data.
+
+   The defaults use word highlighting, bold 144-pixel white text, a
+3-pixel black outline, and a gold active token.  Captions are
+bottom-centered with a 180-pixel margin, scaled from a 1920×1080
+reference canvas.  The large text-first profile is intentional: speech
+and captions can dominate the video rather than serve as a small
+annotation.  On a 1080×1920 portrait export, uniform scaling gives an
+81-pixel font and a 101.25-pixel bottom margin.  One TJM segment is one
+caption; pauses leave the caption visible without highlighting, and
+captions disappear between segments.
+
+   The requested font must be installed.  For example, to use DejaVu
+Sans for manifests that do not yet have subtitle settings:
+
+     (with-eval-after-load 'eve
+       (setf (alist-get 'family (alist-get 'font eve-subtitle-defaults))
+             "DejaVu Sans"))
+
+   Customize the complete default profile with ‘M-x customize-variable
+RET eve-subtitle-defaults RET’.  Its values are JSON-compatible alists:
+‘t’ is true, ‘:json-false’ is false, and ‘nil’ is null.  To use plain
+captions instead of highlighting, set its ‘style’ member to ‘"plain"’.
+
+   Run ‘M-x eve-disable-subtitle-burning’ to remove the manifest's
+subtitle object.  Enabling/disabling is undoable with Eve's normal undo
+command.  Changing Emacs defaults never replaces settings already saved
+in a TJM file; to deliberately replace them, disable burning and then
+enable it again with the new defaults.  These commands do not change
+media selections, token timings, or optional embedded subtitle tracks.
+Burning re-encodes video; audio timing is preserved.
+
+   Fractional cuts retain native frame phase, including at 29.97 fps.
+The first video frame may legitimately have a nonzero presentation time
+when the source cut falls between frames.  Encoding, embedded-track
+muxing and burning preserve that phase rather than rounding it onto a
+new frame-rate grid.  Clock-rule changes invalidate older render caches
+and resume checkpoints automatically.
+
+   Compilation output appears once in the bottom context view when
+context-panels supports buffer adoption, or in one standalone bottom
+window otherwise.  Repeated renders keep one log view and preserve focus
+in the source buffer.  Render validation failures appear in that log
+without automatically opening Python source or the CLI launcher.
+Invalid token timings identify the segment, token, and interval that
+need repair; missing fonts must be installed or replaced in the manifest
+settings.  Eve does not invent timing or silently substitute fonts to
+make a render succeed.
+
+
+File: eve.info,  Node: Under the hood,  Next: Pre-flight validation,  Prev: Burned-in captions,  Up: Compilation and Rendering
+
+8.3 Under the hood
 ==================
 
 Eve's rendering pipeline is designed to be fast after the first run:
@@ -1098,7 +1350,7 @@ Eve's rendering pipeline is designed to be fast after the first run:
 
 File: eve.info,  Node: Pre-flight validation,  Next: Dry-run analysis,  Prev: Under the hood,  Up: Compilation and Rendering
 
-8.3 Pre-flight validation
+8.4 Pre-flight validation
 =========================
 
 Before starting a render, eve validates the manifest:
@@ -1117,7 +1369,7 @@ you confirm.  Run validation explicitly with ‘C-c C-v’ (‘eve-validate’).
 
 File: eve.info,  Node: Dry-run analysis,  Next: Checkpoint and resume,  Prev: Pre-flight validation,  Up: Compilation and Rendering
 
-8.4 Dry-run analysis
+8.5 Dry-run analysis
 ====================
 
 Before rendering, eve can report which segments would be re-encoded and
@@ -1132,7 +1384,7 @@ pre-flight confirmation prompt.
 
 File: eve.info,  Node: Checkpoint and resume,  Next: Progressive output,  Prev: Dry-run analysis,  Up: Compilation and Rendering
 
-8.5 Checkpoint and resume
+8.6 Checkpoint and resume
 =========================
 
 If a render is interrupted, eve writes a checkpoint file in
@@ -1145,7 +1397,7 @@ remaining ones are encoded.
 
 File: eve.info,  Node: Progressive output,  Next: Configuration reference,  Prev: Checkpoint and resume,  Up: Compilation and Rendering
 
-8.6 Progressive output
+8.7 Progressive output
 ======================
 
 With ‘--partial-every N’, eve writes a partial ‘<output>.partial.mp4’
@@ -1155,7 +1407,7 @@ each partial file, which Emacs can use to update a live preview.
 
 File: eve.info,  Node: Configuration reference,  Next: CLI reference,  Prev: Progressive output,  Up: Compilation and Rendering
 
-8.7 Configuration reference
+8.8 Configuration reference
 ===========================
 
 Variable                            Default     Description
@@ -1180,7 +1432,7 @@ Variable                            Default     Description
 
 File: eve.info,  Node: CLI reference,  Prev: Configuration reference,  Up: Compilation and Rendering
 
-8.8 CLI reference
+8.9 CLI reference
 =================
 
 Under normal Emacs usage you never need to call ‘eve text-edit’ directly
@@ -1430,7 +1682,7 @@ These bindings are active in eve-mode.  The table below is
 auto-generated from the keymap by ‘scripts/gen-docs’.
 
 Key           Command
---------------------------------------------
+----------------------------------------------
 ‘?’           ‘eve--show-help’
 ‘q’           ‘eve-dwim-quit’
 ‘g’           ‘eve-reload’
@@ -1461,9 +1713,15 @@ Key           Command
 ‘s’           ‘eve-split-segment’
 ‘D’           ‘eve-delete-segment’
 ‘d’           ‘eve-delete-word’
+‘S-TAB’       ‘eve-toggle-all-marker-folds’
+‘<backtab>’   ‘eve-toggle-all-marker-folds’
+‘TAB’         ‘eve-toggle-marker-fold’
+‘}’           ‘eve-next-marker’
+‘{’           ‘eve-previous-marker’
 ‘K’           ‘eve-move-segment-up’
 ‘J’           ‘eve-move-segment-down’
-‘p’           ‘eve-previous-segment’
+‘P’           ‘eve-paste-segment-before’
+‘p’           ‘eve-paste-segment’
 ‘n’           ‘eve-next-segment’
 ‘k’           ‘eve-previous-segment’
 ‘j’           ‘eve-next-segment’
@@ -1539,47 +1797,54 @@ with ‘M-x customize-group RET eve RET’.
    The table below is auto-generated from the defcustom forms in
 ‘eve.el’ by ‘scripts/gen-docs’.
 
-Variable                            Default                     Description
-------------------------------------------------------------------------------------------------------------------------------------------------
-‘eve-auto-render-all-segments’      ‘nil’                       Whether speculative renders should warm every segment cache entry.
-‘eve-auto-render-default-enabled’   ‘t’                         Whether 'eve-auto-render-mode' is enabled in new Eve buffers.
-‘eve-auto-render-idle-seconds’      ‘2.0’                       Idle time in seconds before a background speculative render fires after save.
-‘eve-auto-render-low-priority’      ‘t’                         Whether speculative render processes should run at low CPU priority.
-‘eve-cli-program’                   ‘"eve"’                     Executable used for 'eve' CLI commands.
-‘eve-compile-cache’                 ‘t’                         Whether to use the persistent segment cache during compilation.
-‘eve-compile-confirm-threshold’     ‘30’                        Seconds above which 'eve-compile' asks before starting.
-‘eve-compile-jobs’                  ‘0’                         Number of segments to encode in parallel, passed to 'eve text-edit -jobs'.
-‘eve-compile-quality’               ‘"draft"’                   Default encoding quality passed to 'eve text-edit -quality'.
-‘eve-compile-scale’                 ‘1.0’                       Resolution scale factor passed to 'eve text-edit -scale'.
-‘eve-context-panels-auto-open’      ‘nil’                       When non-nil, open Eve context panels automatically in 'eve-mode'.
-‘eve-context-thumbnail-height’      ‘54’                        Height in pixels for context-panel timestamp thumbnails.
-‘eve-context-thumbnail-jobs’        ‘1’                         Maximum concurrent ffmpeg thumbnail extraction jobs per Eve buffer.
-‘eve-context-thumbnail-source’      ‘(...)’                     Preferred source for context-panel timestamp thumbnails.
-‘eve-context-thumbnail-width’       ‘96’                        Width in pixels for context-panel timestamp thumbnails.
-‘eve-context-thumbnails-enabled’    ‘t’                         Whether Eve context-panel timestamp rows show video thumbnails.
-‘eve-filler-phrases’                ‘("um" "uh")’               Filler words/phrases to tag in transcripts.
-‘eve-filler-regex’                  ‘("\\`um\\'" "\\`uh\\'")’   Regexps matched against word text when tagging filler words.
-‘eve-line-spacing’                  ‘2’                         Additional pixel spacing between lines in 'eve-mode' buffers.
-‘eve-media-extensions’              ‘(...)’                     Supported media extensions for transcription inputs.
-‘eve-play-after-compile’            ‘nil’                       Whether to play the rendered video automatically after compilation.
-‘eve-play-args’                     ‘(...)’                     Additional arguments passed to 'eve-play-program'.
-‘eve-play-program’                  ‘"mpv"’                     Executable used for segment playback.
-‘eve-preserve-gaps-max’             ‘2.0’                       Maximum gap duration preserved during 'eve text-edit' compilation.
-‘eve-ruler-interval’                ‘30.0’                      Interval in seconds between right-margin timestamp ruler markers.
-‘eve-seek-long-backward-seconds’    ‘30’                        Seconds used by long backward seek commands.
-‘eve-seek-long-forward-seconds’     ‘10’                        Seconds used by long forward seek commands.
-‘eve-seek-short-seconds’            ‘5’                         Seconds used by short seek commands.
-‘eve-segment-panel-height’          ‘12’                        Height of the Eve current-segment bottom panel.
-‘eve-show-words-by-default’         ‘nil’                       If non-nil, show per-word timings when rendering segments.
-‘eve-transcribe-backend’            ‘"faster-whisper"’          Backend passed to 'eve transcribe'.
-‘eve-transcribe-hotwords’           ‘nil’                       Optional hotwords string passed to 'eve transcribe'.
-‘eve-transcribe-model’              ‘"medium.en"’               Model passed to 'eve transcribe'.
-‘eve-transcribe-tag-fillers’        ‘t’                         Whether 'eve transcribe' should tag filler words.
-‘eve-transcribe-verbatim’           ‘t’                         Whether 'eve transcribe' should preserve verbatim output.
-‘eve-validation-on-save’            ‘t’                         Whether TJM buffers should be validated automatically on save.
-‘eve-validation-time-tolerance’     ‘0.1’                       Permitted slack (in seconds) when comparing segment and word timings.
-‘eve-video-layout’                  ‘nil’                       When non-nil, arrange the screen for video editing on the first play command.
-‘eve-video-layout-ratio’            ‘0.6’                       Fraction of screen height reserved for the video window (0.0–1.0).
+Variable                                       Default                     Description
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+‘eve-auto-render-all-segments’                 ‘nil’                       Whether speculative renders should warm every segment cache entry.
+‘eve-auto-render-default-enabled’              ‘t’                         Whether 'eve-auto-render-mode' is enabled in new Eve buffers.
+‘eve-auto-render-idle-seconds’                 ‘2.0’                       Idle time in seconds before a background speculative render fires after save.
+‘eve-auto-render-low-priority’                 ‘t’                         Whether speculative render processes should run at low CPU priority.
+‘eve-cli-program’                              ‘"eve"’                     Executable used for 'eve' CLI commands.
+‘eve-compile-cache’                            ‘t’                         Whether to use the persistent segment cache during compilation.
+‘eve-compile-confirm-threshold’                ‘30’                        Seconds above which 'eve-compile' asks before starting.
+‘eve-compile-jobs’                             ‘0’                         Number of segments to encode in parallel, passed to 'eve text-edit -jobs'.
+‘eve-compile-quality’                          ‘"draft"’                   Default encoding quality passed to 'eve text-edit -quality'.
+‘eve-compile-scale’                            ‘1.0’                       Resolution scale factor passed to 'eve text-edit -scale'.
+‘eve-context-panels-auto-open’                 ‘nil’                       When non-nil, open Eve context panels automatically in 'eve-mode'.
+‘eve-context-thumbnail-height’                 ‘54’                        Height in pixels for context-panel timestamp thumbnails.
+‘eve-context-thumbnail-jobs’                   ‘1’                         Maximum concurrent ffmpeg thumbnail extraction jobs per Eve buffer.
+‘eve-context-thumbnail-source’                 ‘(...)’                     Preferred source for context-panel timestamp thumbnails.
+‘eve-context-thumbnail-width’                  ‘96’                        Width in pixels for context-panel timestamp thumbnails.
+‘eve-context-thumbnails-enabled’               ‘t’                         Whether Eve context-panel timestamp rows show video thumbnails.
+‘eve-filler-exception-phrases’                 ‘nil’                       Phrases that should not be auto-tagged as fillers.
+‘eve-filler-phrases’                           ‘("um" "uh")’               Filler words/phrases to tag in transcripts.
+‘eve-filler-regex’                             ‘("\\`um\\'" "\\`uh\\'")’   Regexps matched against word text when tagging filler words.
+‘eve-gap-indicator-duration’                   ‘5.0’                       Source gap duration in seconds above which Eve shows gap indicators.
+‘eve-line-spacing’                             ‘2’                         Additional pixel spacing between lines in 'eve-mode' buffers.
+‘eve-media-extensions’                         ‘(...)’                     Supported media extensions for transcription inputs.
+‘eve-play-after-compile’                       ‘nil’                       Whether to play the rendered video automatically after compilation.
+‘eve-play-args’                                ‘(...)’                     Additional arguments passed to 'eve-play-program'.
+‘eve-play-program’                             ‘"mpv"’                     Executable used for segment playback.
+‘eve-preserve-gaps-max’                        ‘2.0’                       Maximum gap duration preserved during 'eve text-edit' compilation.
+‘eve-ruler-interval’                           ‘30.0’                      Interval in seconds between right-margin timestamp ruler markers.
+‘eve-seek-long-backward-seconds’               ‘30’                        Seconds used by long backward seek commands.
+‘eve-seek-long-forward-seconds’                ‘10’                        Seconds used by long forward seek commands.
+‘eve-seek-short-seconds’                       ‘5’                         Seconds used by short seek commands.
+‘eve-segment-panel-height’                     ‘12’                        Height of the Eve current-segment bottom panel.
+‘eve-show-words-by-default’                    ‘nil’                       If non-nil, show per-word timings when rendering segments.
+‘eve-subtitle-defaults’                        ‘(...)’                     TJM subtitle configuration copied when enabling burning in a manifest.
+‘eve-transcribe-backend’                       ‘"faster-whisper"’          Backend passed to 'eve transcribe'.
+‘eve-transcribe-hotwords’                      ‘nil’                       Optional hotwords string passed to 'eve transcribe'.
+‘eve-transcribe-model’                         ‘"medium.en"’               Model passed to 'eve transcribe'.
+‘eve-transcribe-offer-reprocess-suspicious’    ‘t’                         Whether to offer suspicious-region retranscription after transcription.
+‘eve-transcribe-suspicious-gap-duration’       ‘5.0’                       Source gap duration in seconds above which transcription cleanup is offered.
+‘eve-transcribe-tag-fillers’                   ‘t’                         Whether 'eve transcribe' should tag filler words.
+‘eve-transcribe-verbatim’                      ‘t’                         Whether 'eve transcribe' should preserve verbatim output.
+‘eve-transcribe-word-aligner’                  ‘nil’                       Optional word aligner for full-source transcription commands.
+‘eve-validation-on-save’                       ‘t’                         Whether TJM buffers should be validated automatically on save.
+‘eve-validation-suspicious-segment-duration’   ‘10.0’                      Segment duration in seconds above which validation flags a warning.
+‘eve-validation-time-tolerance’                ‘0.1’                       Permitted slack (in seconds) when comparing segment and word timings.
+‘eve-video-layout’                             ‘nil’                       When non-nil, arrange the screen for video editing on the first play command.
+‘eve-video-layout-ratio’                       ‘0.6’                       Fraction of screen height reserved for the video window (0.0–1.0).
 
 
 File: eve.info,  Node: Architecture,  Next: Development,  Prev: Configuration Reference,  Up: Top
@@ -1669,86 +1934,88 @@ or visit the repository at <https://github.com/behaghel/eve.el>.
 
 Tag Table:
 Node: Top205
-Node: Introduction3273
-Node: The Big Idea3579
-Node: The Core Workflow4351
-Node: About This Manual5527
-Node: Getting Started5926
-Node: Installation6104
-Node: Requirements6337
-Node: Installing the CLI6662
-Node: Installing the Emacs package7610
-Node: straightel7868
-Node: Manual8086
-Node: Accessing the manual in Emacs8422
-Node: Quick Start8749
-Node: The TJM Manifest10143
-Node: Structure10375
-Node: How eve-mode renders a manifest11497
-Node: The raw JSON companion buffer12129
-Node: Transcription12563
-Node: Starting transcription from Emacs12799
-Node: Backends13517
-Node: Configuration14699
-Node: Installing optional backends15624
-Node: Editing16082
-Node: Navigation16375
-Node: Deletion and restoration16752
-Node: Splitting and merging17391
-Node: Reordering17883
-Node: Markers and sections18527
-Node: Inline editing19226
-Node: Metadata19557
-Node: Undo and redo20131
-Node: Validation20458
-Node: Filler Words20784
-Node: Concept20996
-Node: Configuration (1)21398
-Node: Commands22366
-Node: Auto-tagging on file open23653
-Node: B-Roll24096
-Node: Concept (1)24402
-Node: Editing b-roll metadata25058
-Node: Compositing modes in detail26827
-Node: Replace mode27052
-Node: Pip mode27500
-Node: Audio policy28419
-Node: JSON templates28898
-Node: Overlay fields30191
-Node: Concrete example lower-third title card31594
-Node: Placeholders without templates33479
-Node: Continuation chains33902
-Node: Compilation and Rendering34925
-Node: Two modes draft and final35277
-Node: Under the hood35755
-Node: Pre-flight validation37419
-Node: Dry-run analysis38156
-Node: Checkpoint and resume38682
-Node: Progressive output39163
-Node: Configuration reference39565
-Node: CLI reference41691
-Node: Playback43119
-Node: Source playback43366
-Node: Rendered playback43827
-Node: Playback tracking and segment highlighting44325
-Node: Controls44752
-Node: Video layout45733
-Node: Display47269
-Node: Timestamp ruler47474
-Node: Context panels48062
-Node: Hiding deleted segments50026
-Node: Word-level display50459
-Node: Key Bindings51574
-Node: Single-key bindings51815
-Node: C-c prefix bindings53658
-Node: Playback-mode overrides54666
-Node: The hydra cheatsheet55267
-Node: Configuration Reference55669
-Node: Architecture61334
-Node: Two-layer boundary61521
-Node: Shared contract62325
-Node: Development62797
-Node: Appendix A TJM v11 Specification63273
+Node: Introduction3327
+Node: The Big Idea3633
+Node: The Core Workflow4405
+Node: About This Manual5581
+Node: Getting Started5980
+Node: Installation6158
+Node: Requirements6391
+Node: Installing the CLI6873
+Node: Installing the Emacs package8213
+Node: straightel8471
+Node: Manual9372
+Node: Accessing the manual in Emacs9708
+Node: Quick Start10409
+Node: The TJM Manifest11803
+Node: Structure12035
+Node: How eve-mode renders a manifest13831
+Node: The raw JSON companion buffer14463
+Node: Transcription14897
+Node: Starting transcription from Emacs15164
+Node: Timing and output validity15900
+Node: Backends20967
+Node: Configuration22630
+Node: Installing optional backends23734
+Node: Editing24192
+Node: Navigation24485
+Node: Deletion and restoration24862
+Node: Splitting and merging25501
+Node: Reordering27246
+Node: Markers and sections27890
+Node: Inline editing28589
+Node: Metadata29905
+Node: Undo and redo30503
+Node: Validation30830
+Node: Filler Words31156
+Node: Concept31368
+Node: Configuration (1)31830
+Node: Commands33024
+Node: Auto-tagging on file open34428
+Node: B-Roll34890
+Node: Concept (1)35196
+Node: Editing b-roll metadata35852
+Node: Compositing modes in detail37621
+Node: Replace mode37846
+Node: Pip mode38294
+Node: Audio policy39213
+Node: JSON templates39692
+Node: Overlay fields40985
+Node: Concrete example lower-third title card42388
+Node: Placeholders without templates44273
+Node: Continuation chains44696
+Node: Compilation and Rendering45719
+Node: Two modes draft and final46094
+Node: Burned-in captions46576
+Node: Under the hood50422
+Node: Pre-flight validation52079
+Node: Dry-run analysis52816
+Node: Checkpoint and resume53342
+Node: Progressive output53823
+Node: Configuration reference54225
+Node: CLI reference56351
+Node: Playback57779
+Node: Source playback58026
+Node: Rendered playback58487
+Node: Playback tracking and segment highlighting58985
+Node: Controls59412
+Node: Video layout60393
+Node: Display61929
+Node: Timestamp ruler62134
+Node: Context panels62722
+Node: Hiding deleted segments64686
+Node: Word-level display65119
+Node: Key Bindings66234
+Node: Single-key bindings66475
+Node: C-c prefix bindings68601
+Node: Playback-mode overrides69609
+Node: The hydra cheatsheet70210
+Node: Configuration Reference70612
+Node: Architecture77779
+Node: Two-layer boundary77966
+Node: Shared contract78770
+Node: Development79242
+Node: Appendix A TJM v11 Specification79718
 
 End Tag Table
 

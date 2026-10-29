@@ -8,10 +8,21 @@ on:
 jobs:
   elisp:
     runs-on: ubuntu-latest
+    env:
+      EVE_CONTEXT_PANELS_DIR: ${{ github.workspace }}/.test-deps/context-panels
+      EVE_REQUIRE_CONTEXT_PANELS: '1'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout pinned optional test dependency
+        uses: actions/checkout@v4
+        with:
+          repository: behaghel/context-panels
+          ref: a507d85e5add9ef72340a8087683fed437a922e2
+          path: .test-deps/context-panels
+          persist-credentials: false
 
       - name: Setup Emacs
         uses: jcs090218/setup-emacs@master
@@ -69,17 +80,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Setup Nix
+        uses: cachix/install-nix-action@v31
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+      - name: Use the public devenv cache
+        uses: cachix/cachix-action@v16
         with:
-          version: latest
+          name: devenv
 
-      - name: Run CLI health suite
-        run: |
-          chmod +x scripts/check.sh scripts/startup-health-check.sh scripts/sync-python.sh scripts/lint.sh scripts/build.sh scripts/run-cli.sh
-          ./scripts/check.sh
+      - name: Run CLI health suite with declared media dependencies
+        # Python, uv, FFmpeg, fontconfig and the test font come from devenv.nix.
+        # Pin the bootstrap CLI; project inputs remain pinned in devenv.lock.
+        run: nix run --accept-flake-config github:cachix/devenv/v2.4.0 -- -q shell -- ./scripts/check.sh

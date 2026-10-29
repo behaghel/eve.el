@@ -7,13 +7,18 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from argparse import ArgumentParser, Namespace, _SubParsersAction
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
+from fractions import Fraction
 from typing import Any
 
-from .common import add_json_flag
+from .. import subtitles, tjm_v11
+from .common import add_json_flag, write_json_atomic
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
@@ -24,6 +29,8 @@ QUALITY_FINAL = "final"
 
 CODEC_H264 = "h264"
 CODEC_MJPEG = "mjpeg"
+INTERMEDIATE_AUDIO_CODEC = "alac"
+TIMELINE_RENDER_VERSION = "native-frame-clock-v2"
 
 _VIDEO_PROBE_CACHE: dict[pathlib.Path, dict[str, Any]] = {}
 
@@ -39,7 +46,18 @@ def encoding_args(quality: str, codec: str = CODEC_H264) -> list[str]:
     if effective == CODEC_MJPEG:
         return ["-c:v", "mjpeg", "-q:v", "5"]
     params = encoding_params(quality)
-    return ["-c:v", "libx264", "-preset", params["preset"], "-crf", params["crf"]]
+    # DTS must equal PTS at cut boundaries: reordered B-frames can otherwise
+    # leak beyond the requested end when cached clips are stream-concatenated.
+    return [
+        "-c:v",
+        "libx264",
+        "-preset",
+        params["preset"],
+        "-crf",
+        params["crf"],
+        "-bf",
+        "0",
+    ]
 
 
 def effective_pix_fmt(probed: str, codec: str, quality: str) -> str:
@@ -76,6 +94,7 @@ def _file_identity(path: pathlib.Path) -> str:
 
 def segment_cache_key(item: dict[str, Any], quality: str) -> str:
     h = hashlib.sha256()
+    h.update(TIMELINE_RENDER_VERSION.encode())
     h.update(quality.encode())
 
     if item["type"] == "gap":
@@ -115,6 +134,9 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
     )
     parser.add_argument("manifest", help="Path to the TJM JSON manifest")
     parser.add_argument("--output", required=True, help="Output MP4 file")
+    parser.add_argument(
+        "--report", help="Write completed-render JSON including alignment provenance"
+    )
     parser.add_argument(
         "--workdir",
         help="Optional directory to place intermediate files",
@@ -304,6 +326,55 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
     return data
 
 
+def prepare_render_manifest(
+    manifest: dict[str, Any], base_dir: pathlib.Path
+) -> dict[str, Any]:
+    """Adapt authoritative v1.1 ticks/display fields to the media pipeline.
+
+    Work on a copy: compatibility seconds and effective deletions are derived
+    render state, not changes to the user's transcript or editorial decisions.
+    """
+    if "subtitles" in manifest and manifest.get("version") != "1.1":
+        raise subtitles.SubtitleError(
+            "Subtitle burning requires a supported TJM v1.1+ manifest "
+            "(currently v1.1). Legacy v1 does not support burning; "
+            "re-transcribe with the current Eve transcriber. "
+            "Changing only the version field is not a valid upgrade."
+        )
+    if manifest.get("version") != "1.1":
+        return manifest
+    result: dict[str, Any] = deepcopy(tjm_v11.parse_manifest(manifest))
+    clocks = {
+        source["id"]: Fraction(
+            source["timebase"]["numerator"], source["timebase"]["denominator"]
+        )
+        for source in result["sources"]
+    }
+    for source in result["sources"]:
+        path = pathlib.Path(source["file"]).expanduser()
+        source["file"] = str(path if path.is_absolute() else base_dir / path)
+    for segment in result["segments"]:
+        broll = normalized_segment_broll(segment)
+        if broll and broll.get("file"):
+            path = pathlib.Path(broll["file"]).expanduser()
+            broll["file"] = str(path if path.is_absolute() else base_dir / path)
+        if segment_kind(segment) == "marker":
+            continue
+        clock = clocks[segment["source"]]
+        for item in [segment, *segment.get("words", [])]:
+            item["start"] = float(item["start_tick"] * clock)
+            item["end"] = float(item["end_tick"] * clock)
+        for word in segment.get("words", []):
+            word["token"] = word.get("display") or word["spoken"]
+            edit = word.get("edit") or {}
+            word["edit"] = edit
+            filler = edit.get("filler", edit.get("kind") == "filler")
+            if result["render"]["filler_policy"] == "drop" and filler is True:
+                edit["deleted"] = True
+        segment["text"] = segment.get("display_text") or render_word_text(segment)
+    return result
+
+
 def ensure_inputs(paths: list[pathlib.Path]) -> None:
     for path in paths:
         if not path.exists():
@@ -329,14 +400,23 @@ def run_ffmpeg(cmd: list[str], *, context: str | None = None) -> None:
 
 
 def compute_gap(
-    previous: dict[str, Any], current: dict[str, Any]
-) -> tuple[str, float, float] | None:
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    clock: Fraction | None = None,
+) -> tuple[str, Fraction, Fraction] | None:
     prev_source = previous.get("source")
     curr_source = current.get("source")
     if not isinstance(prev_source, str) or prev_source != curr_source:
         return None
-    previous_bounds = segment_gap_bounds(previous)
-    current_bounds = segment_gap_bounds(current)
+
+    def bounds(segment: dict[str, Any]) -> tuple[Fraction, Fraction] | None:
+        ranges = _subtitle_ranges(segment, clock)
+        if not edit_deleted(segment) and ranges:
+            return ranges[0][0], ranges[-1][1]
+        return _subtitle_bounds(segment, clock)
+
+    previous_bounds = bounds(previous)
+    current_bounds = bounds(current)
     if previous_bounds is None or current_bounds is None:
         return None
     _, prev_end = previous_bounds
@@ -722,7 +802,7 @@ def prepare_broll_media(
     total_needed = max(total_duration, 0.033)
 
     if is_still:
-        cmd.extend(["-loop", "1", "-i", str(media_path), "-t", f"{total_needed:.3f}"])
+        cmd.extend(["-loop", "1", "-i", str(media_path), "-t", f"{total_needed:.9f}"])
         if filter_chain:
             cmd.extend(["-vf", filter_chain])
         cmd.extend(_enc_args)
@@ -730,13 +810,13 @@ def prepare_broll_media(
     else:
         cmd.extend(["-i", str(media_path)])
         if total_duration > 0:
-            cmd.extend(["-t", f"{total_needed:.3f}"])
+            cmd.extend(["-t", f"{total_needed:.9f}"])
         if filter_chain:
             cmd.extend(["-vf", filter_chain])
         cmd.extend(_enc_args)
         cmd.extend(["-pix_fmt", out_pix_fmt])
         if audio_policy == "broll":
-            cmd.extend(["-c:a", "aac"])
+            cmd.extend(["-c:a", INTERMEDIATE_AUDIO_CODEC])
         else:
             cmd.extend(["-an"])
         cmd.append(str(prepared_path))
@@ -745,39 +825,175 @@ def prepare_broll_media(
     return prepared_path, out_pix_fmt
 
 
+def _subtitle_bounds(
+    item: dict[str, Any], clock: Fraction | None
+) -> tuple[Fraction, Fraction] | None:
+    if clock is not None and "start_tick" in item and "end_tick" in item:
+        return item["start_tick"] * clock, item["end_tick"] * clock
+    if item.get("start") is None or item.get("end") is None:
+        return None
+    return Fraction(str(item["start"])), Fraction(str(item["end"]))
+
+
+def _subtitle_ranges(
+    segment: dict[str, Any], clock: Fraction | None
+) -> list[tuple[Fraction, Fraction]]:
+    bounds = _subtitle_bounds(segment, clock)
+    if bounds is None or bounds[1] <= bounds[0]:
+        return []
+    if not has_deleted_words(segment):
+        return [bounds]
+    ranges: list[tuple[Fraction, Fraction]] = []
+    for word in surviving_words(segment):
+        if word_bounds := _subtitle_bounds(word, clock):
+            start, end = max(bounds[0], word_bounds[0]), min(bounds[1], word_bounds[1])
+            if end > start:
+                ranges.append((start, end))
+    merged: list[tuple[Fraction, Fraction]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _subtitle_timeline(
+    manifest: dict[str, Any],
+    preserve_gap_threshold: float | None,
+    *,
+    include_non_captions: bool = False,
+) -> Iterator[
+    tuple[
+        dict[str, Any],
+        Fraction,
+        Fraction,
+        list[tuple[Fraction, Fraction]],
+        Fraction | None,
+    ]
+]:
+    """Mirror media planning, keeping tick arithmetic exact until serialization."""
+    clocks = {
+        source["id"]: Fraction(
+            source["timebase"]["numerator"], source["timebase"]["denominator"]
+        )
+        for source in manifest.get("sources", [])
+        if "timebase" in source
+    }
+    chain_map, _ = compute_broll_chains(manifest.get("segments", []))
+    cursor = Fraction(0)
+    previous: dict[str, Any] | None = None
+    previous_bounds: tuple[Fraction, Fraction] | None = None
+    threshold = Fraction(str(preserve_gap_threshold or 0))
+    for segment in manifest.get("segments", []):
+        if deleted_marker(segment):
+            continue
+        clock = clocks.get(segment.get("source"))
+        if segment_kind(segment) == "marker":
+            if canonical_broll_key(segment):
+                duration = Fraction(str(segment_duration(segment)))
+                if include_non_captions:
+                    yield segment, cursor, cursor + duration, [], clock
+                cursor += duration
+                previous, previous_bounds = segment, None
+            elif include_non_captions:
+                yield segment, cursor, cursor, [], clock
+            continue
+        ranges = _subtitle_ranges(segment, clock)
+        duration = sum((end - start for start, end in ranges), Fraction(0))
+        if not ranges and not has_deleted_words(segment):
+            duration = Fraction(str(segment_duration(segment)))
+        bounds = (ranges[0][0], ranges[-1][1]) if ranges else None
+        if edit_deleted(segment) or duration <= 0:
+            previous = segment
+            previous_bounds = _subtitle_bounds(segment, clock)
+            continue
+        if (
+            previous is not None
+            and previous_bounds
+            and bounds
+            and previous.get("source") == segment.get("source")
+        ):
+            gap = bounds[0] - previous_bounds[1]
+            chain = chain_map.get(id(segment))
+            prev_chain = chain_map.get(id(previous))
+            continued = (
+                (normalized_segment_broll(segment) or {}).get("continue")
+                and chain
+                and prev_chain
+                and chain.get("chain_id") == prev_chain.get("chain_id")
+            )
+            if 0 < gap <= threshold and not continued:
+                if include_non_captions:
+                    yield {"kind": "gap"}, cursor, cursor + gap, [], clock
+                cursor += gap
+        yield segment, cursor, cursor + duration, ranges, clock
+        cursor += duration
+        previous, previous_bounds = segment, bounds
+
+
 def build_subtitle_cues(
     manifest: dict[str, Any], preserve_gap_threshold: float | None = None
 ) -> list[tuple[float, float, str]]:
-    cues: list[tuple[float, float, str]] = []
-    timeline = 0.0
-    previous_source_segment: dict[str, Any] | None = None
-    for segment in manifest.get("segments", []):
-        if segment_kind(segment) == "marker":
-            if not edit_deleted(segment) and canonical_broll_key(segment):
-                timeline += segment_duration(segment)
-            continue
-        if preserve_gap_threshold is not None and previous_source_segment is not None:
-            gap = compute_gap(previous_source_segment, segment)
-            if gap is not None:
-                _, gap_start, gap_end = gap
-                gap_duration = gap_end - gap_start
-                if gap_duration > 0 and gap_duration <= preserve_gap_threshold:
-                    timeline += gap_duration
-        duration = segment_duration(segment)
-        if duration <= 0:
-            continue
-        previous_source_segment = segment
-        if edit_deleted(segment):
-            continue
-        text = cue_text(segment)
-        if not text:
-            timeline += duration
-            continue
-        cue_start = timeline
-        cue_end = cue_start + duration
-        cues.append((cue_start, cue_end, text))
-        timeline = cue_end
-    return cues
+    return [
+        (float(start), float(end), text)
+        for segment, start, end, _, _ in _subtitle_timeline(
+            manifest, preserve_gap_threshold
+        )
+        if (text := cue_text(segment))
+    ]
+
+
+def build_token_captions(
+    manifest: dict[str, Any], preserve_gap_threshold: float | None = None
+) -> list[subtitles.TimedCaption]:
+    captions: list[subtitles.TimedCaption] = []
+    for segment, start, end, ranges, clock in _subtitle_timeline(
+        manifest, preserve_gap_threshold
+    ):
+        words = surviving_words(segment)
+        label = str(segment.get("id", "unknown"))
+        if not words:
+            raise subtitles.SubtitleError(
+                f"Segment '{label}' needs timed words for highlighting"
+            )
+        tokens: list[subtitles.TimedToken] = []
+        for word in words:
+            fragment = str(
+                word.get("display") or word.get("spoken") or word.get("token") or ""
+            )
+            bounds = _subtitle_bounds(word, clock)
+            if bounds is None or bounds[1] <= bounds[0]:
+                start_value = word.get("start_tick", word.get("start"))
+                end_value = word.get("end_tick", word.get("end"))
+                raise subtitles.SubtitleError(
+                    f"Segment '{label}', token {fragment!r} has invalid timing "
+                    f"(start={start_value}, end={end_value}); "
+                    "repair the token timing before enabling word highlighting"
+                )
+            intervals: list[tuple[Fraction, Fraction]] = []
+            offset = start
+            for range_start, range_end in ranges:
+                left, right = max(bounds[0], range_start), min(bounds[1], range_end)
+                if right > left:
+                    intervals.append(
+                        (offset + left - range_start, offset + right - range_start)
+                    )
+                offset += range_end - range_start
+            tokens.append(subtitles.TimedToken(fragment, intervals))
+        derived = " ".join(token.text for token in tokens)
+        display = segment.get("display_text")
+        if display and str(display).strip() != derived.strip():
+            raise subtitles.SubtitleError(
+                f"Segment '{label}' display_text must match its token display strings"
+            )
+        speaker = str(segment.get("speaker") or "").strip()
+        captions.append(
+            subtitles.TimedCaption(
+                start, end, tokens, f"{speaker}: " if speaker else ""
+            )
+        )
+    return captions
 
 
 def write_webvtt(cues: list[tuple[float, float, str]], path: pathlib.Path) -> None:
@@ -825,6 +1041,8 @@ def mux_subtitles(video_path: pathlib.Path, subtitles_path: pathlib.Path) -> Non
             "mov_text",
             "-map",
             "1:0",
+            "-movie_timescale",
+            "1000000",
             str(tmp_path),
         ]
         run_ffmpeg(cmd, context="muxing subtitles into the final video")
@@ -848,13 +1066,31 @@ def build_trim_command(
     out_pix_fmt = effective_pix_fmt(raw_pix_fmt, codec, quality)
     _svf = _make_scale_vf(scale)
     duration = max(0.0, end - start)
-    cmd = [FFMPEG, "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(source)]
+    cmd = [FFMPEG, "-y", "-ss", f"{start:.9f}", "-to", f"{end:.9f}", "-i", str(source)]
+    # Input -to alone can admit a picture beyond the exclusive source end.
+    # Keep its native phase after seeking; do not round it onto an encoder CFR grid.
+    filters = [f"trim=end={duration:.9f}"]
     if _svf:
-        cmd.extend(["-vf", _svf])
+        filters.append(_svf)
+    cmd.extend(["-vf", ",".join(filters)])
     if audio_filter := audio_edge_fade_filter(duration):
         cmd.extend(["-af", audio_filter])
     cmd.extend(encoding_args(quality, codec))
-    cmd.extend(["-pix_fmt", out_pix_fmt, "-c:a", "aac", str(dest)])
+    cmd.extend(
+        [
+            "-pix_fmt",
+            out_pix_fmt,
+            "-c:a",
+            INTERMEDIATE_AUDIO_CODEC,
+            "-fps_mode",
+            "passthrough",
+            "-enc_time_base",
+            "demux",
+            "-movie_timescale",
+            "1000000",
+            str(dest),
+        ]
+    )
     return cmd
 
 
@@ -883,7 +1119,12 @@ def render_source_ranges(
         cmd = build_trim_command(source, start, end, part_path, quality, scale, codec)
         run_ffmpeg(cmd, context=f"{context} (part {index}/{len(ranges)})")
         parts.append(part_path)
-    concat_segments(parts, dest)
+    concat_segments(
+        parts,
+        dest,
+        audio_codec=INTERMEDIATE_AUDIO_CODEC,
+        durations=[Fraction(str(end)) - Fraction(str(start)) for start, end in ranges],
+    )
 
 
 def build_broll_command(
@@ -958,7 +1199,7 @@ def build_broll_command(
             "-i",
             str(broll_file),
             "-t",
-            f"{duration:.3f}",
+            f"{duration:.9f}",
             "-vf",
             scale_filter,
             "-an",
@@ -987,9 +1228,9 @@ def build_broll_command(
             FFMPEG,
             "-y",
             "-ss",
-            f"{start:.3f}",
+            f"{start:.9f}",
             "-to",
-            f"{end:.3f}",
+            f"{end:.9f}",
             "-i",
             str(source),
         ]
@@ -1000,9 +1241,9 @@ def build_broll_command(
             cmd.extend(
                 [
                     "-ss",
-                    f"{broll_offset:.3f}",
+                    f"{broll_offset:.9f}",
                     "-t",
-                    f"{duration:.3f}",
+                    f"{duration:.9f}",
                     "-i",
                     str(prepared_broll),
                 ]
@@ -1027,7 +1268,7 @@ def build_broll_command(
         if audio_filter := audio_edge_fade_filter(duration):
             cmd.extend(["-af", audio_filter])
         cmd.extend(_enc_args)
-        cmd.extend(["-pix_fmt", pix_fmt, "-c:a", "aac", str(dest)])
+        cmd.extend(["-pix_fmt", pix_fmt, "-c:a", INTERMEDIATE_AUDIO_CODEC, str(dest)])
         return cmd
 
     audio_map = "0:a:0" if audio_policy == "source" else "1:a:0"
@@ -1036,9 +1277,9 @@ def build_broll_command(
         FFMPEG,
         "-y",
         "-ss",
-        f"{start:.3f}",
+        f"{start:.9f}",
         "-to",
-        f"{end:.3f}",
+        f"{end:.9f}",
         "-i",
         str(source),
     ]
@@ -1049,9 +1290,9 @@ def build_broll_command(
         cmd.extend(
             [
                 "-ss",
-                f"{broll_offset:.3f}",
+                f"{broll_offset:.9f}",
                 "-t",
-                f"{duration:.3f}",
+                f"{duration:.9f}",
                 "-i",
                 str(prepared_broll),
             ]
@@ -1068,7 +1309,7 @@ def build_broll_command(
             "-pix_fmt",
             pix_fmt,
             "-c:a",
-            "aac",
+            INTERMEDIATE_AUDIO_CODEC,
             str(dest),
         ]
     )
@@ -1175,6 +1416,13 @@ def render_segments(
         for item in manifest.get("sources", [])
     }
     ensure_inputs(list(id_to_source.values()))
+    source_clocks = {
+        source["id"]: Fraction(
+            source["timebase"]["numerator"], source["timebase"]["denominator"]
+        )
+        for source in manifest.get("sources", [])
+        if "timebase" in source
+    }
 
     manifest_segments = manifest.get("segments", [])
     chain_map, chains = compute_broll_chains(manifest_segments)
@@ -1248,6 +1496,7 @@ def render_segments(
         chain_meta = chains.get(chain_id) if isinstance(chain_id, int) else None
 
         gap_duration = 0.0
+        exact_gap_duration = Fraction(0)
         gap_bounds: tuple[str, float, float] | None = None
         prev_source_path: pathlib.Path | None = None
         if (
@@ -1258,11 +1507,14 @@ def render_segments(
             prev_source_id = previous_source_segment.get("source")
             if prev_source_id and prev_source_id in id_to_source:
                 prev_source_path = id_to_source[prev_source_id]
-                gap_info = compute_gap(previous_source_segment, segment)
+                gap_info = compute_gap(
+                    previous_source_segment, segment, source_clocks.get(source_id)
+                )
                 if gap_info is not None:
-                    gap_bounds = gap_info
-                    _, gap_start, gap_end = gap_info
-                    gap_duration = max(0.0, gap_end - gap_start)
+                    gap_source, gap_start, gap_end = gap_info
+                    gap_bounds = (gap_source, float(gap_start), float(gap_end))
+                    exact_gap_duration = gap_end - gap_start
+                    gap_duration = float(exact_gap_duration)
 
         skip_gap = False
         if (
@@ -1283,7 +1535,7 @@ def render_segments(
         if (
             preserve_gap_threshold is not None
             and gap_duration > 0
-            and gap_duration <= preserve_gap_threshold
+            and exact_gap_duration <= Fraction(str(preserve_gap_threshold))
             and not skip_gap
             and gap_bounds is not None
             and prev_source_path is not None
@@ -1479,9 +1731,9 @@ def render_segments(
                     FFMPEG,
                     "-y",
                     "-ss",
-                    f"{effective_offset:.3f}",
+                    f"{effective_offset:.9f}",
                     "-t",
-                    f"{overlay_duration:.3f}",
+                    f"{overlay_duration:.9f}",
                     "-i",
                     str(prepared_path),
                 ]
@@ -1493,7 +1745,7 @@ def render_segments(
                 trim_cmd.extend(encoding_args(quality, codec))
                 trim_cmd.extend(["-pix_fmt", prepared_pix_fmt])
                 if audio_policy == "broll":
-                    trim_cmd.extend(["-c:a", "aac"])
+                    trim_cmd.extend(["-c:a", INTERMEDIATE_AUDIO_CODEC])
                 else:
                     trim_cmd.extend(["-an"])
                 trim_cmd.append(str(out_path))
@@ -1534,6 +1786,7 @@ def render_segments(
 
     cp_completed: list[int] = sorted(completed_set)
     cp_files: dict[int, str] = dict(stored_files)
+    checkpoint_lock = threading.Lock()
 
     def _try_checkpoint(i: int, out_path: pathlib.Path) -> bool:
         if i not in completed_set:
@@ -1549,9 +1802,10 @@ def render_segments(
             return
         cached = _cache_path(work_items[i])
         stored = str(cached) if (cached and cached.exists()) else str(path)
-        cp_completed.append(i)
-        cp_files[i] = stored
-        _write_checkpoint(cache_dir, mhash, chash, sorted(cp_completed), cp_files)
+        with checkpoint_lock:
+            cp_completed.append(i)
+            cp_files[i] = stored
+            _write_checkpoint(cache_dir, mhash, chash, sorted(cp_completed), cp_files)
 
     render_times: list[float] = []
 
@@ -1594,12 +1848,36 @@ def render_segments(
     return outputs
 
 
-def concat_segments(segments: list[pathlib.Path], destination: pathlib.Path) -> None:
+def concat_segments(
+    segments: list[pathlib.Path],
+    destination: pathlib.Path,
+    *,
+    audio_codec: str = "aac",
+    durations: list[Fraction] | None = None,
+) -> None:
     list_file = destination.parent / f"{destination.stem}-{uuid.uuid4().hex}.concat.txt"
     try:
         with list_file.open("w", encoding="utf-8") as file_handle:
-            for segment in segments:
-                file_handle.write(f"file '{segment}'\n")
+            if durations is not None and (
+                len(durations) != len(segments)
+                or any(duration <= 0 for duration in durations)
+            ):
+                raise ValueError(
+                    "Each concatenated clip requires a positive planned duration"
+                )
+            cursor = Fraction(0)
+            previous_us = 0
+            for index, segment in enumerate(segments):
+                escaped = str(segment.resolve()).replace("'", "'\\''")
+                file_handle.write(f"file '{escaped}'\n")
+                if durations is not None:
+                    # Round cumulative endpoints, never each duration separately:
+                    # concat uses microseconds, while source ticks may be finer.
+                    cursor += durations[index]
+                    endpoint_us = round(cursor * 1_000_000)
+                    duration_us = endpoint_us - previous_us
+                    file_handle.write(f"duration {duration_us / 1_000_000:.6f}\n")
+                    previous_us = endpoint_us
 
         print(
             f"[eve text-edit] Concatenating {len(segments)} rendered clips",
@@ -1617,13 +1895,17 @@ def concat_segments(segments: list[pathlib.Path], destination: pathlib.Path) -> 
             "-c:v",
             "copy",
             "-c:a",
-            "aac",
+            audio_codec,
             "-b:a",
             "192k",
             "-af",
             "aresample=async=1:first_pts=0",
-            str(destination),
+            "-movie_timescale",
+            "1000000",
         ]
+        if durations is not None:
+            cmd.extend(["-t", f"{float(sum(durations)):.9f}"])
+        cmd.append(str(destination))
         run_ffmpeg(cmd, context="concatenating rendered segments")
     finally:
         list_file.unlink(missing_ok=True)
@@ -1639,44 +1921,18 @@ def write_manifest(manifest: dict[str, Any], path: pathlib.Path) -> None:
 def collect_markers(
     manifest: dict[str, Any], preserve_gap_threshold: float | None = None
 ) -> list[tuple[str, float]]:
-    timeline = 0.0
-    markers: list[tuple[str, float]] = []
-    previous_source_segment: dict[str, Any] | None = None
-
-    for segment in manifest.get("segments", []):
-        if preserve_gap_threshold is not None and previous_source_segment is not None:
-            gap = compute_gap(previous_source_segment, segment)
-            if gap is not None:
-                _, gap_start, gap_end = gap
-                gap_duration = gap_end - gap_start
-                if gap_duration > 0 and gap_duration <= preserve_gap_threshold:
-                    timeline += gap_duration
-
-        kind = segment_kind(segment)
-        if kind == "marker":
-            if edit_deleted(segment):
-                continue
-            title = (
-                str(segment.get("title") or "").strip()
-                or str(segment.get("text") or "").strip()
-                or str(segment.get("id") or "marker")
-            )
-            markers.append((title, timeline))
-            if canonical_broll_key(segment):
-                timeline += segment_duration(segment)
-            continue
-
-        duration = segment_duration(segment)
-        if duration <= 0:
-            continue
-
-        previous_source_segment = segment
-        if edit_deleted(segment):
-            continue
-
-        timeline += duration
-
-    return markers
+    return [
+        (
+            str(segment.get("title") or "").strip()
+            or str(segment.get("display_text") or segment.get("text") or "").strip()
+            or str(segment.get("id") or "marker"),
+            float(start),
+        )
+        for segment, start, _, _, _ in _subtitle_timeline(
+            manifest, preserve_gap_threshold, include_non_captions=True
+        )
+        if segment_kind(segment) == "marker"
+    ]
 
 
 def _read_meta(cache_dir: pathlib.Path) -> dict[str, Any]:
@@ -1921,6 +2177,7 @@ def _render_config_hash(quality: str, codec: str, scale: float) -> str:
                 "codec": codec,
                 "scale": round(scale, 6),
                 "broll_fit": "contain-v1",
+                "timeline": TIMELINE_RENDER_VERSION,
             }
         ).encode()
     ).hexdigest()[:16]
@@ -1982,7 +2239,43 @@ def _evict_cache(segments_dir: pathlib.Path, max_bytes: int) -> None:
 
 def run(args: Namespace) -> int:
     manifest_path = pathlib.Path(args.manifest).expanduser()
-    manifest = load_manifest(manifest_path)
+    original_manifest = load_manifest(manifest_path)
+    report_path = (
+        pathlib.Path(args.report).expanduser()
+        if getattr(args, "report", None)
+        else None
+    )
+    if report_path is not None:
+        protected = {
+            manifest_path.resolve(),
+            pathlib.Path(args.output).expanduser().resolve(),
+        }
+        protected.update(
+            (manifest_path.parent / source["file"]).resolve()
+            for source in original_manifest.get("sources", [])
+            if isinstance(source.get("file"), str)
+        )
+        if getattr(args, "pretty_manifest", None):
+            protected.add(pathlib.Path(args.pretty_manifest).expanduser().resolve())
+        if report_path.resolve() in protected:
+            raise tjm_v11.ValidationError(
+                "Render report must not overwrite media or a manifest"
+            )
+    manifest = prepare_render_manifest(
+        original_manifest, manifest_path.resolve().parent
+    )
+    alignment_record = original_manifest.get("alignment")
+    if isinstance(alignment_record, dict) and alignment_record.get("forced") is True:
+        print(
+            "[eve text-edit] WARNING: using recorded alignment quality override; "
+            "acoustic accuracy is not certified.",
+            flush=True,
+        )
+    subtitle_config = manifest.get("subtitles")
+    if "subtitles" in manifest:
+        subtitles.validate_configuration(subtitle_config)
+    if manifest.get("version") == "1.1":
+        args.preserve_short_gaps = manifest["render"]["preserve_short_gaps"]
 
     if getattr(args, "validate", False):
         errors, warnings_list = validate_manifest_for_render(
@@ -2005,6 +2298,23 @@ def run(args: Namespace) -> int:
             if result["valid"]:
                 print("[eve text-edit] Manifest valid.", flush=True)
         return 0 if result["valid"] else 1
+
+    font_file: pathlib.Path | None = None
+    timed_captions: list[subtitles.TimedCaption] | None = None
+    if subtitle_config is not None:
+        if subtitle_config["style"] == "karaoke":
+            timed_captions = build_token_captions(manifest, args.preserve_short_gaps)
+        else:
+            timed_captions = [
+                subtitles.TimedCaption(start, end, [subtitles.TimedToken(text, [])])
+                for segment, start, end, _, _ in _subtitle_timeline(
+                    manifest, args.preserve_short_gaps
+                )
+                if (text := cue_text(segment))
+            ]
+        font_file = subtitles.resolve_font(
+            subtitle_config["font"]["family"], subtitle_config["font"]["bold"]
+        )
 
     # ── Resolve effective profile ──────────────────────────────────────────
     # Quality determines the default codec and scale.  Explicit --codec or
@@ -2099,6 +2409,13 @@ def run(args: Namespace) -> int:
         output_path = pathlib.Path(args.output).expanduser()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        clip_durations = [
+            end - start
+            for _, start, end, _, _ in _subtitle_timeline(
+                manifest, args.preserve_short_gaps, include_non_captions=True
+            )
+            if end > start
+        ]
         partial_every = getattr(args, "partial_every", 0)
         partial_path = output_path.with_suffix(".partial.mp4")
         if partial_every > 0 and len(segments) >= partial_every:
@@ -2106,7 +2423,9 @@ def run(args: Namespace) -> int:
 
             for batch_end in range(partial_every, len(segments), partial_every):
                 batch = segments[:batch_end]
-                concat_segments(batch, partial_path)
+                concat_segments(
+                    batch, partial_path, durations=clip_durations[:batch_end]
+                )
                 event = {
                     "event": "partial",
                     "segments": batch_end,
@@ -2115,9 +2434,23 @@ def run(args: Namespace) -> int:
                 }
                 print(json.dumps(event), file=sys.stdout, flush=True)
 
-        concat_segments(segments, output_path)
+        concat_segments(segments, output_path, durations=clip_durations)
         if partial_path.exists():
             partial_path.unlink(missing_ok=True)
+
+        if subtitle_config is not None and font_file is not None:
+            video_info = probe_video_characteristics(output_path)
+            subtitles.burn_video(
+                output_path,
+                build_subtitle_cues(manifest, args.preserve_short_gaps),
+                subtitle_config,
+                video_info["width"],
+                video_info["height"],
+                encoding_args(quality, effective_codec),
+                font_file,
+                timed_captions=timed_captions,
+                frame_rate=video_info["fps_str"],
+            )
 
         if args.subtitles is not None:
             subtitles_path = (
@@ -2142,8 +2475,17 @@ def run(args: Namespace) -> int:
 
         if args.pretty_manifest:
             out_manifest = pathlib.Path(args.pretty_manifest).expanduser()
-            write_manifest(manifest, out_manifest)
+            write_manifest(original_manifest, out_manifest)
 
+        if report_path is not None:
+            write_json_atomic(
+                report_path,
+                {
+                    "manifest": str(manifest_path),
+                    "output": str(output_path),
+                    "alignment": alignment_record,
+                },
+            )
         print(f"[eve text-edit] Final cut available at {output_path}", flush=True)
         for title, stamp in markers:
             print(f"[{format_minsec(stamp)}] {title}", flush=True)

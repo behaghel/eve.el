@@ -23,8 +23,16 @@ Install the Emacs package:
 
 #+begin_src emacs-lisp
 (use-package eve
-  :straight (:type git :host github :repo "behaghel/eve.el"))
+  :straight (:type git :host github :repo "behaghel/eve.el"
+             :files (:defaults
+                     ("scripts" "scripts/run-cli.sh")
+                     ("cli/dist" "cli/dist/*.whl")
+                     ("docs" "docs/eve.info" "docs/dir"))))
 #+end_src
+
+Keep the explicit file groups: they preserve the bundled launcher, wheel and
+Info manual at the paths Eve expects inside the package build.  If you change
+an existing straight recipe, rebuild Eve with =M-x straight-rebuild-package=.
 
 For standard Emacs use, =M-x eve-transcribe= first looks for =eve= on your
 =PATH=. If it does not find one and =eve-cli-program= is still at its default,
