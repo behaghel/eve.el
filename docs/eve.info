@@ -620,6 +620,60 @@ as ‘um’, ‘uh’, ‘like’, and ‘you know’; set ‘eve-transcribe-hot
 pass ‘--hotwords’ to override them.  For ‘transformers’ and ‘nemo’,
 choose a verbatim-friendly model instead.
 
+   For an explicitly supplied local CTranslate2 model, the CLI also
+supports an experimental ‘--recognition-profile trained-verbatim’ mode:
+
+     eve transcribe input.mp4 --output edit.tjm.json \
+       --recognition-profile trained-verbatim --model /path/local-ct2-model \
+       --device cpu --word-aligner ctc
+
+   This fixes English CPU/int8 decoding at beam 5, with VAD, temperature
+zero, no previous-text conditioning, and no initial prompt or hotwords.
+It does not change defaults, download or convert recognition weights, or
+certify quality.  The local directory must contain ‘model.bin’,
+‘config.json’, ‘tokenizer.json’ and ‘preprocessor_config.json’ and
+‘vocabulary.json’.  Actual file hashes and the experimental profile are
+recorded in ‘alignment.recognition’; hashes do not certify upstream
+provenance.  The existing native aligner retains its own pinned
+model/cache and offline policy; set ‘HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1’ to forbid model downloads.
+
+   Unchanged recognizer text supplies whole-word identity: ‘I'M’ is one
+timed token, even when the SDK fragments it into ‘I’ and ‘'M’.  Exact
+character mapping is required; ambiguous mapping fails rather than
+correcting text.  Native CTC independently estimates the whole-word
+interval; fragment timings are never stitched.  Original SDK text,
+fragment boundaries and mappings are retained in
+‘alignment.sources[].recognition_segments’.  Caption splitting occurs
+afterward, without changing word times or losing selected media/gaps.
+Existing outputs survive failures.  See CLI documentation
+(../cli/README.md) for the tested candidate and revision.
+
+   For full-source Emacs commands, including ‘eve-dired-transcribe’,
+select the recognition profile independently of the backend and model:
+
+     (let ((eve-transcribe-backend "faster-whisper")
+           (eve-transcribe-model "/path/local-ct2-model")
+           (eve-transcribe-recognition-profile "trained-verbatim")
+           (eve-transcribe-word-aligner "ctc")
+           (eve-transcribe-verbatim t)
+           (eve-transcribe-hotwords nil))
+       (call-interactively #'eve-dired-transcribe))
+
+   Alternatively, customize those variables for subsequent runs.  The
+profile does not select a checkpoint: another compatible local model
+needs only a different ‘eve-transcribe-model’ value, not a new
+model-specific mode or registry entry.  A different backend/decoding
+policy still needs explicit CLI/frontend support and separate quality
+evidence.  Unsupported combinations fail before launch; there is no
+automatic model switch, fallback or force.  The selected profile is
+captured per job and recorded by the CLI in the alignment audit.  The
+default profile keeps existing command behavior.  Non-default profiles
+are not supported for region retranscription and are rejected rather
+than silently using another policy.  Literal casing and contractions are
+preserved; display rewriting is never a required or automatic
+transcription step.
+
    Choose recognition and alignment models whose published licenses
 permit the intended use of both their weights and generated outputs.
 This is a non-commercial project; non-commercial research models may be
@@ -638,15 +692,16 @@ File: eve.info,  Node: Configuration,  Next: Installing optional backends,  Prev
 4.4 Configuration
 =================
 
-Variable                        Default               Description
---------------------------------------------------------------------------------------------------------------------------------------
-‘eve-transcribe-backend’        ‘"faster-whisper"’    Backend name passed to ‘eve transcribe’.
-‘eve-transcribe-model’          ‘"medium.en"’         Model identifier.
-‘eve-transcribe-word-aligner’   ‘nil’                 Set to ‘"ctc"’ for opt-in native word alignment on full-source transcription.
-‘eve-transcribe-verbatim’       ‘t’                   Pass ‘--verbatim’ to the backend.
-‘eve-transcribe-hotwords’       ‘nil’                 Optional hotwords override; nil uses CLI defaults.
-‘eve-transcribe-tag-fillers’    ‘t’                   Tag filler words during transcription.
-‘eve-media-extensions’          ‘("mp4" "mov" ...)’   File types scanned by ‘eve-transcribe’.
+Variable                               Default               Description
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+‘eve-transcribe-backend’               ‘"faster-whisper"’    Backend name passed to ‘eve transcribe’.
+‘eve-transcribe-model’                 ‘"medium.en"’         Model name/path, independent of recognition profile.
+‘eve-transcribe-recognition-profile’   ‘"default"’           Full-source decoding/token policy; ‘"trained-verbatim"’ requires native CTC and a compatible local model.
+‘eve-transcribe-word-aligner’          ‘nil’                 Set to ‘"ctc"’ for opt-in native word alignment on full-source transcription.
+‘eve-transcribe-verbatim’              ‘t’                   Pass ‘--verbatim’ to the backend.
+‘eve-transcribe-hotwords’              ‘nil’                 Optional hotwords override; nil uses CLI defaults.
+‘eve-transcribe-tag-fillers’           ‘t’                   Tag filler words during transcription.
+‘eve-media-extensions’                 ‘("mp4" "mov" ...)’   File types scanned by ‘eve-transcribe’.
 
 
 File: eve.info,  Node: Installing optional backends,  Prev: Configuration,  Up: Transcription
@@ -1836,6 +1891,7 @@ Variable                                       Default                     Descr
 ‘eve-transcribe-hotwords’                      ‘nil’                       Optional hotwords string passed to 'eve transcribe'.
 ‘eve-transcribe-model’                         ‘"medium.en"’               Model passed to 'eve transcribe'.
 ‘eve-transcribe-offer-reprocess-suspicious’    ‘t’                         Whether to offer suspicious-region retranscription after transcription.
+‘eve-transcribe-recognition-profile’           ‘"default"’                 Decoding/token policy for full-source transcription, independent of model.
 ‘eve-transcribe-suspicious-gap-duration’       ‘5.0’                       Source gap duration in seconds above which transcription cleanup is offered.
 ‘eve-transcribe-tag-fillers’                   ‘t’                         Whether 'eve transcribe' should tag filler words.
 ‘eve-transcribe-verbatim’                      ‘t’                         Whether 'eve transcribe' should preserve verbatim output.
@@ -1955,67 +2011,67 @@ Node: Transcription14897
 Node: Starting transcription from Emacs15164
 Node: Timing and output validity15900
 Node: Backends20967
-Node: Configuration22630
-Node: Installing optional backends23734
-Node: Editing24192
-Node: Navigation24485
-Node: Deletion and restoration24862
-Node: Splitting and merging25501
-Node: Reordering27246
-Node: Markers and sections27890
-Node: Inline editing28589
-Node: Metadata29905
-Node: Undo and redo30503
-Node: Validation30830
-Node: Filler Words31156
-Node: Concept31368
-Node: Configuration (1)31830
-Node: Commands33024
-Node: Auto-tagging on file open34428
-Node: B-Roll34890
-Node: Concept (1)35196
-Node: Editing b-roll metadata35852
-Node: Compositing modes in detail37621
-Node: Replace mode37846
-Node: Pip mode38294
-Node: Audio policy39213
-Node: JSON templates39692
-Node: Overlay fields40985
-Node: Concrete example lower-third title card42388
-Node: Placeholders without templates44273
-Node: Continuation chains44696
-Node: Compilation and Rendering45719
-Node: Two modes draft and final46094
-Node: Burned-in captions46576
-Node: Under the hood50422
-Node: Pre-flight validation52079
-Node: Dry-run analysis52816
-Node: Checkpoint and resume53342
-Node: Progressive output53823
-Node: Configuration reference54225
-Node: CLI reference56351
-Node: Playback57779
-Node: Source playback58026
-Node: Rendered playback58487
-Node: Playback tracking and segment highlighting58985
-Node: Controls59412
-Node: Video layout60393
-Node: Display61929
-Node: Timestamp ruler62134
-Node: Context panels62722
-Node: Hiding deleted segments64686
-Node: Word-level display65119
-Node: Key Bindings66234
-Node: Single-key bindings66475
-Node: C-c prefix bindings68601
-Node: Playback-mode overrides69609
-Node: The hydra cheatsheet70210
-Node: Configuration Reference70612
-Node: Architecture77779
-Node: Two-layer boundary77966
-Node: Shared contract78770
-Node: Development79242
-Node: Appendix A TJM v11 Specification79718
+Node: Configuration25652
+Node: Installing optional backends27061
+Node: Editing27519
+Node: Navigation27812
+Node: Deletion and restoration28189
+Node: Splitting and merging28828
+Node: Reordering30573
+Node: Markers and sections31217
+Node: Inline editing31916
+Node: Metadata33232
+Node: Undo and redo33830
+Node: Validation34157
+Node: Filler Words34483
+Node: Concept34695
+Node: Configuration (1)35157
+Node: Commands36351
+Node: Auto-tagging on file open37755
+Node: B-Roll38217
+Node: Concept (1)38523
+Node: Editing b-roll metadata39179
+Node: Compositing modes in detail40948
+Node: Replace mode41173
+Node: Pip mode41621
+Node: Audio policy42540
+Node: JSON templates43019
+Node: Overlay fields44312
+Node: Concrete example lower-third title card45715
+Node: Placeholders without templates47600
+Node: Continuation chains48023
+Node: Compilation and Rendering49046
+Node: Two modes draft and final49421
+Node: Burned-in captions49903
+Node: Under the hood53749
+Node: Pre-flight validation55406
+Node: Dry-run analysis56143
+Node: Checkpoint and resume56669
+Node: Progressive output57150
+Node: Configuration reference57552
+Node: CLI reference59678
+Node: Playback61106
+Node: Source playback61353
+Node: Rendered playback61814
+Node: Playback tracking and segment highlighting62312
+Node: Controls62739
+Node: Video layout63720
+Node: Display65256
+Node: Timestamp ruler65461
+Node: Context panels66049
+Node: Hiding deleted segments68013
+Node: Word-level display68446
+Node: Key Bindings69561
+Node: Single-key bindings69802
+Node: C-c prefix bindings71928
+Node: Playback-mode overrides72936
+Node: The hydra cheatsheet73537
+Node: Configuration Reference73939
+Node: Architecture81264
+Node: Two-layer boundary81451
+Node: Shared contract82255
+Node: Development82727
+Node: Appendix A TJM v11 Specification83203
 
 End Tag Table
 

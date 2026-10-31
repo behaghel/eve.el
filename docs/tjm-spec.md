@@ -942,6 +942,55 @@ preserve that record too. Consumers MUST NOT interpret recorded override
 metadata as permission to bypass validation. Absence of an alignment record
 MUST NOT be interpreted as acoustic certification.
 
+### 15.2 Literal-text recognition and trained-verbatim profile
+
+A producer declaring `literal_segment_text_words` as its recognition token
+policy MUST establish word identity from whitespace-delimited words in the
+unchanged recognizer segment text, before acoustic alignment. It MUST preserve
+spelling, case, punctuation, repetitions, fillers and word order. This policy
+applies only when producing a new timeline; it MUST NOT retokenize existing TJM.
+
+After removing whitespace from each SDK fragment, its remaining characters
+MUST tile whole text words exactly, in order. A fragment MUST NOT cross a
+text-word boundary. Empty text,
+missing fragments, unmatched characters or ambiguous mapping MUST fail
+publication, even with force. For example, SDK fragments `I` and `'M` MAY map to
+the original text word `I'M`; this is not a spelling correction or a new spoken
+word. Their original strings, boundary values and word mapping MUST be retained
+in the alignment audit in valid JSON, including unavailable/non-finite values.
+
+A multi-fragment word MUST obtain its interval from independent native acoustic
+alignment. SDK intervals MUST NOT be joined, stretched, divided or redistributed
+to construct that interval. Its combined SDK comparison interval is unavailable;
+a one-fragment word retains its original comparison estimate. All structural
+checks and non-blocking comparison diagnostics in Section 15.1 still apply.
+
+The explicit CLI `trained-verbatim` recognition profile uses this token policy
+with English faster-whisper recognition, CPU/int8 requested, beam size 5, VAD,
+word timestamps, temperature zero and no conditioning on previous text. It MUST
+NOT inject an initial prompt or filler hotwords. It requires native CTC alignment
+and a complete, explicitly supplied local CTranslate2 model; incompatible settings
+MUST fail rather than silently select another profile or download replacement
+recognition weights. The existing native aligner's model/cache and offline
+policy remain unchanged. The default recognition path remains unchanged.
+
+The audit MUST identify the selected profile, recognition engine, actual local
+model artifacts and their hashes, token policy and experimental qualification.
+Artifact fingerprints identify local files; they MUST NOT imply verified
+upstream provenance or accuracy. Missing or changed model artifacts MUST fail
+publication. Neither manifest nor decision-report output may overwrite model
+artifacts or source media.
+
+Caption splitting for this policy MUST occur after acoustic alignment. It MUST
+preserve word identity, order and intervals, and the selected media union and
+intended gaps. New caption boundaries MAY partition gaps between adjacent words;
+they are presentation boundaries, not invented word boundaries. A valid selected
+media envelope MUST NOT be discarded merely because SDK comparison timing for a
+text word is unavailable. No profile status or successful run certifies recognition
+accuracy, acoustic accuracy or normal-completion qualification. The
+[token-authority decision](internal/recognition-token-authority.md) records the
+boundary between literal words, SDK fragments and acoustic estimates.
+
 ## 16. Consumer Requirements
 
 A conforming TJM v1.1 consumer:
@@ -965,6 +1014,15 @@ Full-source transcription frontends MUST request quality overrides only on an
 explicit per-run action, never through an automatic forced retry. Completing a
 CTC-aligned transcription MUST NOT trigger a legacy ASR timing-repair offer that
 could replace the aligned estimates under the original audit record.
+
+Frontend recognition-profile selection MUST remain independent of backend/model
+selection. Selecting a profile MUST NOT silently replace the configured model
+or imply that another model is qualified. Full-source frontends MUST convey the
+selected policy and its required decoding/timing arguments, reject unsupported
+combinations before launch and preserve the launch choice for the running job.
+The default profile MUST preserve existing command behavior. A region
+retranscription path without support for the selected profile MUST reject it,
+not silently use another decoding or timing policy.
 
 ## 17. Validation and Error Handling
 

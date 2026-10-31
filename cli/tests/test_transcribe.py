@@ -14,6 +14,7 @@ import pytest
 
 from eve_cli import alignment, tjm_v11
 from eve_cli.commands import transcribe
+from eve_cli.commands.transcribe import transcribe_faster_whisper
 from eve_cli.main import build_parser, main
 
 
@@ -1081,6 +1082,321 @@ def test_transcribe_run_dispatches_default_backend_to_faster_whisper(
         "end": 0.5,
         "token": "hello",
     }
+
+
+@pytest.fixture
+def trained_model(
+    tmp_path: Path,
+    aligned_job: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    # Keep the shared clock/audio/CTC fixtures, but exercise the real adapter.
+    monkeypatch.setattr(
+        transcribe, "transcribe_faster_whisper", transcribe_faster_whisper
+    )
+    folder = tmp_path / "local-ct2"
+    folder.mkdir()
+    for name in (
+        "model.bin",
+        "config.json",
+        "tokenizer.json",
+        "preprocessor_config.json",
+        "vocabulary.json",
+    ):
+        (folder / name).write_bytes(b"local model fixture")
+    return folder
+
+
+def trained_args(media: Path, output: Path, model: Path) -> list[str]:
+    return [
+        "transcribe",
+        str(media),
+        "--output",
+        str(output),
+        "--recognition-profile",
+        "trained-verbatim",
+        "--model",
+        str(model),
+        "--device",
+        "cpu",
+        "--word-aligner",
+        "ctc",
+    ]
+
+
+@pytest.mark.parametrize("duration_limit", [0.0, 0.25])
+def test_trained_verbatim_profile_publishes_text_words_with_native_ctc(
+    aligned_job: tuple[Path, Path],
+    trained_model: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    duration_limit: float,
+) -> None:
+    media, output = aligned_job
+    calls = []
+    sdk = FakeSegment(
+        start=0.0,
+        end=1.0,
+        text="I'M VERY READY NOW.",
+        words=[
+            FakeWord(0.01, 0.03, "I"),
+            FakeWord(0.04, float("inf"), "'M"),
+            FakeWord(0.3, 0.4, " VERY"),
+            FakeWord(0.5, 0.6, " READY"),
+            FakeWord(0.7, 0.8, " NOW."),
+        ],
+    )
+
+    class Model:
+        def __init__(self, model: str, *, device: str, compute_type: str) -> None:
+            assert model == str(trained_model.resolve())
+            assert (device, compute_type) == ("cpu", "int8")
+
+        def transcribe(
+            self, path: str, **kwargs: object
+        ) -> tuple[list[FakeSegment], None]:
+            calls.append(kwargs)
+            return [sdk], None
+
+    def native(
+        path: Path, tokens: list[str], **kwargs: object
+    ) -> list[alignment.WordAlignment]:
+        assert tokens == ["I'M", "VERY", "READY", "NOW."]
+        return [
+            alignment.WordAlignment(
+                i, token, Fraction(2 * i + 1, 10), Fraction(2 * i + 2, 10)
+            )
+            for i, token in enumerate(tokens)
+        ]
+
+    monkeypatch.setattr(transcribe, "_load_whisper_model", lambda: Model)
+    monkeypatch.setattr(alignment, "align_ctc", native)
+    assert (
+        main(
+            trained_args(media, output, trained_model)
+            + [
+                "--max-segment-words",
+                "2",
+                "--max-segment-duration",
+                str(duration_limit),
+            ]
+        )
+        == 0
+    )
+    data = json.loads(output.read_text())
+    tjm_v11.validate_manifest(data)
+    assert calls == [
+        {
+            "beam_size": 5,
+            "language": "en",
+            "vad_filter": True,
+            "word_timestamps": True,
+            "condition_on_previous_text": False,
+            "temperature": 0.0,
+        }
+    ]
+    words = [w for s in data["segments"] for w in s["words"]]
+    assert [(w["spoken"], w["start_tick"], w["end_tick"]) for w in words] == [
+        ("I'M", 4800, 9600),
+        ("VERY", 14400, 19200),
+        ("READY", 24000, 28800),
+        ("NOW.", 33600, 38400),
+    ]
+    expected_envelopes = (
+        [(0, 21600), (21600, 48000)]
+        if not duration_limit
+        else [(0, 12000), (12000, 21600), (21600, 31200), (31200, 48000)]
+    )
+    assert [
+        (s["start_tick"], s["end_tick"]) for s in data["segments"]
+    ] == expected_envelopes
+    audit = data["alignment"]
+    assert audit["forced"] is False
+    assert audit["recognition"]["profile"] == "trained-verbatim"
+    assert audit["recognition"]["qualification"] == "experimental"
+    assert set(audit["recognition"]["model_files"]) == {
+        "model.bin",
+        "config.json",
+        "tokenizer.json",
+        "preprocessor_config.json",
+        "vocabulary.json",
+    }
+    original = audit["sources"][0]["recognition_segments"][0]
+    assert original["text"] == sdk.text
+    assert original["words"][0] == {"spoken": "I'M", "sdk_fragment_indexes": [0, 1]}
+    assert original["sdk_words"][1] == {
+        "word": "'M",
+        "start_seconds": "0.04",
+        "end_seconds": "inf",
+    }
+    assert any(
+        d["code"] == "recognizer_timing_unavailable" and d["word_index"] == 0
+        for d in audit["diagnostics"]
+    )
+    assert sdk.words[0].word == "I" and sdk.words[1].word == "'M"
+    assert (
+        json.loads(Path(str(output) + ".alignment-report.json").read_text())[
+            "alignment"
+        ]
+        == audit
+    )
+    assert media.read_bytes() == b"source-must-not-change"
+    default = build_parser().parse_args(
+        ["transcribe", str(media), "--output", str(output)]
+    )
+    assert default.recognition_profile == "default"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--word-aligner", "none"],
+        ["--device", "auto"],
+        ["--beam-size", "2"],
+        ["--language", "fr"],
+        ["--backend", "transformers"],
+        ["--no-verbatim"],
+        ["--hotwords", "uh"],
+        ["--model", "medium.en"],
+        ["--stub"],
+    ],
+)
+def test_trained_verbatim_rejects_incompatible_settings_before_inference(
+    aligned_job: tuple[Path, Path],
+    trained_model: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: list[str],
+) -> None:
+    media, output = aligned_job
+    output.write_bytes(b"previous manifest")
+    monkeypatch.setattr(
+        transcribe, "_load_whisper_model", lambda: pytest.fail("No inference allowed")
+    )
+    assert main(trained_args(media, output, trained_model) + extra) == 1
+    assert output.read_bytes() == b"previous manifest"
+
+
+@pytest.mark.parametrize(
+    "text,fragments",
+    [
+        ("I'M", ["I", "AM"]),
+        ("YOU KNOW", ["YOUKNOW"]),
+        ("I'M", []),
+        ("", ["I"]),
+        ("I'm", ["I", "'M"]),
+    ],
+)
+@pytest.mark.parametrize("force", [False, True])
+def test_trained_verbatim_ambiguous_mapping_never_overwrites_output(
+    aligned_job: tuple[Path, Path],
+    trained_model: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    text: str,
+    fragments: list[str],
+    force: bool,
+) -> None:
+    media, output = aligned_job
+    output.write_bytes(b"previous manifest")
+    report = Path(str(output) + ".alignment-report.json")
+    report.write_bytes(b"previous report")
+
+    class Model:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def transcribe(
+            self, *args: object, **kwargs: object
+        ) -> tuple[list[FakeSegment], None]:
+            return [
+                FakeSegment(
+                    start=0.0,
+                    end=1.0,
+                    text=text,
+                    words=[FakeWord(0.1, 0.2, s) for s in fragments],
+                )
+            ], None
+
+    monkeypatch.setattr(transcribe, "_load_whisper_model", lambda: Model)
+    monkeypatch.setattr(
+        alignment,
+        "align_ctc",
+        lambda *a, **kw: pytest.fail("Ambiguous mapping must fail before alignment"),
+    )
+    assert (
+        main(
+            trained_args(media, output, trained_model) + (["--force"] if force else [])
+        )
+        == 1
+    )
+    assert output.read_bytes() == b"previous manifest"
+    assert report.read_bytes() == b"previous report"
+
+
+@pytest.mark.parametrize("target", ["model.bin", "config.json", "vocabulary.json"])
+def test_trained_verbatim_protects_model_assets(
+    aligned_job: tuple[Path, Path],
+    trained_model: Path,
+    target: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media, output = aligned_job
+    monkeypatch.setattr(
+        transcribe,
+        "_load_whisper_model",
+        lambda: pytest.fail("Must protect all model inputs before loading"),
+    )
+    asset = trained_model / target
+    original = asset.read_bytes()
+    args = trained_args(media, output, trained_model)
+    args += ["--output" if target == "model.bin" else "--alignment-report", str(asset)]
+    assert main(args) == 1
+    assert asset.read_bytes() == original
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_trained_verbatim_preserves_real_gaps_and_rejects_changed_model(
+    aligned_job: tuple[Path, Path],
+    trained_model: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: bool,
+) -> None:
+    media, output = aligned_job
+    output.write_bytes(b"previous manifest")
+    sdk = [
+        FakeSegment(
+            start=0.0, end=0.4, text="Hello", words=[FakeWord(0.1, 0.3, "Hello")]
+        ),
+        FakeSegment(
+            start=0.6, end=1.0, text="world.", words=[FakeWord(0.7, 0.9, " world.")]
+        ),
+    ]
+    monkeypatch.setattr(
+        transcribe,
+        "_load_whisper_model",
+        lambda: (
+            lambda *a, **kw: SimpleNamespace(transcribe=lambda *a, **kw: (sdk, None))
+        ),
+    )
+
+    def native(*a: object, **kw: object) -> list[alignment.WordAlignment]:
+        if changed:
+            (trained_model / "model.bin").write_bytes(b"changed during inference")
+        return [
+            alignment.WordAlignment(0, "Hello", Fraction("0.1"), Fraction("0.3")),
+            alignment.WordAlignment(1, "world.", Fraction("0.7"), Fraction("0.9")),
+        ]
+
+    monkeypatch.setattr(alignment, "align_ctc", native)
+    code = main(trained_args(media, output, trained_model))
+    if changed:
+        assert code == 1 and output.read_bytes() == b"previous manifest"
+        assert not Path(str(output) + ".alignment-report.json").exists()
+    else:
+        assert code == 0
+        data = json.loads(output.read_text())
+        assert [(s["start_tick"], s["end_tick"]) for s in data["segments"]] == [
+            (0, 19200),
+            (28800, 48000),
+        ]
 
 
 def test_transcribe_parser_accepts_hotwords_override() -> None:
