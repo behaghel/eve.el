@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import os
@@ -31,6 +32,14 @@ VERBATIM_INITIAL_PROMPT = (
     "talking and then-- and then I..."
 )
 DEFAULT_FILLER_HOTWORDS = "um uh ah hmm like you know I mean"
+TRAINED_VERBATIM_PROFILE = "trained-verbatim"
+LOCAL_MODEL_FILES = (
+    "model.bin",
+    "config.json",
+    "tokenizer.json",
+    "preprocessor_config.json",
+    "vocabulary.json",
+)
 BackendRunner = Callable[[Namespace, list[pathlib.Path]], list[dict[str, Any]]]
 
 
@@ -285,6 +294,136 @@ def segment_to_dict(
     ]
 
 
+def _trained_profile(args: Namespace) -> bool:
+    return getattr(args, "recognition_profile", "default") == TRAINED_VERBATIM_PROFILE
+
+
+def _local_model_files(folder: pathlib.Path) -> dict[str, Any]:
+    """Fingerprint the actual local assets, without claiming upstream provenance."""
+    result = {}
+    for name in LOCAL_MODEL_FILES:
+        path = folder / name
+        if not path.is_file():
+            raise tjm_v11.ValidationError(
+                "trained-verbatim requires a complete local CTranslate2 model: "
+                f"missing {path}"
+            )
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        result[name] = {"sha256": digest, "bytes": path.stat().st_size}
+    return result
+
+
+def _trained_segment_to_dict(source: str, index: int, segment: Any) -> dict[str, Any]:
+    """Own lexical identity from literal text, not SDK punctuation fragments.
+
+    SDK fragments must tile whole whitespace-delimited text words exactly. A
+    fragment crossing a word boundary, or any changed character, is ambiguous.
+    Multi-fragment words have NO combined SDK interval; CTC must estimate one.
+    """
+    tokens = segment.text.split()
+    sdk_words = list(segment.words or [])
+    fragments = [
+        (i, "".join(word.word.split()))
+        for i, word in enumerate(sdk_words)
+        if word.word.strip()
+    ]
+    words, mappings = [], []
+    cursor = 0
+    for token in tokens:
+        remaining, indexes = token, []
+        while remaining:
+            if cursor >= len(fragments) or not remaining.startswith(
+                fragments[cursor][1]
+            ):
+                raise tjm_v11.ValidationError(
+                    f"{source}: ambiguous recognizer text/SDK fragment mapping; "
+                    "no words or timings repaired"
+                )
+            number, fragment = fragments[cursor]
+            indexes.append(number)
+            remaining = remaining[len(fragment) :]
+            cursor += 1
+        single = sdk_words[indexes[0]] if len(indexes) == 1 else None
+        words.append(
+            {
+                "token": token,
+                "start": single.start if single else None,
+                "end": single.end if single else None,
+            }
+        )
+        mappings.append({"spoken": token, "sdk_fragment_indexes": indexes})
+    if not tokens or cursor != len(fragments):
+        raise tjm_v11.ValidationError(
+            f"{source}: ambiguous or empty recognizer text/SDK fragment mapping"
+        )
+    entry = segment_to_dict(source, index, segment, 0.0)[0]
+    entry.update(text=" ".join(tokens), words=words)
+    entry["_recognition"] = {
+        "sdk_segment_id": entry["id"],
+        "text": segment.text,
+        "start_seconds": None if segment.start is None else str(segment.start),
+        "end_seconds": None if segment.end is None else str(segment.end),
+        "sdk_words": [
+            {
+                "word": word.word,
+                "start_seconds": None if word.start is None else str(word.start),
+                "end_seconds": None if word.end is None else str(word.end),
+            }
+            for word in sdk_words
+        ],
+        "words": mappings,
+    }
+    return entry
+
+
+def _split_trained_captions(
+    args: Namespace, segments: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Split only after native alignment; preserve media union and every word.
+
+    Presentation boundaries lie between native word intervals. No regrouping
+    across original captions, gap removal, or redistribution of word time.
+    """
+    result = []
+    for segment in segments:
+        groups = (
+            _split_at_natural_boundaries(segment["words"], args.max_segment_words)
+            if args.max_segment_words > 0
+            else [segment["words"]]
+        )
+        if args.max_segment_duration > 0:
+            groups = [
+                part["words"]
+                for group in groups
+                for part in split_segment(
+                    segment["source"],
+                    1,
+                    group[0]["start"],
+                    group,
+                    args.max_segment_duration,
+                )
+            ]
+        boundaries = [segment["start"]]
+        boundaries.extend(
+            (left[-1]["end"] + right[0]["start"]) / 2
+            for left, right in zip(groups, groups[1:])
+        )
+        boundaries.append(segment["end"])
+        for number, group in enumerate(groups):
+            result.append(
+                {
+                    **segment,
+                    "id": f"{segment['id']}-{number}",
+                    "start": boundaries[number],
+                    "end": boundaries[number + 1],
+                    "text": " ".join(w["token"] for w in group),
+                    "words": group,
+                }
+            )
+    return result
+
+
 def probe_audio_sample_rate(path: pathlib.Path) -> int:
     """Use the source audio sample grid as its authoritative TJM clock."""
     try:
@@ -503,9 +642,14 @@ def _align_transcription(
                         Fraction(str(segment.get("start"))),
                         Fraction(str(segment.get("end"))),
                     )
-                    first = Fraction(str(segment["words"][0].get("start")))
-                    last = Fraction(str(segment["words"][-1].get("end")))
-                    valid = 0 <= left <= first < last <= right <= duration
+                    if _trained_profile(args):
+                        # Text words may have no independent SDK interval. Their
+                        # valid MEDIA envelope does not depend on that auxiliary data.
+                        valid = 0 <= left < right <= duration
+                    else:
+                        first = Fraction(str(segment["words"][0].get("start")))
+                        last = Fraction(str(segment["words"][-1].get("end")))
+                        valid = 0 <= left <= first < last <= right <= duration
                     envelopes.append((left, right) if valid else None)
                 except (ValueError, ZeroDivisionError):
                     envelopes.append(None)
@@ -593,6 +737,10 @@ def _align_transcription(
                 "inference": inference_metadata,
                 "pause_diagnostic": alignment.pause_diagnostics(audio, predicted),
             }
+            if _trained_profile(args):
+                source_record["recognition_segments"] = [
+                    deepcopy(segment["_recognition"]) for segment in selected
+                ]
             readings = [
                 {
                     "word_index": item.index,
@@ -836,16 +984,17 @@ def transcribe_faster_whisper(
                 "word_timestamps": True,
             }
             hotwords = args.hotwords
-            if args.verbatim and hotwords is None:
+            if args.verbatim and hotwords is None and not _trained_profile(args):
                 hotwords = DEFAULT_FILLER_HOTWORDS
             if hotwords:
                 transcribe_kwargs["hotwords"] = hotwords
             if args.verbatim:
                 transcribe_kwargs.update(
-                    initial_prompt=VERBATIM_INITIAL_PROMPT,
                     condition_on_previous_text=False,
                     temperature=0.0,
                 )
+                if not _trained_profile(args):
+                    transcribe_kwargs["initial_prompt"] = VERBATIM_INITIAL_PROMPT
 
             _emit_progress(
                 args, "decode", current=index, total=len(inputs), file=str(media_path)
@@ -853,14 +1002,19 @@ def transcribe_faster_whisper(
             segments, _info = model.transcribe(str(wav_path), **transcribe_kwargs)
 
             for segment_index, segment in enumerate(segments, start=1):
-                manifest_segments.extend(
-                    segment_to_dict(
-                        source_id,
-                        segment_index,
-                        segment,
-                        args.max_segment_duration,
+                if _trained_profile(args):
+                    manifest_segments.append(
+                        _trained_segment_to_dict(source_id, segment_index, segment)
                     )
-                )
+                else:
+                    manifest_segments.extend(
+                        segment_to_dict(
+                            source_id,
+                            segment_index,
+                            segment,
+                            args.max_segment_duration,
+                        )
+                    )
 
     return manifest_segments
 
@@ -1037,6 +1191,13 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         help="Bias decoding toward verbatim disfluencies on supported backends",
     )
     parser.add_argument(
+        "--recognition-profile",
+        choices=("default", TRAINED_VERBATIM_PROFILE),
+        default="default",
+        help="Experimental trained-verbatim: local CT2 model, CPU/int8, English, "
+        "beam 5, native CTC only; no filler prompts or hotwords. Defaults unchanged.",
+    )
+    parser.add_argument(
         "--hotwords",
         default=None,
         help=(
@@ -1097,16 +1258,47 @@ def run(args: Namespace) -> int:
         raise tjm_v11.ValidationError(
             "CTC alignment requires real faster-whisper English recognition"
         )
+    recognition_record = None
     protected = {path.resolve() for path in inputs}
+    if _trained_profile(args):
+        if (
+            not align_words
+            or stub_mode
+            or args.backend != "faster-whisper"
+            or args.language != "en"
+            or args.device != "cpu"
+            or args.beam_size != 5
+            or not args.verbatim
+            or args.hotwords
+        ):
+            raise tjm_v11.ValidationError(
+                "trained-verbatim requires real faster-whisper, --word-aligner ctc, "
+                "--device cpu, English, beam 5 and verbatim enabled, without hotwords"
+            )
+        folder = pathlib.Path(args.model).expanduser().resolve()
+        model_files = _local_model_files(folder)
+        args.model = str(folder)
+        protected.update((folder / name).resolve() for name in LOCAL_MODEL_FILES)
+        recognition_record = {
+            "profile": TRAINED_VERBATIM_PROFILE,
+            "engine": "faster-whisper",
+            "model": str(folder),
+            "model_files": model_files,
+            "qualification": "experimental",
+            "token_authority": "literal_segment_text_words",
+            "notice": "Recognition and acoustic accuracy remain unqualified.",
+        }
     if output_path.resolve() in protected:
-        raise tjm_v11.ValidationError("Manifest output must not overwrite input media")
+        raise tjm_v11.ValidationError(
+            "Manifest output must not overwrite input media or model artifacts"
+        )
     report_path = pathlib.Path(
         getattr(args, "alignment_report", None)
         or f"{output_path}.alignment-report.json"
     ).expanduser()
     if align_words and report_path.resolve() in protected | {output_path.resolve()}:
         raise tjm_v11.ValidationError(
-            "Alignment report must not overwrite media or manifest"
+            "Alignment report must not overwrite media, model artifacts or manifest"
         )
     sample_rates = {
         f"clip{index:02d}": probe_audio_sample_rate(media_path)
@@ -1138,7 +1330,11 @@ def run(args: Namespace) -> int:
             )
             _emit_progress(args, "load-model", backend=args.backend, model=args.model)
             manifest_segments = backend_runners[args.backend](args, inputs)
-            if args.max_segment_words > 0:
+            if _trained_profile(args) and not manifest_segments:
+                raise tjm_v11.ValidationError(
+                    "trained-verbatim returned no recognized words"
+                )
+            if args.max_segment_words > 0 and not _trained_profile(args):
                 _emit_progress(args, "resegment", max_words=args.max_segment_words)
                 manifest_segments = resegment_naturally(
                     manifest_segments, args.max_segment_words
@@ -1147,6 +1343,17 @@ def run(args: Namespace) -> int:
                 alignment_record = _align_transcription(
                     args, inputs, manifest_segments, sample_rates
                 )
+                if recognition_record is not None:
+                    alignment_record["recognition"] = recognition_record
+                    manifest_segments = _split_trained_captions(args, manifest_segments)
+                    if (
+                        _local_model_files(pathlib.Path(args.model))
+                        != recognition_record["model_files"]
+                    ):
+                        raise tjm_v11.ValidationError(
+                            "Recognition model artifacts changed during transcription; "
+                            "no output published"
+                        )
         except MissingBackendDependencyError as exc:
             print(f"eve transcribe: {exc}", file=sys.stderr)
             return 2

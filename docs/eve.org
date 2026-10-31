@@ -366,6 +366,58 @@ receives default filler hotwords such as =um=, =uh=, =like=, and =you know=;
 set =eve-transcribe-hotwords= or pass =--hotwords= to override them.  For
 =transformers= and =nemo=, choose a verbatim-friendly model instead.
 
+For an explicitly supplied local CTranslate2 model, the CLI also supports an
+experimental =--recognition-profile trained-verbatim= mode:
+
+#+begin_src sh
+eve transcribe input.mp4 --output edit.tjm.json \
+  --recognition-profile trained-verbatim --model /path/local-ct2-model \
+  --device cpu --word-aligner ctc
+#+end_src
+
+This fixes English CPU/int8 decoding at beam 5, with VAD, temperature zero,
+no previous-text conditioning, and no initial prompt or hotwords.  It does not
+change defaults, download or convert recognition weights, or certify quality.  The local
+directory must contain =model.bin=, =config.json=, =tokenizer.json= and
+=preprocessor_config.json= and =vocabulary.json=.  Actual file hashes and the experimental profile
+are recorded in =alignment.recognition=; hashes do not certify upstream provenance.
+The existing native aligner retains its own pinned model/cache and offline policy;
+set =HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1= to forbid model downloads.
+
+Unchanged recognizer text supplies whole-word identity: =I'M= is one timed token,
+even when the SDK fragments it into =I= and ='M=.  Exact character mapping is
+required; ambiguous mapping fails rather than correcting text.  Native CTC
+independently estimates the whole-word interval; fragment timings are never
+stitched.  Original SDK text, fragment boundaries and mappings are retained in
+=alignment.sources[].recognition_segments=.  Caption splitting occurs afterward,
+without changing word times or losing selected media/gaps.  Existing outputs
+survive failures.  See [[file:../cli/README.md][CLI documentation]] for the tested candidate and revision.
+
+For full-source Emacs commands, including =eve-dired-transcribe=, select the
+recognition profile independently of the backend and model:
+
+#+begin_src emacs-lisp
+(let ((eve-transcribe-backend "faster-whisper")
+      (eve-transcribe-model "/path/local-ct2-model")
+      (eve-transcribe-recognition-profile "trained-verbatim")
+      (eve-transcribe-word-aligner "ctc")
+      (eve-transcribe-verbatim t)
+      (eve-transcribe-hotwords nil))
+  (call-interactively #'eve-dired-transcribe))
+#+end_src
+
+Alternatively, customize those variables for subsequent runs.  The profile does
+not select a checkpoint: another compatible local model needs only a different
+=eve-transcribe-model= value, not a new model-specific mode or registry entry.
+A different backend/decoding policy still needs explicit CLI/frontend support
+and separate quality evidence.  Unsupported combinations fail before launch;
+there is no automatic model switch, fallback or force.  The selected profile is
+captured per job and recorded by the CLI in the alignment audit.  The default
+profile keeps existing command behavior.  Non-default profiles are not supported
+for region retranscription and are rejected rather than silently using another
+policy.  Literal casing and contractions are preserved; display rewriting is
+never a required or automatic transcription step.
+
 Choose recognition and alignment models whose published licenses permit the
 intended use of both their weights and generated outputs.  This is a
 non-commercial project; non-commercial research models may be evaluated here.
@@ -381,7 +433,8 @@ or timing accuracy.  Model quality must be qualified separately; a backend's
 | Variable | Default | Description |
 |----------+---------+-------------|
 | =eve-transcribe-backend= | ="faster-whisper"= | Backend name passed to =eve transcribe=. |
-| =eve-transcribe-model= | ="medium.en"= | Model identifier. |
+| =eve-transcribe-model= | ="medium.en"= | Model name/path, independent of recognition profile. |
+| =eve-transcribe-recognition-profile= | ="default"= | Full-source decoding/token policy; ="trained-verbatim"= requires native CTC and a compatible local model. |
 | =eve-transcribe-word-aligner= | =nil= | Set to ="ctc"= for opt-in native word alignment on full-source transcription. |
 | =eve-transcribe-verbatim= | =t= | Pass =--verbatim= to the backend. |
 | =eve-transcribe-hotwords= | =nil= | Optional hotwords override; nil uses CLI defaults. |

@@ -48,6 +48,60 @@ produce a diagnostic rather than fabricated durations. Failed validation leaves
 an existing output untouched; successful manifests are published atomically
 after validation.
 
+### Experimental trained-verbatim recognition
+
+For an already prepared **local CTranslate2 model** and the existing
+`faster-whisper`/`alignment` extras:
+
+```bash
+devenv -q shell -- bash -c 'cd cli && uv run --no-sync eve transcribe \
+  /path/input.mp4 --output /path/edit.tjm.json \
+  --recognition-profile trained-verbatim --model /path/local-ct2-model \
+  --device cpu --word-aligner ctc'
+```
+
+The English profile requests CPU/int8, beam 5, VAD, word timestamps, temperature
+zero and no previous-text conditioning. Unlike default verbatim decoding, it
+adds **no initial prompt or filler hotwords**. Incompatible settings fail rather
+than silently override the requested profile. Default transcription is unchanged.
+
+This selects decoding/tokenization behavior, not a model registry. The tested
+candidate is `JacobLinCool/whisper-large-v3-turbo-verbatim-1`, revision
+`c7430ca44055c70c9a13d6bcfcdf62baa3cb2902`, converted to int8 with the exact
+checkpoint tokenizer. The profile neither downloads/converts recognition weights
+nor checks their upstream training provenance. Supply `model.bin`, `config.json`,
+`tokenizer.json`, `preprocessor_config.json` and `vocabulary.json` in the local
+directory; actual
+file hashes are recorded and checked for changes during transcription. Choose
+weights/output terms appropriate to your use. No checkpoint is bundled. The
+existing native aligner uses its own pinned model/cache and offline policy;
+`HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` forbids model downloads when all required
+models are already cached.
+
+Literal recognizer text owns whole words: `I'M` remains one timed editing token,
+not independent SDK fragments `I` and `'M`. Exact, unambiguous character mapping
+is required; this does not correct spelling, names, repetitions or fillers.
+Native CTC independently estimates each whole-word interval. Fragment timings
+are **never stitched**. Original SDK strings/boundaries and token mappings remain
+in `alignment.sources[].recognition_segments`; unavailable comparison intervals
+are non-blocking only after native structural validation. Caption splitting uses
+native intervals and preserves the selected media union, including real gaps.
+
+`alignment.recognition` records the experimental profile and actual model files.
+This is not recognition/timing qualification or a production-default upgrade.
+Failures preserve existing outputs. Emacs full-source commands, including
+`eve-dired-transcribe`, support `eve-transcribe-recognition-profile` set to
+`"trained-verbatim"`, alongside the existing backend/model/word-aligner settings.
+Set the backend to `"faster-whisper"`, the model to your local CT2 directory,
+word-aligner to `"ctc"`, verbatim to `t` and hotwords to `nil` (or `""`).
+The profile supplies explicit CPU/English/beam5 arguments; unsupported combinations
+fail before launch. Model selection stays independent: another compatible local
+model changes configuration, not code or a model registry. New backend/decoding
+requirements still need explicit support and separate qualification. See the
+[Emacs manual](../docs/eve.org) for a locally scoped example. Defaults remain
+unchanged. Non-default profiles are rejected for manual region retranscription;
+there is no silent policy fallback or automatic display/text rewriting.
+
 ### Opt-in automatic native CTC alignment
 
 ```bash
