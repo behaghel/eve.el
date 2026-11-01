@@ -608,6 +608,58 @@ receives default filler hotwords such as @samp{um}, @samp{uh}, @samp{like}, and 
 set @samp{eve-transcribe-hotwords} or pass @samp{--hotwords} to override them.  For
 @samp{transformers} and @samp{nemo}, choose a verbatim-friendly model instead.
 
+For an explicitly supplied local CTranslate2 model, the CLI also supports an
+experimental @samp{--recognition-profile trained-verbatim} mode:
+
+@example
+eve transcribe input.mp4 --output edit.tjm.json \
+  --recognition-profile trained-verbatim --model /path/local-ct2-model \
+  --device cpu --word-aligner ctc
+@end example
+
+This fixes English CPU/int8 decoding at beam 5, with VAD, temperature zero,
+no previous-text conditioning, and no initial prompt or hotwords.  It does not
+change defaults, download or convert recognition weights, or certify quality.  The local
+directory must contain @samp{model.bin}, @samp{config.json}, @samp{tokenizer.json} and
+@samp{preprocessor_config.json} and @samp{vocabulary.json}.  Actual file hashes and the experimental profile
+are recorded in @samp{alignment.recognition}; hashes do not certify upstream provenance.
+The existing native aligner retains its own pinned model/cache and offline policy;
+set @samp{HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1} to forbid model downloads.
+
+Unchanged recognizer text supplies whole-word identity: @samp{I'M} is one timed token,
+even when the SDK fragments it into @samp{I} and @samp{'M}.  Exact character mapping is
+required; ambiguous mapping fails rather than correcting text.  Native CTC
+independently estimates the whole-word interval; fragment timings are never
+stitched.  Original SDK text, fragment boundaries and mappings are retained in
+@samp{alignment.sources[].recognition_segments}.  Caption splitting occurs afterward,
+without changing word times or losing selected media/gaps.  Existing outputs
+survive failures.  See @uref{../cli/README.md, CLI documentation} for the tested candidate and revision.
+
+For full-source Emacs commands, including @samp{eve-dired-transcribe}, select the
+recognition profile independently of the backend and model:
+
+@lisp
+(let ((eve-transcribe-backend "faster-whisper")
+      (eve-transcribe-model "/path/local-ct2-model")
+      (eve-transcribe-recognition-profile "trained-verbatim")
+      (eve-transcribe-word-aligner "ctc")
+      (eve-transcribe-verbatim t)
+      (eve-transcribe-hotwords nil))
+  (call-interactively #'eve-dired-transcribe))
+@end lisp
+
+Alternatively, customize those variables for subsequent runs.  The profile does
+not select a checkpoint: another compatible local model needs only a different
+@samp{eve-transcribe-model} value, not a new model-specific mode or registry entry.
+A different backend/decoding policy still needs explicit CLI/frontend support
+and separate quality evidence.  Unsupported combinations fail before launch;
+there is no automatic model switch, fallback or force.  The selected profile is
+captured per job and recorded by the CLI in the alignment audit.  The default
+profile keeps existing command behavior.  Non-default profiles are not supported
+for region retranscription and are rejected rather than silently using another
+policy.  Literal casing and contractions are preserved; display rewriting is
+never a required or automatic transcription step.
+
 Choose recognition and alignment models whose published licenses permit the
 intended use of both their weights and generated outputs.  This is a
 non-commercial project; non-commercial research models may be evaluated here.
@@ -621,7 +673,7 @@ or timing accuracy.  Model quality must be qualified separately; a backend's
 @node Configuration
 @section Configuration
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
@@ -630,7 +682,10 @@ or timing accuracy.  Model quality must be qualified separately; a backend's
 @tab Backend name passed to @samp{eve transcribe}.
 @item @samp{eve-transcribe-model}
 @tab @samp{"medium.en"}
-@tab Model identifier.
+@tab Model name/path, independent of recognition profile.
+@item @samp{eve-transcribe-recognition-profile}
+@tab @samp{"default"}
+@tab Full-source decoding/token policy; @samp{"trained-verbatim"} requires native CTC and a compatible local model.
 @item @samp{eve-transcribe-word-aligner}
 @tab @samp{nil}
 @tab Set to @samp{"ctc"} for opt-in native word alignment on full-source transcription.
@@ -2038,6 +2093,9 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-transcribe-offer-reprocess-suspicious}
 @tab @samp{t}
 @tab Whether to offer suspicious-region retranscription after transcription.
+@item @samp{eve-transcribe-recognition-profile}
+@tab @samp{"default"}
+@tab Decoding/token policy for full-source transcription, independent of model.
 @item @samp{eve-transcribe-suspicious-gap-duration}
 @tab @samp{5.0}
 @tab Source gap duration in seconds above which transcription cleanup is offered.

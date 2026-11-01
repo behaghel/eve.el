@@ -168,11 +168,23 @@ using source start/end times and ignoring word-level edits."
   :type 'string
   :group 'eve)
 
+(defcustom eve-transcribe-recognition-profile "default"
+  "Decoding/token policy for full-source transcription, independent of model.
+\"default\" keeps the existing backend behavior.  \"trained-verbatim\" requires
+faster-whisper, an explicitly configured local CTranslate2 model, native CTC,
+verbatim enabled and no hotwords.  It requests English CPU/int8 with beam 5.
+This setting never selects, downloads or qualifies a model.  Region
+retranscription supports only the default profile."
+  :type '(choice (const :tag "Default backend policy" "default")
+                 (const :tag "Trained verbatim (native CTC, experimental)"
+                        "trained-verbatim"))
+  :group 'eve)
+
 (defcustom eve-transcribe-word-aligner nil
   "Optional word aligner for full-source transcription commands.
 Nil keeps backend word timings.  \"ctc\" opts into experimental native CTC
 alignment with English faster-whisper recognition.  Requires the CLI's
-alignment dependencies.  Region retranscription is unaffected."
+alignment dependencies.  Default-profile region retranscription is unaffected."
   :type '(choice (const :tag "Backend word timings" nil)
                  (const :tag "Native CTC (experimental)" "ctc"))
   :group 'eve)
@@ -1167,10 +1179,30 @@ WORD-ALIGNER is captured at launch; CTC output skips legacy ASR repair offers."
         (pop-to-buffer buffer))
       (message "eve transcribe failed: %s" (string-trim event)))))
 
+(defun eve--transcribe-profile-arguments (profile)
+  "Return CLI policy arguments for PROFILE without choosing a model.
+Reject unsupported combinations before launching; CLI validation remains
+responsible for model artifacts and authoritative word timing."
+  (pcase profile
+    ("default" nil)
+    ("trained-verbatim"
+     (unless (and (equal eve-transcribe-backend "faster-whisper")
+                  (equal eve-transcribe-word-aligner "ctc")
+                  eve-transcribe-verbatim
+                  (or (null eve-transcribe-hotwords)
+                      (and (stringp eve-transcribe-hotwords)
+                           (string-empty-p eve-transcribe-hotwords))))
+       (user-error "trained-verbatim requires faster-whisper, word-aligner ctc, verbatim enabled and no hotwords"))
+     '("--recognition-profile" "trained-verbatim"
+       "--device" "cpu" "--language" "en" "--beam-size" "5"))
+    (_ (user-error "Unsupported recognition profile: %s" profile))))
+
 (defun eve--transcribe-async (files output-path &optional force)
   "Launch `eve transcribe` for FILES, writing OUTPUT-PATH asynchronously.
 Optional FORCE requests a per-run quality override with the CTC opt-in."
-  (let* ((word-aligner eve-transcribe-word-aligner)
+  (let* ((profile eve-transcribe-recognition-profile)
+         (profile-arguments (eve--transcribe-profile-arguments profile))
+         (word-aligner eve-transcribe-word-aligner)
          (_ (when (and force (not (equal word-aligner "ctc")))
               (user-error "Quality override requires eve-transcribe-word-aligner = ctc")))
          (program (or (eve--resolve-cli)
@@ -1183,6 +1215,7 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
                            (list "--output" output-file
                                  "--backend" eve-transcribe-backend
                                  "--model" eve-transcribe-model)
+                           profile-arguments
                            (when eve-transcribe-verbatim
                              '("--verbatim"))
                            (when eve-transcribe-hotwords
@@ -1208,7 +1241,8 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
       (when (processp process)
         (process-put process :eve-start-time start-time)
         (process-put process :eve-backend eve-transcribe-backend)
-        (process-put process :eve-model eve-transcribe-model))
+        (process-put process :eve-model eve-transcribe-model)
+        (process-put process :eve-recognition-profile profile))
       (eve--transcribe-started)
       (eve--progress-message "Transcribe"
                              (format "queued %d file(s)" (length files))
@@ -3027,6 +3061,9 @@ Return one display fragment per existing token, without mutating data."
 
 (defun eve--segment-panel-transcribe-command (media output backend model)
   "Return `eve transcribe' command for MEDIA to OUTPUT using BACKEND and MODEL."
+  (unless (equal eve-transcribe-recognition-profile "default")
+    (user-error "Region retranscription does not support recognition profile %s"
+                eve-transcribe-recognition-profile))
   (let ((program (or (eve--resolve-cli)
                      (user-error "Cannot find eve CLI executable: %s"
                                  eve-cli-program))))
