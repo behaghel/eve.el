@@ -222,7 +222,7 @@
       date +%s > "$stamp"
     fi
 
-    hook="$DEVENV_ROOT/.git/hooks/pre-push"
+    hook="$(git -C "$DEVENV_ROOT" rev-parse --git-path hooks/pre-push)"
     if [ ! -f "$hook" ] || ! grep -q "eve-ci-pre-push" "$hook" 2>/dev/null; then
       mkdir -p "$(dirname "$hook")"
       cat > "$hook" << 'HOOK'

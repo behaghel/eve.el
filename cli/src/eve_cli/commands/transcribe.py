@@ -484,16 +484,19 @@ def _transcription_interval(
 
 
 def _v11_segments(
-    segments: list[dict[str, Any]], sample_rates: dict[str, int]
+    segments: list[dict[str, Any]],
+    sample_rates: dict[str, int],
+    *,
+    timestamps: str = "words",
 ) -> list[dict[str, Any]]:
     canonical: list[dict[str, Any]] = []
     for segment in segments:
         label = f"Segment '{segment['id']}'"
         rate = sample_rates[segment["source"]]
         words: list[dict[str, Any]] = []
-        if not segment.get("words"):
+        if timestamps == "words" and not segment.get("words"):
             raise tjm_v11.ValidationError(f"{label}: ASR returned no timed words")
-        for raw in segment["words"]:
+        for raw in segment["words"] if timestamps == "words" else []:
             spoken = str(raw.get("spoken") or raw.get("token") or "")
             word_start, word_end = _transcription_interval(
                 raw, rate, f"{label}, token {spoken!r}"
@@ -528,6 +531,12 @@ def _v11_segments(
             ),
             "words": words,
         }
+        if timestamps == "segments":
+            text = segment.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise tjm_v11.ValidationError(f"{label}: ASR returned no caption text")
+            entry.pop("words")
+            entry["spoken_text"] = entry["display_text"] = text.strip()
         if segment.get("speaker") is not None:
             entry["speaker"] = segment["speaker"]
         edit = deepcopy(segment.get("edit") or {})
@@ -869,7 +878,7 @@ def _build_transformers_generate_kwargs(
     generate_kwargs: dict[str, Any] = {}
     if args.language:
         generate_kwargs["language"] = args.language
-    if args.verbatim:
+    if args.verbatim and args.language == "en":
         tokenizer = getattr(asr_pipeline, "tokenizer", None)
         get_prompt_ids = getattr(tokenizer, "get_prompt_ids", None)
         if callable(get_prompt_ids):
@@ -981,10 +990,15 @@ def transcribe_faster_whisper(
                 "beam_size": args.beam_size,
                 "language": args.language,
                 "vad_filter": getattr(args, "vad", False) or args.verbatim,
-                "word_timestamps": True,
+                "word_timestamps": getattr(args, "timestamps", "words") == "words",
             }
             hotwords = args.hotwords
-            if args.verbatim and hotwords is None and not _trained_profile(args):
+            if (
+                args.verbatim
+                and args.language == "en"
+                and hotwords is None
+                and not _trained_profile(args)
+            ):
                 hotwords = DEFAULT_FILLER_HOTWORDS
             if hotwords:
                 transcribe_kwargs["hotwords"] = hotwords
@@ -993,7 +1007,7 @@ def transcribe_faster_whisper(
                     condition_on_previous_text=False,
                     temperature=0.0,
                 )
-                if not _trained_profile(args):
+                if args.language == "en" and not _trained_profile(args):
                     transcribe_kwargs["initial_prompt"] = VERBATIM_INITIAL_PROMPT
 
             _emit_progress(
@@ -1002,6 +1016,14 @@ def transcribe_faster_whisper(
             segments, _info = model.transcribe(str(wav_path), **transcribe_kwargs)
 
             for segment_index, segment in enumerate(segments, start=1):
+                if getattr(args, "timestamps", "words") == "segments":
+                    segment = BackendSegment(
+                        start=segment.start,
+                        end=segment.end,
+                        text=segment.text,
+                        words=[],
+                        speaker=getattr(segment, "speaker", None),
+                    )
                 if _trained_profile(args):
                     manifest_segments.append(
                         _trained_segment_to_dict(source_id, segment_index, segment)
@@ -1136,8 +1158,8 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
     parser.add_argument("--output", required=True, help="Manifest JSON path to write")
     parser.add_argument(
         "--model",
-        default="medium.en",
-        help="Whisper model name/path (default: medium.en)",
+        default=None,
+        help="Whisper model name/path (default: medium.en for en; medium otherwise)",
     )
     parser.add_argument(
         "--language",
@@ -1216,6 +1238,13 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         help="Emit machine-readable progress events as JSON lines on stderr",
     )
     parser.add_argument(
+        "--timestamps",
+        choices=("words", "segments"),
+        default="words",
+        help="Timing granularity (default: words). segments uses native "
+        "faster-whisper caption bounds without word timing or word splitting.",
+    )
+    parser.add_argument(
         "--word-aligner",
         choices=("none", "ctc"),
         default="none",
@@ -1237,6 +1266,29 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
 
 
 def run(args: Namespace) -> int:
+    if args.model is None:
+        args.model = "medium.en" if args.language == "en" else "medium"
+    if (
+        args.language != "en"
+        and args.model.endswith(".en")
+        and not pathlib.Path(args.model).exists()
+    ):
+        raise tjm_v11.ValidationError(
+            "An English-only .en model cannot transcribe this language; "
+            "choose a multilingual model such as medium or large-v3"
+        )
+    timestamps = getattr(args, "timestamps", "words")
+    if timestamps == "segments" and (
+        args.backend != "faster-whisper"
+        or getattr(args, "word_aligner", "none") != "none"
+        or _trained_profile(args)
+        or args.tag_fillers
+        or args.max_segment_duration
+    ):
+        raise tjm_v11.ValidationError(
+            "--timestamps segments requires faster-whisper without word alignment, "
+            "trained-verbatim, filler tagging or max-segment-duration"
+        )
     inputs = [pathlib.Path(path).expanduser() for path in args.inputs]
     for path in inputs:
         if not path.exists():
@@ -1334,7 +1386,11 @@ def run(args: Namespace) -> int:
                 raise tjm_v11.ValidationError(
                     "trained-verbatim returned no recognized words"
                 )
-            if args.max_segment_words > 0 and not _trained_profile(args):
+            if (
+                timestamps == "words"
+                and args.max_segment_words > 0
+                and not _trained_profile(args)
+            ):
                 _emit_progress(args, "resegment", max_words=args.max_segment_words)
                 manifest_segments = resegment_naturally(
                     manifest_segments, args.max_segment_words
@@ -1364,7 +1420,9 @@ def run(args: Namespace) -> int:
     manifest = {
         "version": "1.1",
         "sources": manifest_sources,
-        "segments": _v11_segments(manifest_segments, sample_rates),
+        "segments": _v11_segments(
+            manifest_segments, sample_rates, timestamps=timestamps
+        ),
         "render": {"filler_policy": "keep", "preserve_short_gaps": 0.0},
     }
     if alignment_record is not None:

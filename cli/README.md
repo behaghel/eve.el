@@ -48,6 +48,57 @@ produce a diagnostic rather than fabricated durations. Failed validation leaves
 an existing output untouched; successful manifests are published atomically
 after validation.
 
+### French recordings and standalone transcript export
+
+Use the existing local CLI, without Emacs or a video render:
+
+```bash
+eve transcribe teaching.m4a --language fr --model large-v3 \
+  --timestamps segments --output teaching.tjm.json
+# Review/correct display text in the TJM before publishing.
+eve export-transcript teaching.tjm.json --output teaching.fr.vtt
+eve export-transcript teaching.tjm.json --format text --output teaching.fr.txt
+```
+
+With `--model` omitted, English keeps its effective `medium.en` default;
+non-English languages use multilingual `medium`. Named English-only `.en`
+models are rejected for non-English recognition. French decoding retains word
+timestamps and verbatim decoding controls, but does not inject the English filler
+prompt/hotwords. Explicit `--hotwords` remain supported. This removes an English
+bias; it does not establish transcription or timestamp accuracy. The trained
+verbatim and CTC alignment profiles remain English-only.
+
+`export-transcript` uses **original source time**, including initial silence and
+all gaps, unlike `text-edit --subtitles`, which exports montage time. Select
+`--source clip01` for a multi-source manifest. Corrected display text is accepted;
+media cuts, deletions and drop-filler render policy are rejected. Use an uncut
+transcription for an unchanged recording. Caption grouping stays as recorded in
+TJM. `--timestamps words` remains the implicit default with its existing strict
+word-interval validation. Explicit `--timestamps segments` requests only native
+faster-whisper caption timestamps and literal caption text: TJM segments omit
+`words`, rather than inventing or repairing word timing. Segment bounds still
+must be finite, positive-duration and valid on the original sample clock.
+
+Segment mode does not apply `--max-segment-words`. It rejects word alignment,
+trained-verbatim recognition, filler tagging, `--max-segment-duration` and other
+backends instead of silently falling back. This is suitable for paragraph-level
+web playback, not word highlighting or word-level media editing. Use word mode
+for those workflows; an invalid word timestamp remains a hard failure there.
+
+The exporter only reads TJM: no ASR model, media file, FFmpeg, Emacs or network
+is needed. WebVTT escapes literal markup; text output is useful for review and
+summary drafting. Outputs are atomic and cannot replace the manifest or original
+media. This CLI export does not change the TJM format or rendered subtitle rules.
+It validates the complete input before writing, refuses overlapping source
+captions or missing text, and never substitutes segment IDs as public text.
+WebVTT rounds source ticks once to nearest milliseconds (ties to even); collapsed
+cues fail rather than having their duration stretched. Plain text preserves
+literal characters, with blank lines separating captions.
+For offline recognition with a previously cached or explicit local model, set
+`HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`. Model download remains a separate
+preparation step; the exporter never downloads anything. Do not treat automatic
+text as approved editorial content.
+
 ### Experimental trained-verbatim recognition
 
 For an already prepared **local CTranslate2 model** and the existing

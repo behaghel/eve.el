@@ -7,7 +7,15 @@ import sys
 from collections.abc import Sequence
 
 from eve_cli import __version__, subtitles, tjm_v11
-from eve_cli.commands import batch, denoise, doctor, text_edit, transcribe, trim_fillers
+from eve_cli.commands import (
+    batch,
+    denoise,
+    doctor,
+    export_transcript,
+    text_edit,
+    transcribe,
+    trim_fillers,
+)
 
 tag_fillers = importlib.import_module("eve_cli.commands.tag_fillers")
 
@@ -26,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
     doctor.register(subparsers)
     transcribe.register(subparsers)
+    export_transcript.register(subparsers)
     text_edit.register(subparsers)
     tag_fillers.register(subparsers)
     trim_fillers.register(subparsers)
