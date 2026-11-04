@@ -18,6 +18,6 @@ def test_doctor_json_reports_expected_paths() -> None:
     assert exit_code == 0
     assert payload["ok"] is True
     assert payload["command"] == "doctor"
-    assert payload["project_root"].endswith("eve.el")
+    assert Path(payload["project_root"]) == Path(__file__).resolve().parents[2]
     assert Path(payload["package_entrypoint"]).name == "eve.el"
     assert payload["package_entrypoint_present"] is True

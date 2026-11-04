@@ -772,7 +772,7 @@ def test_transcribe_parser_matches_legacy_defaults() -> None:
     assert args.command == "transcribe"
     assert args.inputs == ["input.mp4"]
     assert args.output == "manifest.json"
-    assert args.model == "medium.en"
+    assert args.model is None  # Resolved to medium.en at execution for English.
     assert args.language == "en"
     assert args.beam_size == 5
     assert args.device == "auto"
