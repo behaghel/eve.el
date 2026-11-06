@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "round": "2026-11",
+  "status": "paused_all_B2_B3_unqualified",
+  "data_status": "Previously inspected development data; post-output human reference revisions, not fresh or investigator-blind validation.",
+  "corpus_id": "eve-verbatim-development-v1",
+  "model_configurations": {
+    "baseline": {
+      "model": "Systran/faster-whisper-medium.en",
+      "revision": "a29b04bd15381511a9af671baec01072039215e3",
+      "versions": {
+        "faster-whisper": "1.2.1",
+        "ctranslate2": "4.7.1"
+      },
+      "effective_calls": [
+        {
+          "kwargs": {
+            "beam_size": 5,
+            "language": "en",
+            "vad_filter": true,
+            "word_timestamps": true,
+            "hotwords": "um uh ah hmm like you know I mean",
+            "initial_prompt": "um, uh, ah, hmm... I, I mean, like, you know, so, uh, we were, um, talking and then-- and then I...",
+            "condition_on_previous_text": false,
+            "temperature": 0.0
+          },
+          "compute_type": "int8_float32",
+          "extracted_pcm_matches_frozen_audio": true
+        }
+      ]
+    },
+    "turbo_ami": {
+      "model": "JacobLinCool/whisper-large-v3-turbo-verbatim-1",
+      "revision": "c7430ca44055c70c9a13d6bcfcdf62baa3cb2902",
+      "original_weights_sha256": "ad88d481ecb23aefe3adaeb491fdc2bea7852f80c673e5f69c18d9ab3ce62a01",
+      "versions": {
+        "faster-whisper": "1.2.1",
+        "ctranslate2": "4.7.1"
+      },
+      "effective_calls": [
+        {
+          "kwargs": {
+            "beam_size": 5,
+            "language": "en",
+            "vad_filter": true,
+            "word_timestamps": true,
+            "condition_on_previous_text": false,
+            "temperature": 0.0
+          },
+          "compute_type": "int8_float32",
+          "extracted_pcm_matches_frozen_audio": true
+        }
+      ]
+    },
+    "full_ami": {
+      "candidate": {
+        "repo": "JacobLinCool/whisper-large-v3-verbatim-1",
+        "revision": "d0d3847e4b8200ca89644516022dbeabc31bb6f6",
+        "weights_sha256": "c884356c55722566415fc493e5193f70a9ced6f4d03e3db278998730592a897e",
+        "weights_bytes": 3087132232
+      },
+      "profile": {
+        "device": "cpu",
+        "compute_type": "int8",
+        "beam_size": 5,
+        "language": "en",
+        "vad_filter": true,
+        "word_timestamps": true,
+        "condition_on_previous_text": false,
+        "temperature": 0.0,
+        "initial_prompt": "omit",
+        "hotwords": "omit; no independent custom vocabulary supplied"
+      },
+      "versions": {
+        "faster-whisper": "1.2.1",
+        "ctranslate2": "4.7.1"
+      }
+    },
+    "reverb_research_v1": {
+      "model": "Revai/reverb-asr",
+      "revision": "fc269766a3ea15d72e513a897d30397d77f325f7",
+      "vendor_revision": "8cd4099828d68e464a9536ccb6a380ddad07c982",
+      "checkpoint": {
+        "bytes": 2214567053,
+        "etag": "537327518e7c31a07a1a4a3b052a3a2d9b488257c16c06509085209db456b86c"
+      },
+      "settings": {
+        "modes": [
+          "attention_rescoring"
+        ],
+        "format": "txt",
+        "verbatimicity": 1.0,
+        "chunk_size": 2051,
+        "batch_size": 1,
+        "beam_size": 10,
+        "decoding_chunk_size": -1,
+        "num_decoding_left_chunks": -1,
+        "ctc_weight": 0.1,
+        "simulate_streaming": false,
+        "reverse_weight": 0.0,
+        "blank_penalty": 0.0,
+        "length_penalty": 0.0,
+        "timings_adjustment": 230
+      },
+      "runtime": {
+        "torch": "2.6.0",
+        "torchaudio": "2.6.0",
+        "numpy": "1.26.4",
+        "typeguard": "2.13.3",
+        "device": "cpu",
+        "dtype": "float32"
+      },
+      "runtime_limit": "Unmodified vendor source, different runtime from upstream 2.2.2; not a reproduction of upstream published benchmarks."
+    }
+  },
+  "three_excerpt_comparison": {
+    "case_ids": [
+      "01-mental-health",
+      "02-speed",
+      "03-walking-oscar"
+    ],
+    "seconds": 95.5,
+    "reference": "references/conversations-v2.json",
+    "raw_reference_words": 280,
+    "reference_fillers": 20,
+    "aggregate": {
+      "baseline": {
+        "primary_word_stream": {
+          "errors": 29,
+          "true_fillers": 12,
+          "false_fillers": 0,
+          "missed_fillers": 8,
+          "reference_fillers": 20,
+          "comparison_reference_words": 280,
+          "wer_percent": 10.357142857142858,
+          "uncertainty_error_range": [
+            27,
+            31
+          ]
+        },
+        "raw_sdk_segment_text": {
+          "errors": 29,
+          "true_fillers": 12,
+          "false_fillers": 0,
+          "missed_fillers": 8,
+          "reference_fillers": 20,
+          "comparison_reference_words": 280,
+          "wer_percent": 10.357142857142858,
+          "uncertainty_error_range": [
+            27,
+            31
+          ]
+        },
+        "format_diagnostic": {
+          "errors": 22,
+          "true_fillers": 12,
+          "false_fillers": 0,
+          "missed_fillers": 8,
+          "reference_fillers": 20,
+          "comparison_reference_words": 288,
+          "wer_percent": 7.638888888888889,
+          "uncertainty_error_range": [
+            21,
+            23
+          ]
+        }
+      },
+      "candidate": {
+        "primary_word_stream": {
+          "errors": 42,
+          "true_fillers": 18,
+          "false_fillers": 0,
+          "missed_fillers": 2,
+          "reference_fillers": 20,
+          "comparison_reference_words": 280,
+          "wer_percent": 15.0,
+          "uncertainty_error_range": [
+            39,
+            42
+          ]
+        },
+        "raw_sdk_segment_text": {
+          "errors": 32,
+          "true_fillers": 18,
+          "false_fillers": 0,
+          "missed_fillers": 2,
+          "reference_fillers": 20,
+          "comparison_reference_words": 280,
+          "wer_percent": 11.428571428571429,
+          "uncertainty_error_range": [
+            30,
+            33
+          ]
+        },
+        "format_diagnostic": {
+          "errors": 23,
+          "true_fillers": 18,
+          "false_fillers": 0,
+          "missed_fillers": 2,
+          "reference_fillers": 20,
+          "comparison_reference_words": 288,
+          "wer_percent": 7.986111111111111,
+          "uncertainty_error_range": [
+            21,
+            23
+          ]
+        }
+      },
+      "full_size_ami": {
+        "primary_word_stream": {
+          "errors": 121,
+          "true_fillers": 17,
+          "false_fillers": 4,
+          "missed_fillers": 3,
+          "reference_fillers": 20,
+          "comparison_reference_words": 280,
+          "wer_percent": 43.214285714285715,
+          "uncertainty_error_range": [
+            118,
+            121
+          ]
+        },
+        "raw_sdk_segment_text": {
+          "errors": 110,
+          "true_fillers": 17,
+          "false_fillers": 4,
+          "missed_fillers": 3,
+          "reference_fillers": 20,
+          "comparison_reference_words": 280,
+          "wer_percent": 39.285714285714285,
+          "uncertainty_error_range": [
+            108,
+            111
+          ]
+        },
+        "format_diagnostic": {
+          "errors": 102,
+          "true_fillers": 17,
+          "false_fillers": 4,
+          "missed_fillers": 3,
+          "reference_fillers": 20,
+          "comparison_reference_words": 288,
+          "wer_percent": 35.416666666666664,
+          "uncertainty_error_range": [
+            100,
+            102
+          ]
+        }
+      }
+    },
+    "field_warning": "Historical false_fillers fields mean unmatched against the reference; the four full-AMI unmatched fillers are NOT four independently audio-confirmed unspoken fillers.",
+    "format_diagnostic": "references/format-equivalence-v1.json",
+    "format_diagnostic_reference_words": 288,
+    "diagnostic_limit": "Diagnostic policy introduced after inspecting earlier baseline/Turbo outputs, before full-AMI inference. Not independent validation.",
+    "decision": "Retain baseline; Turbo filler recall improved without clear overall upgrade. Full-AMI configuration stopped after severe repetition loop; no tail trimming or retries."
+  },
+  "legacy_reverb_screen": {
+    "case_id": "04-legacy-11yo",
+    "reference": "references/legacy.json",
+    "seconds": 30,
+    "aggregate": {
+      "reverb_research_v1_official_text": {
+        "reference_count": 84,
+        "prediction_count": 81,
+        "errors": 7,
+        "wer_percent": 8.333333333333334,
+        "edit_counts": {
+          "match": 77,
+          "substitute": 4,
+          "delete": 3,
+          "insert": 0
+        },
+        "fillers": {
+          "true_positive": 4,
+          "false_negative": 1,
+          "false_positive": 1
+        },
+        "filler_recall_percent": 80.0,
+        "filler_precision_percent": 80.0
+      },
+      "saved_medium_en_context_word_stream": {
+        "reference_count": 84,
+        "prediction_count": 83,
+        "errors": 6,
+        "wer_percent": 7.142857142857143,
+        "edit_counts": {
+          "match": 80,
+          "substitute": 1,
+          "delete": 3,
+          "insert": 2
+        },
+        "fillers": {
+          "true_positive": 2,
+          "false_negative": 3,
+          "false_positive": 1
+        },
+        "filler_recall_percent": 40.0,
+        "filler_precision_percent": 66.66666666666667
+      },
+      "saved_turbo_ami_raw_segment_text": {
+        "reference_count": 84,
+        "prediction_count": 86,
+        "errors": 6,
+        "wer_percent": 7.142857142857143,
+        "edit_counts": {
+          "match": 80,
+          "substitute": 4,
+          "delete": 0,
+          "insert": 2
+        },
+        "fillers": {
+          "true_positive": 5,
+          "false_negative": 0,
+          "false_positive": 1
+        },
+        "filler_recall_percent": 100.0,
+        "filler_precision_percent": 83.33333333333333
+      },
+      "saved_turbo_ami_word_stream_diagnostic": {
+        "reference_count": 84,
+        "prediction_count": 90,
+        "errors": 14,
+        "wer_percent": 16.666666666666668,
+        "edit_counts": {
+          "match": 76,
+          "substitute": 8,
+          "delete": 0,
+          "insert": 6
+        },
+        "fillers": {
+          "true_positive": 5,
+          "false_negative": 0,
+          "false_positive": 1
+        },
+        "filler_recall_percent": 100.0,
+        "filler_precision_percent": 83.33333333333333
+      }
+    },
+    "control_limit": "Same byte-identical audio and frozen scoring, but historical controls received filler hints/project vocabulary and use different architectures/decoding. Not a matched-settings causal comparison. Medium raw segment text was not retained. Turbo word-token fragmentation remains separately visible.",
+    "new_asr_requests": 1,
+    "native_decode_chunks": 2,
+    "retries": 0,
+    "new_comparator_requests": 0,
+    "decision": "Human accepted completed negative screen; stop this frozen Reverb configuration. No general ranking or operational qualification."
+  },
+  "phone_assessor_screen": {
+    "model": "facebook/wav2vec2-lv-60-espeak-cv-ft",
+    "revision": "ae45363bf3413b374fecd9dc8bc1df0e24c3b7f4",
+    "scope": "Independent phone evidence plus exact immediate context/empty-gap rules; cached recorded development pilot, not ASR corpus-wide accuracy.",
+    "clear_negative_hits": 0,
+    "run_negative_cases": 2,
+    "not_run_negative_cases": 18,
+    "full_negative_roster": 20,
+    "required_hits": 19,
+    "same_version_maximum_possible_hits": 18,
+    "full_screen_status": "INCOMPLETE",
+    "distinct_genuine_occurrences": 22,
+    "distinct_with_any_compatible_outcome": 1,
+    "distinct_abstain_only": 21,
+    "observed_false_accusations": 0,
+    "decision": "Human closed frozen baseline for qualification. Mostly abstention and zero observed false accusations do not establish safety."
+  },
+  "boundary_audit": {
+    "matched_boundaries": 46,
+    "CTC_within_80ms": 41,
+    "MFA_within_80ms": 40,
+    "required_for_95_percent": 44,
+    "decision": "Neither qualified. Conditional/partial matched-word measurements are not full-sequence qualification; Qwen/Crisper had different study scopes."
+  },
+  "not_redistributed": "Raw third-party predictions, logits and model-generated word timings are omitted pending output-redistribution review; only aggregates/configurations are exported. Historical edit traces cannot be recomputed from these aggregate records alone. Future models can be evaluated on the tracked corpus without hidden assets.",
+  "export_operation": "Existing aggregates/configurations copied; no ASR, regrading, reference edits or new experiments.",
+  "omitted_machine_locator_fields": [],
+  "new_execution_authorization": false,
+  "qualification": {
+    "B2": false,
+    "B3": false
+  },
+  "corpus_manifest_sha256": "addbe72e2d91fa126f3ee2ddc1e7981b05e185fa0ad4bd3c814170f13bc8d004"
+}

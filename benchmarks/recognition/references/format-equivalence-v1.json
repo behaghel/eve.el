@@ -1,0 +1,116 @@
+{
+  "status": "diagnostic policy declared before computing this audit, after prior outputs already inspected; not a new independent benchmark",
+  "input_reference_sha256": "aa26d114b888f8bc36d68c0617be018fbdec4f780bd097fd0b802a49a9bcbb77",
+  "retain_original_raw_scores": true,
+  "rules": {
+    "case_and_edge_punctuation": {
+      "casefold": true,
+      "strip_edge_characters": ".,!?;:\"'\u201c\u201d\u2018\u2019\u2026",
+      "ignore_punctuation_only_tokens": true,
+      "number_aliases": false,
+      "number_spelling_and_other_tokenization": "Retained in raw WER and discussed separately; no reference/model word merging or repairs."
+    },
+    "typographic_apostrophe": "normalize to ASCII apostrophe",
+    "unambiguous_contractions": {
+      "i'm": [
+        "i",
+        "am"
+      ],
+      "you're": [
+        "you",
+        "are"
+      ],
+      "we're": [
+        "we",
+        "are"
+      ],
+      "they're": [
+        "they",
+        "are"
+      ],
+      "i've": [
+        "i",
+        "have"
+      ],
+      "you've": [
+        "you",
+        "have"
+      ],
+      "we've": [
+        "we",
+        "have"
+      ],
+      "they've": [
+        "they",
+        "have"
+      ],
+      "don't": [
+        "do",
+        "not"
+      ],
+      "doesn't": [
+        "does",
+        "not"
+      ],
+      "didn't": [
+        "did",
+        "not"
+      ],
+      "haven't": [
+        "have",
+        "not"
+      ],
+      "hasn't": [
+        "has",
+        "not"
+      ],
+      "hadn't": [
+        "had",
+        "not"
+      ],
+      "can't": [
+        "can",
+        "not"
+      ],
+      "cannot": [
+        "can",
+        "not"
+      ],
+      "won't": [
+        "will",
+        "not"
+      ],
+      "isn't": [
+        "is",
+        "not"
+      ],
+      "aren't": [
+        "are",
+        "not"
+      ],
+      "wasn't": [
+        "was",
+        "not"
+      ],
+      "weren't": [
+        "were",
+        "not"
+      ],
+      "let's": [
+        "let",
+        "us"
+      ]
+    },
+    "numbers": "Standalone digits for nonnegative cardinal integers 0..999 -> num2words English cardinal. Split generated number hyphens; recognize tens-unit hyphens. No date/year/decimal/ordinal interpretation. Unsupported forms unchanged.",
+    "no_other_repairs": [
+      "no filler deletion",
+      "no repetition collapse",
+      "no name/spelling/grammar correction",
+      "no stitching SDK word fragments",
+      "no authoritative word timing changes"
+    ]
+  },
+  "representations": "Use untouched SDK segment text for content diagnosis; primary word stream retained separately as interface audit.",
+  "uncertainty": "Retain all 16 existing alternatives and report ranges. New off-target human capture differences are flagged, not silently applied.",
+  "scope": "Existing six outputs only. No inference, reference rewrite, default change, integration or qualification."
+}

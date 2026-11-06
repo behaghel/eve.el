@@ -1,0 +1,29 @@
+HUMAN SPOT-CHECK — LISTEN BEFORE OPENING THE MODEL COMPARISON
+
+Both recognizers disagree with a small part of the first capture at these spots.
+Agreement is not proof: both are Whisper-family models and may share mistakes.
+Please write the words you hear; keep the original if it was right, or mark uncertainty.
+These are listening snippets only. No original references/scores have been replaced.
+
+A — ../audio/review-A.wav
+WHAT I HEAR: Hey team. I am to-
+UNCERTAIN / NOTE: at the end, the full word is "told" but we only hear the beginning "to-" before it ends
+
+B — ../audio/review-B.wav
+WHAT I HEAR: The first one is uh our promotion for this cycle
+UNCERTAIN / NOTE: the very first sound is unrecognized, it is a sort of sharp hissing, maybe the end of the word "first". The last sound is also interrupted but is likely the beginning of the word "and".
+
+C — ../audio/review-C.wav
+WHAT I HEAR: the 78 for Engineering. Um...
+UNCERTAIN / NOTE: the first sound that I captured as "the" in what I hear is unlikely to be right but that's definitely what I hear on this recording.
+
+D — ../audio/review-D.wav
+WHAT I HEAR: The the trend is also going strong uh uh... I think li-
+UNCERTAIN / NOTE: I can't tell what is the last word but I am assuming the beginning of the word "like".
+
+E — ../audio/review-E.wav
+WHAT I HEAR: there is a cheerfulness in Brazil that means is the more Brazilian you
+UNCERTAIN / NOTE:
+
+
+This review is separate from the confirmed uh correction already applied as revision 1.

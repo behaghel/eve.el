@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "id": "eve-verbatim-development-v1",
+  "status": "inspected_development_not_fresh_validation",
+  "scope": "Four original recording excerpts plus two separately identified native phone-pilot audio derivatives. Preserve waveform bytes, source offsets and annotation versions.",
+  "cases": [
+    {
+      "id": "01-mental-health",
+      "audio": "audio/01-mental-health.wav",
+      "sample_rate": 16000,
+      "frames": 480000,
+      "original_media": {
+        "name": "hubert-may26-mental-health-month.mp4",
+        "sha256": "96e0d25ad270d6b820947db42d03b5c6db6c504a49f67ba81a300a86200b5207",
+        "window_seconds": [
+          0,
+          30
+        ],
+        "full_video_included": false
+      },
+      "reference": "references/conversations-v2.json",
+      "reference_case_id": "01-mental-health",
+      "scoring_profile": "conversations-literal-v2"
+    },
+    {
+      "id": "02-speed",
+      "audio": "audio/02-speed.wav",
+      "sample_rate": 16000,
+      "frames": 544000,
+      "original_media": {
+        "name": "S01E12-1ncr34se-Ur-sp33d.mp4",
+        "sha256": "71f3543a1d3e1c7315736c10804ce297f8c5db1bac9dbba5b7cf63401dcc5293",
+        "window_seconds": [
+          6,
+          40
+        ],
+        "full_video_included": false
+      },
+      "reference": "references/conversations-v2.json",
+      "reference_case_id": "02-speed",
+      "scoring_profile": "conversations-literal-v2"
+    },
+    {
+      "id": "03-walking-oscar",
+      "audio": "audio/03-walking-oscar.wav",
+      "sample_rate": 16000,
+      "frames": 504000,
+      "original_media": {
+        "name": "S04E01 - Walking Oscar.mp4",
+        "sha256": "b826e2dd07c126250af2aea171b1c9681d20a4424cbcf31222f9303715831f4b",
+        "window_seconds": [
+          50.5,
+          82
+        ],
+        "full_video_included": false
+      },
+      "reference": "references/conversations-v2.json",
+      "reference_case_id": "03-walking-oscar",
+      "scoring_profile": "conversations-literal-v2"
+    },
+    {
+      "id": "04-legacy-11yo",
+      "audio": "audio/04-legacy-11yo.wav",
+      "sample_rate": 16000,
+      "frames": 480000,
+      "original_media": {
+        "name": "11yo.mp4",
+        "sha256": "d7ac75af2d119a8f3e65273a93814e5123c1f31cc7e4a8540a2dfd02b8cf4985",
+        "window_seconds": [
+          0,
+          30
+        ],
+        "full_video_included": false
+      },
+      "reference": "references/legacy.json",
+      "reference_case_id": null,
+      "scoring_profile": "legacy-literal-v1",
+      "historical_presence_source": {
+        "original_full_wav_sha256": "cc87fee699f96cf2094fc9313183fe7416bacf1d5faac144190d0bdbfd184f11",
+        "selected_frames": [
+          0,
+          480000
+        ],
+        "note": "Historical presence catalogue hashed an unbundled full decode, not this 30s WAV. Do not equate container hashes. Two original phone-pilot excerpts are included separately; no old phone inference is replayed or relabelled."
+      }
+    }
+  ],
+  "auxiliary_audio": [
+    {
+      "audio": "audio/legacy-phoneme-0-9.2.wav",
+      "source_case_id": "04-legacy-11yo",
+      "source_window_seconds": [
+        0,
+        9.2
+      ]
+    },
+    {
+      "audio": "audio/legacy-phoneme-9.2-18.4.wav",
+      "source_case_id": "04-legacy-11yo",
+      "source_window_seconds": [
+        9.2,
+        18.4
+      ]
+    }
+  ],
+  "presence_ledger": "references/presence-ledger.json",
+  "presence_labels": "references/presence-labels.json",
+  "expected_counts": {
+    "main_cases": 4,
+    "main_audio_seconds": 125.5,
+    "reference_slots": 364,
+    "eligible_occurrences": 343,
+    "eligible_fillers": 25,
+    "quarantined_occurrences": 21,
+    "clear_negative_cases": 20
+  },
+  "assets": {
+    "audio/01-mental-health.wav": {
+      "bytes": 960044,
+      "sha256": "76cf5aa2c021f3bebb2ace69cddc32436955aac8cc89703fd9cc3373e4affa53",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 480000
+      }
+    },
+    "audio/02-speed.wav": {
+      "bytes": 1088044,
+      "sha256": "04fdab6daaf140e673b115d7264b6ec57e2a6dff727b981cc9b2890bfeda0c1e",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 544000
+      }
+    },
+    "audio/03-walking-oscar.wav": {
+      "bytes": 1008044,
+      "sha256": "e0880f6139fd44f77c21088d3f5a1ea72b5a906c4da5dbb6a4ef0ae52eefa88d",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 504000
+      }
+    },
+    "audio/04-legacy-11yo.wav": {
+      "bytes": 960044,
+      "sha256": "98229c2eecdbe93d14435512314dfb001ea2f2b8bb6dfd0b61e653440e8e88ad",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 480000
+      }
+    },
+    "audio/legacy-phoneme-0-9.2.wav": {
+      "bytes": 294444,
+      "sha256": "6fc73cbbb8adc7ce87323129050f9b5a344b50f18c6c2d944c588104b4bec3c2",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 147200
+      }
+    },
+    "audio/legacy-phoneme-9.2-18.4.wav": {
+      "bytes": 294444,
+      "sha256": "0f14afb6efacc61f1dce6bfb5b4ab7c747fbaf0a190dea29f56641e4747266bf",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 147200
+      }
+    },
+    "audio/review-A.wav": {
+      "bytes": 72364,
+      "sha256": "ec18f0932889b905ea613b1b3ffa5866fc0063daa51125a40bbc2c0f97eab948",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 36160
+      }
+    },
+    "audio/review-B.wav": {
+      "bytes": 110764,
+      "sha256": "42204ccf154e218ac9c1c3e39d46b911ff4eef09ad7f2f2590bdfde18f939e22",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 55360
+      }
+    },
+    "audio/review-C.wav": {
+      "bytes": 113964,
+      "sha256": "da220223373f60fd842a9aa98d1a2578d25bb856756f1b15784ae91e74b39d74",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 56960
+      }
+    },
+    "audio/review-D-wider.wav": {
+      "bytes": 256044,
+      "sha256": "6434e0f90c8ac8b9b82f381bac8dd5c3ab605d31a8e51c403ddc2c2f13b8e008",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 128000
+      }
+    },
+    "audio/review-D.wav": {
+      "bytes": 113964,
+      "sha256": "ec1d536a8ab6c83ba7ecb6752ce1abd60d099e28d03e78b0194f76de778cfd53",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 56960
+      }
+    },
+    "audio/review-E-wider.wav": {
+      "bytes": 256044,
+      "sha256": "8bf37d3f26530971c3f9d778e8ed9a38821693b7c95f817cbca33ba5103400de",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 128000
+      }
+    },
+    "audio/review-E.wav": {
+      "bytes": 110764,
+      "sha256": "94349e4aa4a5d8765efa4fa606c1ea17088d5cabbbf42071f9d96bb29817242f",
+      "wave": {
+        "channels": 1,
+        "sample_width": 2,
+        "sample_rate": 16000,
+        "frames": 55360
+      }
+    },
+    "provenance.json": {
+      "bytes": 7587,
+      "sha256": "c82dc220e5fa5b71a9a7e21e02c5a9d629e5c17cf3c0e09cfe1c9577b80b7766"
+    },
+    "references/adjudication-first.txt": {
+      "bytes": 1508,
+      "sha256": "c78094bae87b2bb8c36753ed2977c9d5e9c239f1606b94f80749d53493ccb80b"
+    },
+    "references/adjudication-wider.txt": {
+      "bytes": 1161,
+      "sha256": "94187d5521aac00c406b341a9cd9f770087dda7d4c4262a04632df659f4c4ca8"
+    },
+    "references/conversations-v0.json": {
+      "bytes": 10118,
+      "sha256": "c574b59c57c78743ee2a55b2cb661016ff34d56029aea603dc5330ef63f26395"
+    },
+    "references/conversations-v1.json": {
+      "bytes": 10744,
+      "sha256": "340987491f5423c4f5932d21c872bd743211fb0b38585c98ff98936cf61f6f1c"
+    },
+    "references/conversations-v2.json": {
+      "bytes": 11972,
+      "sha256": "aa26d114b888f8bc36d68c0617be018fbdec4f780bd097fd0b802a49a9bcbb77"
+    },
+    "references/format-equivalence-v1.json": {
+      "bytes": 2857,
+      "sha256": "e7ba1b00be23569245134186f21b445f9e5a5ec84dc0d0ed4eb15e440dc84eb1"
+    },
+    "references/legacy-labels.tsv": {
+      "bytes": 44,
+      "sha256": "164a0242b27161fd714a41427ceaee6cb1f0d7493fb7ea8b943210b18b7c70b9"
+    },
+    "references/legacy.json": {
+      "bytes": 7640,
+      "sha256": "5e8dbe91c2c37caf5b27f99db385db587ed73c5f5862ec28bd87ec9f35f315ad"
+    },
+    "references/presence-labels.json": {
+      "bytes": 24635,
+      "sha256": "f8a91d106fb45dc53de67c8634e990edd06ab0d12f1ae913b72e74a200916721"
+    },
+    "references/presence-ledger.json": {
+      "bytes": 201094,
+      "sha256": "5d1f0da3b790e0978b8bb0bc0095d80d1d3fe629987b9c60da9b03d07546fb4c"
+    },
+    "scoring-policy.json": {
+      "bytes": 1790,
+      "sha256": "9cf9a88a0e06eae0290006bdae8e7783b2028e56b891c43b84fde675b8e21402"
+    }
+  },
+  "review_audio": "Additional review WAVs are preserved verbatim for human annotation audit; their durations are excluded from the 125.5s main benchmark denominator."
+}
