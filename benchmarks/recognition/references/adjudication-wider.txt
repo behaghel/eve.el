@@ -1,0 +1,18 @@
+WIDER CONTEXT REVIEW — TWO PENDING PHRASES
+
+Please listen and write the words actually audible, including weak words,
+repetitions and hesitations. Mark uncertain sounds rather than choosing the
+grammatically correct form. No need to guess incomplete edge words.
+Neither model will be rerun and no earlier reference will be overwritten.
+
+D — ../audio/review-D-wider.wav
+Please capture the phrase from Product side through the trend/strong section.
+WHAT I HEAR: [hmm uh] on the product side, and uh the trend is also going strong uh uh... I think last time we got 74, now we're at 78
+UNCERTAIN / NOTE: the beginning, I marked [hmm uh] but I can't really tell what's being spoken, it seems to be the end of a word.
+
+E — ../audio/review-E-wider.wav
+Please capture the phrase from Brazil through means/more/Brazilian(s).
+WHAT I HEAR: in Brazil. Uh 'cause there is a cheerfulness in Brazil that uh means the more Brazilian you have in your team, the higher the engagement s-
+UNCERTAIN / NOTE: last sound is the beginning of a new word that starts with the sound S or Z
+
+If you cannot distinguish a sound, explicitly leave it uncertain; that is a valid outcome.
