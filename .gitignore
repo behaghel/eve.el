@@ -3,6 +3,7 @@
 .devenv/
 .devenv.flake.nix
 .direnv/
+/.worktrees/
 .elpa/
 .pytest_cache/
 .ruff_cache/

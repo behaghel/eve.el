@@ -1,5 +1,15 @@
 # Project Agent Instructions
 
+## Managed agent sessions
+
+- Before repository edits, load the `agent-session` skill.
+- Managed worktrees are required after this setup is integrated. Read-only
+  inspection needs no allocation. If the skill or verified launcher is
+  unavailable, stop and ask.
+- Keep changes on the session's recorded branch or a task branch created through
+  `agent-session`. Preserve existing worktrees and branches; do not adopt or
+  retire them implicitly.
+
 ## TJM specification is authoritative
 
 - Treat `docs/tjm-spec.md` as the normative contract for TJM behavior.

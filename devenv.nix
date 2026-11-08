@@ -1,5 +1,7 @@
 { pkgs, config, inputs, ... }:
 {
+  agentSession.enable = true;
+
   git-hooks = {
     enable = true;
     hooks.eve-fast-checks = {

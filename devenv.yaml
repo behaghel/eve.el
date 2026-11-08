@@ -4,3 +4,8 @@ inputs:
     url: github:cachix/git-hooks.nix
   nixpkgs:
     url: github:cachix/devenv-nixpkgs/rolling
+  nixos-config:
+    url: github:behaghel/nixos-config/eefbfa2cd2e6f6431cb576139e9d8346993a8c5e
+    flake: false
+imports:
+  - nixos-config/modules/flake/agent-session

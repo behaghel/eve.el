@@ -44,6 +44,31 @@ devenv shell -- docs
 
 Use `devenv shell -- test-all` for the combined test suite. The old `devenv shell -- test` command is stale and should not be used.
 
+## Agent workspaces
+
+Agent edits use the `agent-session` skill and managed worktrees. The devenv
+module is pinned in `devenv.yaml` and `devenv.lock`; it supplies the launcher,
+shell integration and completions. Pi itself and its skills remain native
+client resources, not generated project configuration.
+
+After integrating this setup, start from a clean primary checkout on `main`:
+
+```bash
+devenv shell
+agent-session audio-render create --json
+agent-session audio-render run test-all
+```
+
+`create` prepares a workspace without launching another agent. The default
+launcher for human `start`/`launch` commands is `pi`. Use the unambiguous
+`agent-session` executable in scripts: without shell integration, `as` may
+resolve to the system assembler. For Bash/Zsh, load
+`$AGENT_SESSION_SHELL_ROOT/init.sh` when needed; Fish uses `init.fish`.
+
+Existing plain Git worktrees are not automatically managed or migrated. Do not
+copy credentials or runtime state into sessions. Setup does not authorize any
+worktree retirement; review and explicit approval are required separately.
+
 ## Optional context-panel integration tests
 
 Context panels remain optional at runtime. For full integration coverage, use
