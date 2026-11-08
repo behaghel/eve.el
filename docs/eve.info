@@ -20,7 +20,7 @@ Eve Manual
 * Editing::                      Navigation, deletion, splitting, merging, and metadata.
 * Filler Words::                 Non-destructive tagging and deletion of filler words.
 * B-Roll::                       Attaching and managing supplementary video footage.
-* Compilation and Rendering::    Turning the manifest into a video file.
+* Compilation and Rendering::    Turning the manifest into an audio or video file.
 * Playback::                     Live preview of source and rendered video.
 * Display::                      Timestamp ruler, hidden segments, and word-level view.
 * Key Bindings::                 Complete keybinding reference.
@@ -109,7 +109,8 @@ JSON templates
 
 Compilation and Rendering
 
-* Two modes draft and final::
+* Audio-only compilation::
+* Two video modes draft and final::
 * Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
@@ -1271,7 +1272,8 @@ File: eve.info,  Node: Compilation and Rendering,  Next: Playback,  Prev: B-Roll
 
 * Menu:
 
-* Two modes draft and final::
+* Audio-only compilation::
+* Two video modes draft and final::
 * Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
@@ -1282,10 +1284,46 @@ File: eve.info,  Node: Compilation and Rendering,  Next: Playback,  Prev: B-Roll
 * CLI reference::
 
 
-File: eve.info,  Node: Two modes draft and final,  Next: Burned-in captions,  Up: Compilation and Rendering
+File: eve.info,  Node: Audio-only compilation,  Next: Two video modes draft and final,  Up: Compilation and Rendering
 
-8.1 Two modes: draft and final
-==============================
+8.1 Audio-only compilation
+==========================
+
+For an audio TJM, select M4A in its buffer with ‘M-: (setq-local
+eve-compile-output-format "m4a") RET’, then use ‘C-c C-c’ normally.  The
+output is ‘<directory-name>.m4a’ with a matching ‘.vtt’ beside it.
+Marker sections use the same selected container.  Return to ‘"mp4"’ for
+video; MP4 remains the default, so existing video sessions are
+unchanged.
+
+   M4A contains AAC audio at 192 kbit/s, encoded once after lossless
+assembly.  WAV/PCM files are temporary intermediates, not an export
+choice.  The original audio, recognized words, display corrections and
+source ticks are not rewritten.  Deleted words/segments and the filler
+policy affect the audio and subtitle clock together.  Preserved gaps
+contain the actual source audio.  Contiguous source coverage stays
+continuous across caption boundaries; actual cut edges use tiny 10 ms
+fades (shorter for very short pieces) to avoid clicks.
+
+   Audio rendering requires TJM v1.1, valid native-sample boundaries and
+matching sample rates/channel counts across used sources.  It does not
+silently resample or invent timings.  Active b-roll and burned-in
+captions are rejected; disable burning with ‘M-x
+eve-disable-subtitle-burning’.  WebVTT is a separate file, not an
+embedded track, and must be used with the corresponding rendered audio.
+
+   Audio renders are uncached and serial.  Speculative video cache
+warming is skipped automatically for audio buffers.  Video quality,
+codec, scale and worker settings do not change AAC output.  CLI partial
+renders and segment-cache warming are not supported for audio.
+Temporary lossless audio requires more disk space than the compressed
+source.
+
+
+File: eve.info,  Node: Two video modes draft and final,  Next: Burned-in captions,  Prev: Audio-only compilation,  Up: Compilation and Rendering
+
+8.2 Two video modes: draft and final
+====================================
 
 ‘C-c C-c’ (‘eve-compile’) compiles the manifest at draft quality — fast
 enough to catch mistakes before committing to a full export.
@@ -1297,9 +1335,9 @@ delivery.
 ‘eve-compile-quality’.
 
 
-File: eve.info,  Node: Burned-in captions,  Next: Under the hood,  Prev: Two modes draft and final,  Up: Compilation and Rendering
+File: eve.info,  Node: Burned-in captions,  Next: Under the hood,  Prev: Two video modes draft and final,  Up: Compilation and Rendering
 
-8.2 Burned-in captions
+8.3 Burned-in captions
 ======================
 
 An existing valid v1.1 timeline can be opened and exported directly; no
@@ -1370,10 +1408,11 @@ make a render succeed.
 
 File: eve.info,  Node: Under the hood,  Next: Pre-flight validation,  Prev: Burned-in captions,  Up: Compilation and Rendering
 
-8.3 Under the hood
+8.4 Under the hood
 ==================
 
-Eve's rendering pipeline is designed to be fast after the first run:
+Eve's video rendering pipeline is designed to be fast after the first
+run:
 
    • *Quality profiles* — draft uses MJPEG encoding at ultrafast preset;
      final uses H.264 at medium preset.  The codec and preset are
@@ -1405,7 +1444,7 @@ Eve's rendering pipeline is designed to be fast after the first run:
 
 File: eve.info,  Node: Pre-flight validation,  Next: Dry-run analysis,  Prev: Under the hood,  Up: Compilation and Rendering
 
-8.4 Pre-flight validation
+8.5 Pre-flight validation
 =========================
 
 Before starting a render, eve validates the manifest:
@@ -1424,7 +1463,7 @@ you confirm.  Run validation explicitly with ‘C-c C-v’ (‘eve-validate’).
 
 File: eve.info,  Node: Dry-run analysis,  Next: Checkpoint and resume,  Prev: Pre-flight validation,  Up: Compilation and Rendering
 
-8.5 Dry-run analysis
+8.6 Dry-run analysis
 ====================
 
 Before rendering, eve can report which segments would be re-encoded and
@@ -1439,7 +1478,7 @@ pre-flight confirmation prompt.
 
 File: eve.info,  Node: Checkpoint and resume,  Next: Progressive output,  Prev: Dry-run analysis,  Up: Compilation and Rendering
 
-8.6 Checkpoint and resume
+8.7 Checkpoint and resume
 =========================
 
 If a render is interrupted, eve writes a checkpoint file in
@@ -1452,7 +1491,7 @@ remaining ones are encoded.
 
 File: eve.info,  Node: Progressive output,  Next: Configuration reference,  Prev: Checkpoint and resume,  Up: Compilation and Rendering
 
-8.7 Progressive output
+8.8 Progressive output
 ======================
 
 With ‘--partial-every N’, eve writes a partial ‘<output>.partial.mp4’
@@ -1462,12 +1501,13 @@ each partial file, which Emacs can use to update a live preview.
 
 File: eve.info,  Node: Configuration reference,  Next: CLI reference,  Prev: Progressive output,  Up: Compilation and Rendering
 
-8.8 Configuration reference
+8.9 Configuration reference
 ===========================
 
 Variable                            Default     Description
 ------------------------------------------------------------------------------------------------------------------------
-‘eve-compile-quality’               ‘"draft"’   ‘"draft"’ for fast preview, ‘"final"’ for delivery.
+‘eve-compile-output-format’         ‘"mp4"’     ‘"mp4"’ for video or ‘"m4a"’ for audio; may be buffer-local.
+‘eve-compile-quality’               ‘"draft"’   ‘"draft"’ for fast video preview, ‘"final"’ for video delivery.
 ‘eve-compile-jobs’                  ‘0’         Parallel encode workers; 0 = auto-detect CPU count.
 ‘eve-compile-scale’                 ‘1.0’       Resolution scale for draft (e.g.  ‘0.5’ = half res).
 ‘eve-compile-cache’                 ‘t’         Use the ‘.eve-cache/’ segment cache.
@@ -1487,8 +1527,8 @@ Variable                            Default     Description
 
 File: eve.info,  Node: CLI reference,  Prev: Configuration reference,  Up: Compilation and Rendering
 
-8.9 CLI reference
-=================
+8.10 CLI reference
+==================
 
 Under normal Emacs usage you never need to call ‘eve text-edit’ directly
 — the Emacs commands handle all flags.  For scripting or CI:
@@ -1862,6 +1902,7 @@ Variable                                       Default                     Descr
 ‘eve-compile-cache’                            ‘t’                         Whether to use the persistent segment cache during compilation.
 ‘eve-compile-confirm-threshold’                ‘30’                        Seconds above which 'eve-compile' asks before starting.
 ‘eve-compile-jobs’                             ‘0’                         Number of segments to encode in parallel, passed to 'eve text-edit -jobs'.
+‘eve-compile-output-format’                    ‘"mp4"’                     Container used when compiling the current TJM.
 ‘eve-compile-quality’                          ‘"draft"’                   Default encoding quality passed to 'eve text-edit -quality'.
 ‘eve-compile-scale’                            ‘1.0’                       Resolution scale factor passed to 'eve text-edit -scale'.
 ‘eve-context-panels-auto-open’                 ‘nil’                       When non-nil, open Eve context panels automatically in 'eve-mode'.
@@ -1990,88 +2031,89 @@ or visit the repository at <https://github.com/behaghel/eve.el>.
 
 Tag Table:
 Node: Top205
-Node: Introduction3327
-Node: The Big Idea3633
-Node: The Core Workflow4405
-Node: About This Manual5581
-Node: Getting Started5980
-Node: Installation6158
-Node: Requirements6391
-Node: Installing the CLI6873
-Node: Installing the Emacs package8213
-Node: straightel8471
-Node: Manual9372
-Node: Accessing the manual in Emacs9708
-Node: Quick Start10409
-Node: The TJM Manifest11803
-Node: Structure12035
-Node: How eve-mode renders a manifest13831
-Node: The raw JSON companion buffer14463
-Node: Transcription14897
-Node: Starting transcription from Emacs15164
-Node: Timing and output validity15900
-Node: Backends20967
-Node: Configuration25652
-Node: Installing optional backends27061
-Node: Editing27519
-Node: Navigation27812
-Node: Deletion and restoration28189
-Node: Splitting and merging28828
-Node: Reordering30573
-Node: Markers and sections31217
-Node: Inline editing31916
-Node: Metadata33232
-Node: Undo and redo33830
-Node: Validation34157
-Node: Filler Words34483
-Node: Concept34695
-Node: Configuration (1)35157
-Node: Commands36351
-Node: Auto-tagging on file open37755
-Node: B-Roll38217
-Node: Concept (1)38523
-Node: Editing b-roll metadata39179
-Node: Compositing modes in detail40948
-Node: Replace mode41173
-Node: Pip mode41621
-Node: Audio policy42540
-Node: JSON templates43019
-Node: Overlay fields44312
-Node: Concrete example lower-third title card45715
-Node: Placeholders without templates47600
-Node: Continuation chains48023
-Node: Compilation and Rendering49046
-Node: Two modes draft and final49421
-Node: Burned-in captions49903
-Node: Under the hood53749
-Node: Pre-flight validation55406
-Node: Dry-run analysis56143
-Node: Checkpoint and resume56669
-Node: Progressive output57150
-Node: Configuration reference57552
-Node: CLI reference59678
-Node: Playback61106
-Node: Source playback61353
-Node: Rendered playback61814
-Node: Playback tracking and segment highlighting62312
-Node: Controls62739
-Node: Video layout63720
-Node: Display65256
-Node: Timestamp ruler65461
-Node: Context panels66049
-Node: Hiding deleted segments68013
-Node: Word-level display68446
-Node: Key Bindings69561
-Node: Single-key bindings69802
-Node: C-c prefix bindings71928
-Node: Playback-mode overrides72936
-Node: The hydra cheatsheet73537
-Node: Configuration Reference73939
-Node: Architecture81264
-Node: Two-layer boundary81451
-Node: Shared contract82255
-Node: Development82727
-Node: Appendix A TJM v11 Specification83203
+Node: Introduction3370
+Node: The Big Idea3676
+Node: The Core Workflow4448
+Node: About This Manual5624
+Node: Getting Started6023
+Node: Installation6201
+Node: Requirements6434
+Node: Installing the CLI6916
+Node: Installing the Emacs package8256
+Node: straightel8514
+Node: Manual9415
+Node: Accessing the manual in Emacs9751
+Node: Quick Start10452
+Node: The TJM Manifest11846
+Node: Structure12078
+Node: How eve-mode renders a manifest13874
+Node: The raw JSON companion buffer14506
+Node: Transcription14940
+Node: Starting transcription from Emacs15207
+Node: Timing and output validity15943
+Node: Backends21010
+Node: Configuration25695
+Node: Installing optional backends27104
+Node: Editing27562
+Node: Navigation27855
+Node: Deletion and restoration28232
+Node: Splitting and merging28871
+Node: Reordering30616
+Node: Markers and sections31260
+Node: Inline editing31959
+Node: Metadata33275
+Node: Undo and redo33873
+Node: Validation34200
+Node: Filler Words34526
+Node: Concept34738
+Node: Configuration (1)35200
+Node: Commands36394
+Node: Auto-tagging on file open37798
+Node: B-Roll38260
+Node: Concept (1)38566
+Node: Editing b-roll metadata39222
+Node: Compositing modes in detail40991
+Node: Replace mode41216
+Node: Pip mode41664
+Node: Audio policy42583
+Node: JSON templates43062
+Node: Overlay fields44355
+Node: Concrete example lower-third title card45758
+Node: Placeholders without templates47643
+Node: Continuation chains48066
+Node: Compilation and Rendering49089
+Node: Audio-only compilation49497
+Node: Two video modes draft and final51337
+Node: Burned-in captions51868
+Node: Under the hood55720
+Node: Pre-flight validation57383
+Node: Dry-run analysis58120
+Node: Checkpoint and resume58646
+Node: Progressive output59127
+Node: Configuration reference59529
+Node: CLI reference61792
+Node: Playback63222
+Node: Source playback63469
+Node: Rendered playback63930
+Node: Playback tracking and segment highlighting64428
+Node: Controls64855
+Node: Video layout65836
+Node: Display67372
+Node: Timestamp ruler67577
+Node: Context panels68165
+Node: Hiding deleted segments70129
+Node: Word-level display70562
+Node: Key Bindings71677
+Node: Single-key bindings71918
+Node: C-c prefix bindings74044
+Node: Playback-mode overrides75052
+Node: The hydra cheatsheet75653
+Node: Configuration Reference76055
+Node: Architecture83510
+Node: Two-layer boundary83697
+Node: Shared contract84501
+Node: Development84973
+Node: Appendix A TJM v11 Specification85449
 
 End Tag Table
 

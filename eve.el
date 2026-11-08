@@ -258,6 +258,15 @@ Context panels require the optional `context-panels' package."
   :type 'boolean
   :group 'eve)
 
+(defcustom eve-compile-output-format "mp4"
+  "Container used when compiling the current TJM.
+Use \"mp4\" for video (the default) or \"m4a\" for AAC audio.
+Audio output writes WebVTT beside the media, without
+burning or embedding captions.  Video-specific quality settings do not apply
+to audio.  Set this buffer-locally for an audio-only editing session."
+  :type '(choice (const "mp4") (const "m4a"))
+  :group 'eve)
+
 (defcustom eve-compile-quality "draft"
   "Default encoding quality passed to `eve text-edit --quality'.
 \\='draft\\=' (ultrafast/crf28) renders ~15x faster for quick preview.
@@ -721,14 +730,24 @@ Forward-declared for the byte-compiler.")
   (setq eve--transcribe-process-count (max 0 (1- eve--transcribe-process-count)))
   (eve--update-transcribe-mode-line))
 
+(defun eve--compile-format ()
+  "Return the validated `eve-compile-output-format'."
+  (unless (member eve-compile-output-format '("mp4" "m4a"))
+    (user-error "Unsupported Eve output format: %s" eve-compile-output-format))
+  eve-compile-output-format)
+
+(defun eve--probe-output-file ()
+  "Return a non-writing CLI preflight path for the selected container."
+  (if (equal (eve--compile-format) "m4a") "/dev/null.m4a" "/dev/null"))
+
 (defun eve--default-output-file ()
-  "Compute the default output mp4 path for the current TJM buffer."
+  "Compute the output path using `eve-compile-output-format'."
   (when buffer-file-name
     (let ((parent (file-name-directory buffer-file-name))
 	  (name (file-name-nondirectory
 		 (directory-file-name
 		  (file-name-directory buffer-file-name)))))
-      (expand-file-name (concat name ".mp4") parent))))
+      (expand-file-name (concat name "." (eve--compile-format)) parent))))
 
 (defun eve--text-edit-command (input output &optional quality)
   "Build the `eve text-edit` command for INPUT and OUTPUT.
@@ -771,12 +790,13 @@ QUALITY overrides `eve-compile-quality' when non-nil."
   "Run dry-run analysis on MANIFEST-FILE at QUALITY.
 Return a plist with segment counts and estimated render time."
   (let* ((program (eve--resolve-cli))
+         (probe-output (eve--probe-output-file))
          (raw (and program
                    (with-temp-buffer
                      (when (zerop
                             (call-process program nil t nil
                                           "text-edit" manifest-file
-                                          "--output" "/dev/null"
+					  "--output" probe-output
                                           "--dry-run" "--json"
                                           "--quality" quality))
                        (buffer-string))))))
@@ -787,15 +807,17 @@ Return a plist with segment counts and estimated render time."
 
 (defun eve--validate-manifest-sync (manifest-file)
   "Run `eve text-edit --validate --json' on MANIFEST-FILE synchronously.
-Returns a plist with :valid, :errors, and :warnings, or nil on failure."
+Return a plist including validation rejections, or nil on process/JSON failure."
   (let* ((program (eve--resolve-cli))
+         (probe-output (eve--probe-output-file))
          (output (and program
                       (with-temp-buffer
-                        (when (zerop
+			(when (memq
                                (call-process program nil t nil
                                              "text-edit" manifest-file
-                                             "--output" "/dev/null"
-                                             "--validate" "--json"))
+					     "--output" probe-output
+					     "--validate" "--json")
+			       '(0 1))
                           (buffer-string))))))
     (when output
       (condition-case nil
@@ -827,7 +849,7 @@ Returns a plist with :valid, :errors, and :warnings, or nil on failure."
 	   (name (if (and slug (not (string-empty-p slug)))
 		     (format "%s-%s" base slug)
 		   base)))
-      (expand-file-name (concat name ".mp4") dir))))
+      (expand-file-name (concat name "." (eve--compile-format)) dir))))
 
 (defun eve--filter-media-files (files)
   "Return FILES limited to supported media extensions."
@@ -1492,6 +1514,7 @@ media timings, or optional embedded subtitle-track generation."
 
 (defun eve-compile (&optional toggle-quality)
   "Compile the current TJM (or section) using `eve text-edit'.
+The media container is selected by `eve-compile-output-format'.
 With a prefix argument (\\[universal-argument]), use the opposite quality to
 `eve-compile-quality': draft becomes final, final becomes draft."
   (interactive "P")
@@ -1621,8 +1644,10 @@ only and shows text until it is available."
 (defun eve--auto-render-fire (&optional all-segments)
   "Launch a speculative background render for the current buffer.
 When ALL-SEGMENTS is non-nil, ask the CLI to warm every segment id, relying on
-the segment cache to skip already-warm entries."
+the segment cache to skip already-warm entries.  Audio output is uncached
+and does not start speculative video jobs."
   (when (and (derived-mode-p 'eve-mode)
+	     (not (equal (eve--compile-format) "m4a"))
              buffer-file-name
              (file-exists-p buffer-file-name))
     (when (and eve--auto-render-process

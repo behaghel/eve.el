@@ -133,7 +133,9 @@ def register(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         help="Render an edited timeline from a TJM manifest.",
     )
     parser.add_argument("manifest", help="Path to the TJM JSON manifest")
-    parser.add_argument("--output", required=True, help="Output MP4 file")
+    parser.add_argument(
+        "--output", required=True, help="Output MP4 video or M4A/AAC audio file"
+    )
     parser.add_argument(
         "--report", help="Write completed-render JSON including alignment provenance"
     )
@@ -925,7 +927,13 @@ def _subtitle_timeline(
             )
             if 0 < gap <= threshold and not continued:
                 if include_non_captions:
-                    yield {"kind": "gap"}, cursor, cursor + gap, [], clock
+                    yield (
+                        {"kind": "gap", "source": segment["source"]},
+                        cursor,
+                        cursor + gap,
+                        [(previous_bounds[1], bounds[0])],
+                        clock,
+                    )
                 cursor += gap
         yield segment, cursor, cursor + duration, ranges, clock
         cursor += duration
@@ -2276,6 +2284,15 @@ def run(args: Namespace) -> int:
         subtitles.validate_configuration(subtitle_config)
     if manifest.get("version") == "1.1":
         args.preserve_short_gaps = manifest["render"]["preserve_short_gaps"]
+
+    if pathlib.Path(args.output).suffix.lower() == ".wav":
+        raise tjm_v11.ValidationError(
+            "Choose M4A for audio output; WAV is an internal intermediate"
+        )
+    if pathlib.Path(args.output).suffix.lower() == ".m4a":
+        from . import audio_render
+
+        return audio_render.run(args, manifest, original_manifest, report_path)
 
     if getattr(args, "validate", False):
         errors, warnings_list = validate_manifest_for_render(

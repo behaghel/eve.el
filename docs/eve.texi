@@ -32,7 +32,7 @@
 * Editing::                      Navigation, deletion, splitting, merging, and metadata.
 * Filler Words::                 Non-destructive tagging and deletion of filler words.
 * B-Roll::                       Attaching and managing supplementary video footage.
-* Compilation and Rendering::    Turning the manifest into a video file.
+* Compilation and Rendering::    Turning the manifest into an audio or video file.
 * Playback::                     Live preview of source and rendered video.
 * Display::                      Timestamp ruler, hidden segments, and word-level view.
 * Key Bindings::                 Complete keybinding reference.
@@ -122,7 +122,8 @@ JSON templates
 
 Compilation and Rendering
 
-* Two modes draft and final::
+* Audio-only compilation::
+* Two video modes draft and final::
 * Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
@@ -1312,7 +1313,8 @@ across segment boundaries without restarting.
 @chapter Compilation and Rendering
 
 @menu
-* Two modes draft and final::
+* Audio-only compilation::
+* Two video modes draft and final::
 * Burned-in captions::
 * Under the hood::
 * Pre-flight validation::
@@ -1323,8 +1325,37 @@ across segment boundaries without restarting.
 * CLI reference::
 @end menu
 
-@node Two modes draft and final
-@section Two modes: draft and final
+@node Audio-only compilation
+@section Audio-only compilation
+
+For an audio TJM, select M4A in its buffer with @samp{M-: (setq-local
+ eve-compile-output-format "m4a") RET}, then use @samp{C-c C-c} normally.  The
+output is @samp{<directory-name>.m4a} with a matching @samp{.vtt} beside it.  Marker
+sections use the same selected container.  Return to @samp{"mp4"} for video;
+MP4 remains the default, so existing video sessions are unchanged.
+
+M4A contains AAC audio at 192 kbit/s, encoded once after lossless assembly.
+WAV/PCM files are temporary intermediates, not an export choice.  The original
+audio, recognized words, display corrections and source ticks are not rewritten.
+Deleted words/segments and the filler policy affect the audio and subtitle
+clock together.  Preserved gaps contain the actual source audio.  Contiguous
+source coverage stays continuous across caption boundaries; actual cut edges
+use tiny 10 ms fades (shorter for very short pieces) to avoid clicks.
+
+Audio rendering requires TJM v1.1, valid native-sample boundaries and matching
+sample rates/channel counts across used sources.  It does not silently resample
+or invent timings.  Active b-roll and burned-in captions are rejected; disable
+burning with @samp{M-x eve-disable-subtitle-burning}.  WebVTT is a separate file, not
+an embedded track, and must be used with the corresponding rendered audio.
+
+Audio renders are uncached and serial.  Speculative video cache warming is
+skipped automatically for audio buffers.  Video quality, codec, scale and worker
+settings do not change AAC output.  CLI partial renders and segment-cache
+warming are not supported for audio.  Temporary lossless audio requires more
+disk space than the compressed source.
+
+@node Two video modes draft and final
+@section Two video modes: draft and final
 
 @samp{C-c C-c} (@samp{eve-compile}) compiles the manifest at draft quality — fast
 enough to catch mistakes before committing to a full export.
@@ -1400,7 +1431,7 @@ substitute fonts to make a render succeed.
 @node Under the hood
 @section Under the hood
 
-Eve's rendering pipeline is designed to be fast after the first run:
+Eve's video rendering pipeline is designed to be fast after the first run:
 
 @itemize
 @item
@@ -1491,9 +1522,12 @@ partial file, which Emacs can use to update a live preview.
 @headitem Variable
 @tab Default
 @tab Description
+@item @samp{eve-compile-output-format}
+@tab @samp{"mp4"}
+@tab @samp{"mp4"} for video or @samp{"m4a"} for audio; may be buffer-local.
 @item @samp{eve-compile-quality}
 @tab @samp{"draft"}
-@tab @samp{"draft"} for fast preview, @samp{"final"} for delivery.
+@tab @samp{"draft"} for fast video preview, @samp{"final"} for video delivery.
 @item @samp{eve-compile-jobs}
 @tab @samp{0}
 @tab Parallel encode workers; 0 = auto-detect CPU count.
@@ -2006,6 +2040,9 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-compile-jobs}
 @tab @samp{0}
 @tab Number of segments to encode in parallel, passed to `eve text-edit --jobs'.
+@item @samp{eve-compile-output-format}
+@tab @samp{"mp4"}
+@tab Container used when compiling the current TJM@.
 @item @samp{eve-compile-quality}
 @tab @samp{"draft"}
 @tab Default encoding quality passed to `eve text-edit --quality'.

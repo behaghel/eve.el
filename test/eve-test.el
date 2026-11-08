@@ -1414,6 +1414,58 @@
                               "--quality" (shell-quote-argument "draft"))
                         " ")))))))
 
+(ert-deftest eve-compile-output-format-selects-audio-container ()
+  "Audio compilation selects its container without changing video defaults."
+  (with-temp-buffer
+    (let ((buffer-file-name "/tmp/session/session.tjm.json"))
+      (dolist (format '("mp4" "m4a"))
+	(let ((eve-compile-output-format format))
+	  (should (equal (eve--default-output-file)
+			 (concat "/tmp/session/session." format))))))))
+
+(ert-deftest eve-audio-preflight-selects-the-audio-consumer ()
+  "Validation and analysis must use the same container as audio compilation."
+  (with-temp-buffer
+    (setq-local eve-compile-output-format "m4a")
+    (let (calls)
+    (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+	      ((symbol-function 'call-process)
+	       (lambda (&rest args)
+		 (push args calls)
+		 (insert "{\"valid\":true,\"errors\":[],\"warnings\":[]}")
+		 0)))
+      (eve--validate-manifest-sync "/tmp/edit.tjm.json")
+      (eve--dry-run-analysis "/tmp/edit.tjm.json" "draft")
+      (dolist (args calls)
+	(should (equal (cadr (member "--output" args)) "/dev/null.m4a")))))))
+
+(ert-deftest eve-audio-does-not-launch-video-cache-warming ()
+  "An audio buffer must not start unsupported speculative video renders."
+  (with-temp-buffer
+    (let ((buffer-file-name "/tmp/audio/edit.tjm.json")
+	  (eve-compile-output-format "m4a"))
+      (cl-letf (((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+		((symbol-function 'file-exists-p) (lambda (_) t))
+		((symbol-function 'eve--auto-render-segment-ids)
+		 (lambda () '("one")))
+		((symbol-function 'eve--text-edit-command)
+		 (lambda (&rest _) "eve text-edit edit.tjm.json --output out.m4a"))
+		((symbol-function 'make-process)
+		 (lambda (&rest _) (ert-fail "Audio started a video cache job"))))
+	(eve--auto-render-fire t)))))
+
+(ert-deftest eve-preflight-keeps-structured-rejection-on-cli-exit-one ()
+  "A normal CLI validation rejection retains its actionable errors."
+  (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+	    ((symbol-function 'call-process)
+	     (lambda (&rest _)
+	       (insert "{\"valid\":false,\"errors\":[{\"message\":\"No audio\"}],\"warnings\":[]}")
+	       1)))
+    (let ((result (eve--validate-manifest-sync "/tmp/edit.tjm.json")))
+      (should (eq (plist-get result :valid) :false))
+      (should (equal (plist-get (aref (plist-get result :errors) 0) :message)
+		     "No audio")))))
+
 (ert-deftest eve-compile-command-errors-when-cli-program-is-missing ()
   "Compile commands fail early when the configured CLI is unavailable."
   (with-temp-buffer
