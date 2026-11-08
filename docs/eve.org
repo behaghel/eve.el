@@ -858,10 +858,50 @@ across segment boundaries without restarting.
 
 * Compilation and Rendering
 :PROPERTIES:
-:DESCRIPTION: Turning the manifest into a video file.
+:DESCRIPTION: Turning the manifest into an audio or video file.
 :END:
 
-** Two modes: draft and final
+** Audio-only compilation
+
+With the default =eve-compile-output-format= of ="auto"=, use =C-c C-c=
+normally: Eve asks the CLI to inspect retained source streams.  Audio-only
+sources select M4A; video or visual b-roll selects MP4.  Actual streams, not
+filename extensions, determine the choice; an attached album cover is not
+motion video.  Unused or deleted sources do not force a video export.
+
+The audio output is =<directory-name>.m4a= with a matching =.vtt= beside it.
+Compilation refreshes the choice after saving; rendered playback and cache
+controls use the detected container too.  Detection writes no media metadata
+into the TJM and requires no version migration.  Missing/unreadable sources
+stop automatic selection instead of silently guessing MP4.
+
+To override the choice, use =M-: (setq-local eve-compile-output-format "m4a")
+RET= or select ="mp4"=.  This is useful when deliberately extracting audio
+from a video.  Automatic choice does not add new support for mixed timelines
+or b-roll: the selected renderer still validates its supported scope, and no
+black frames or other media are invented to make an unsupported edit work.
+
+M4A contains AAC audio at 192 kbit/s, encoded once after lossless assembly.
+WAV/PCM files are temporary intermediates, not an export choice.  The original
+audio, recognized words, display corrections and source ticks are not rewritten.
+Deleted words/segments and the filler policy affect the audio and subtitle
+clock together.  Preserved gaps contain the actual source audio.  Contiguous
+source coverage stays continuous across caption boundaries; actual cut edges
+use tiny 10 ms fades (shorter for very short pieces) to avoid clicks.
+
+Audio rendering requires TJM v1.1, valid native-sample boundaries and matching
+sample rates/channel counts across used sources.  It does not silently resample
+or invent timings.  Active b-roll and burned-in captions are rejected; disable
+burning with =M-x eve-disable-subtitle-burning=.  WebVTT is a separate file, not
+an embedded track, and must be used with the corresponding rendered audio.
+
+Audio renders are uncached and serial.  Speculative video cache warming is
+skipped automatically for audio buffers.  Video quality, codec, scale and worker
+settings do not change AAC output.  CLI partial renders and segment-cache
+warming are not supported for audio.  Temporary lossless audio requires more
+disk space than the compressed source.
+
+** Two video modes: draft and final
 
 =C-c C-c= (=eve-compile=) compiles the manifest at draft quality — fast
 enough to catch mistakes before committing to a full export.
@@ -935,7 +975,7 @@ substitute fonts to make a render succeed.
 
 ** Under the hood
 
-Eve's rendering pipeline is designed to be fast after the first run:
+Eve's video rendering pipeline is designed to be fast after the first run:
 
 - *Quality profiles* — draft uses MJPEG encoding at ultrafast preset; final
   uses H.264 at medium preset.  The codec and preset are resolved
@@ -1006,7 +1046,8 @@ partial file, which Emacs can use to update a live preview.
 
 | Variable | Default | Description |
 |----------+---------+-------------|
-| =eve-compile-quality= | ="draft"= | ="draft"= for fast preview, ="final"= for delivery. |
+| =eve-compile-output-format= | ="auto"= | Inspect source streams; ="mp4"= or ="m4a"= explicitly overrides the choice. |
+| =eve-compile-quality= | ="draft"= | ="draft"= for fast video preview, ="final"= for video delivery. |
 | =eve-compile-jobs= | =0= | Parallel encode workers; 0 = auto-detect CPU count. |
 | =eve-compile-scale= | =1.0= | Resolution scale for draft (e.g. =0.5= = half res). |
 | =eve-compile-cache= | =t= | Use the =.eve-cache/= segment cache. |

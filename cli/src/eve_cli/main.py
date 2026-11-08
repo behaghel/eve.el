@@ -12,6 +12,7 @@ from eve_cli.commands import (
     denoise,
     doctor,
     export_transcript,
+    inspect_media,
     text_edit,
     transcribe,
     trim_fillers,
@@ -36,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe.register(subparsers)
     export_transcript.register(subparsers)
     text_edit.register(subparsers)
+    inspect_media.register(subparsers)
     tag_fillers.register(subparsers)
     trim_fillers.register(subparsers)
     denoise.register(subparsers)

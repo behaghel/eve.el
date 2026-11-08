@@ -330,6 +330,50 @@ production-approved alignments. Rendering uses the reference's subtitle style.
 The command returns nonzero when a gate fails. Passing one small fixture is not
 a certification of natural-speech accuracy or general hallucination detection.
 
+## Audio-only rendering
+
+```bash
+devenv -q shell -- bash -c 'cd cli && uv run --no-sync eve text-edit \
+  /path/edit.tjm.json --output /path/edited.m4a --subtitles'
+```
+
+Emacs selects the container automatically by default: `C-c C-c` inspects the
+retained sources through the CLI and constructs `--output` with the appropriate
+extension. Audio-only streams select M4A; video or visual b-roll selects MP4.
+Filename extensions and attached cover art do not decide the source type.
+Explicit Emacs M4A/MP4 preferences remain available. No new TJM member or format
+version is needed.
+
+Scripts still specify their destination with `--output`. For read-only type
+inspection, use `eve inspect-media /path/edit.tjm.json --json`; its response
+includes `output_format` and per-source `has_audio`/`has_video` flags. It inspects
+retained source media without rendering, caching or rewriting the manifest.
+This selects a container, not a guarantee that every mixed-media combination
+is renderable; existing renderer restrictions still apply.
+
+The `.m4a` output selects audio-only rendering with AAC at 192 kbit/s; `.mp4`
+keeps the existing video renderer. Audio is decoded to temporary lossless PCM,
+cut on native sample boundaries, assembled on a single sample clock and encoded
+once. WAV is an internal intermediate, not an output option. Contiguous source
+intervals, including preserved gaps, are coalesced without artificial fades at
+caption boundaries. Real cut edges use the existing 10 ms anti-click fades.
+
+`--subtitles` writes a matching rendered-timeline WebVTT sidecar, without muxing.
+It is not interchangeable with the original recording's source-clock transcript.
+The input TJM and media remain unchanged. `--report` retains alignment provenance
+and reports the output's sample rate and intended sample count.
+
+Audio requires TJM v1.1 and matching sample rates/channel counts across used
+sources. It rejects non-native sample boundaries, out-of-source cuts, active
+b-roll, and subtitle burning rather than silently changing their intent. Output,
+sidecar, manifest-copy and report paths must not overwrite inputs or one another.
+Encoding failure leaves previous output media/captions intact.
+
+Audio renders are serial and uncached. `--validate --json` and `--dry-run --json`
+are supported; video quality/codec/scale/jobs/cache settings do not change audio
+output. `--segments` and `--partial-every` are rejected. Allow temporary disk
+space for decoded PCM and rendered pieces, which are larger than the source.
+
 ## Burned-in captions
 
 Burning requires a supported v1.1-or-later manifest; currently only `"1.1"` is

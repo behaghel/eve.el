@@ -5,7 +5,7 @@ Status: Draft repository specification
 ## Abstract
 
 This document specifies `TJM` (Textual Join Manifest) v1.1 for text-driven
-spoken-word video editing.
+spoken-word audio and video editing.
 
 TJM v1.1 is a JSON manifest format stored in `.tjm.json` files. It describes an
 ordered timeline over one or more source media files, separates spoken content
@@ -117,6 +117,11 @@ Example skeleton:
 ```
 
 ## 5. Versioning
+
+The version identifies the stored manifest contract, not a revision of this
+document or the CLI/editor release. Clarifying the specification or adding a
+consumer capability that preserves stored data semantics does not by itself
+change the format version.
 
 The only version defined by this specification is `"1.1"`.
 
@@ -680,6 +685,31 @@ PTS; encoder time-base or container edit-list rounding MUST NOT add another
 shift. Input seeking or codec padding MUST NOT extend the exclusive end of a
 retained interval by admitting later source frames. Adding an embedded subtitle
 track MUST preserve the assembled clock just as subtitle burning does.
+
+### 13.7 Audio-only rendering
+
+An audio-only consumer MUST use the same retained source intervals, manifest
+order, filler/deletion decisions and preserved-gap timeline as its video and
+subtitle consumers. Source presentation offsets MUST be accounted for when
+selecting native audio samples. Unsupported sample-grid boundaries MUST be
+rejected rather than shifted or estimated.
+
+Adjacent retained intervals from the same source MAY be assembled as one
+continuous audio piece. Caption boundaries alone MUST NOT introduce extra audio
+cuts or edge fades. Actual piece boundaries MAY use short anti-click fades;
+these MUST NOT change timeline duration. Repository audio rendering uses 10 ms
+entry/exit fades, capped at one quarter of a shorter piece's duration.
+
+Audio fragments SHOULD be assembled without per-fragment lossy encoding.
+Container duration and encoder bookkeeping MUST preserve the intended sample
+clock rather than accumulate rounding or priming across cuts. Audio subtitles
+use rendered timeline time under Section 14, not original source time.
+
+An audio-only consumer unable to represent active b-roll or burned-in captions
+MUST reject them explicitly, not silently discard their intent. Consumers MAY
+reject mixed sample rates/channel counts or unsupported rendering options.
+Failures MUST NOT replace source media, the input manifest, or a previous
+output with a partial render.
 
 ## 14. Subtitle and Display Cue Generation
 
