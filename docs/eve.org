@@ -863,11 +863,23 @@ across segment boundaries without restarting.
 
 ** Audio-only compilation
 
-For an audio TJM, select M4A in its buffer with =M-: (setq-local
- eve-compile-output-format "m4a") RET=, then use =C-c C-c= normally.  The
-output is =<directory-name>.m4a= with a matching =.vtt= beside it.  Marker
-sections use the same selected container.  Return to ="mp4"= for video;
-MP4 remains the default, so existing video sessions are unchanged.
+With the default =eve-compile-output-format= of ="auto"=, use =C-c C-c=
+normally: Eve asks the CLI to inspect retained source streams.  Audio-only
+sources select M4A; video or visual b-roll selects MP4.  Actual streams, not
+filename extensions, determine the choice; an attached album cover is not
+motion video.  Unused or deleted sources do not force a video export.
+
+The audio output is =<directory-name>.m4a= with a matching =.vtt= beside it.
+Compilation refreshes the choice after saving; rendered playback and cache
+controls use the detected container too.  Detection writes no media metadata
+into the TJM and requires no version migration.  Missing/unreadable sources
+stop automatic selection instead of silently guessing MP4.
+
+To override the choice, use =M-: (setq-local eve-compile-output-format "m4a")
+RET= or select ="mp4"=.  This is useful when deliberately extracting audio
+from a video.  Automatic choice does not add new support for mixed timelines
+or b-roll: the selected renderer still validates its supported scope, and no
+black frames or other media are invented to make an unsupported edit work.
 
 M4A contains AAC audio at 192 kbit/s, encoded once after lossless assembly.
 WAV/PCM files are temporary intermediates, not an export choice.  The original
@@ -1034,7 +1046,7 @@ partial file, which Emacs can use to update a live preview.
 
 | Variable | Default | Description |
 |----------+---------+-------------|
-| =eve-compile-output-format= | ="mp4"= | ="mp4"= for video or ="m4a"= for audio; may be buffer-local. |
+| =eve-compile-output-format= | ="auto"= | Inspect source streams; ="mp4"= or ="m4a"= explicitly overrides the choice. |
 | =eve-compile-quality= | ="draft"= | ="draft"= for fast video preview, ="final"= for video delivery. |
 | =eve-compile-jobs= | =0= | Parallel encode workers; 0 = auto-detect CPU count. |
 | =eve-compile-scale= | =1.0= | Resolution scale for draft (e.g. =0.5= = half res). |

@@ -258,13 +258,14 @@ Context panels require the optional `context-panels' package."
   :type 'boolean
   :group 'eve)
 
-(defcustom eve-compile-output-format "mp4"
+(defcustom eve-compile-output-format "auto"
   "Container used when compiling the current TJM.
-Use \"mp4\" for video (the default) or \"m4a\" for AAC audio.
-Audio output writes WebVTT beside the media, without
-burning or embedding captions.  Video-specific quality settings do not apply
-to audio.  Set this buffer-locally for an audio-only editing session."
-  :type '(choice (const "mp4") (const "m4a"))
+The default \"auto\" asks the CLI to inspect retained source streams:
+audio-only sources select \"m4a\"; video or visual b-roll selects \"mp4\".
+Use an explicit value to override this choice.  Audio output writes WebVTT
+beside the media, without burning or embedding captions.  Video-specific
+quality settings do not apply to audio."
+  :type '(choice (const "auto") (const "mp4") (const "m4a"))
   :group 'eve)
 
 (defcustom eve-compile-quality "draft"
@@ -730,11 +731,43 @@ Forward-declared for the byte-compiler.")
   (setq eve--transcribe-process-count (max 0 (1- eve--transcribe-process-count)))
   (eve--update-transcribe-mode-line))
 
+(defvar-local eve--resolved-output-format nil
+  "Last automatically inspected output container, for read-only output views.")
+
 (defun eve--compile-format ()
-  "Return the validated `eve-compile-output-format'."
-  (unless (member eve-compile-output-format '("mp4" "m4a"))
+  "Return the explicit or last inspected output container.
+Views use the legacy MP4 name until an action resolves automatic selection;
+compilation and playback never guess when source inspection fails."
+  (unless (member eve-compile-output-format '("auto" "mp4" "m4a"))
     (user-error "Unsupported Eve output format: %s" eve-compile-output-format))
-  eve-compile-output-format)
+  (if (equal eve-compile-output-format "auto")
+      (or eve--resolved-output-format "mp4")
+    eve-compile-output-format))
+
+(defun eve--resolve-compile-format (&optional refresh)
+  "Resolve automatic output through the CLI, without changing the TJM.
+With REFRESH, inspect current source streams even after an earlier decision."
+  (if (not (equal eve-compile-output-format "auto"))
+      (eve--compile-format)
+    (or (and (not refresh) eve--resolved-output-format)
+	(let* ((file (or buffer-file-name
+			 (user-error "TJM buffer is not visiting a file")))
+	       (program (or (eve--resolve-cli)
+			    (user-error "Cannot find Eve CLI for media inspection")))
+	       status
+	       (raw (with-temp-buffer
+		      (setq status (call-process program nil t nil
+						 "inspect-media" file "--json"))
+		      (buffer-string)))
+	       (result (condition-case nil
+			   (json-parse-string raw :object-type 'plist)
+			 (error (user-error "Eve media inspection failed: %s"
+					    (string-trim raw)))))
+	       (format (plist-get result :output_format)))
+	  (unless (and (equal status 0) (member format '("m4a" "mp4")))
+	    (user-error "Eve cannot select an output format: %s"
+			(or (plist-get result :error) raw)))
+	  (setq eve--resolved-output-format format)))))
 
 (defun eve--probe-output-file ()
   "Return a non-writing CLI preflight path for the selected container."
@@ -1527,6 +1560,7 @@ With a prefix argument (\\[universal-argument]), use the opposite quality to
       (message "Compiling at %s quality" quality))
     (when (and buffer-file-name (buffer-modified-p))
       (save-buffer))
+    (eve--resolve-compile-format t)
     (unless (eve--pre-flight-validate quality)
       (user-error "Compilation aborted due to manifest errors"))
     (if (not marker?)
@@ -1647,9 +1681,9 @@ When ALL-SEGMENTS is non-nil, ask the CLI to warm every segment id, relying on
 the segment cache to skip already-warm entries.  Audio output is uncached
 and does not start speculative video jobs."
   (when (and (derived-mode-p 'eve-mode)
-	     (not (equal (eve--compile-format) "m4a"))
              buffer-file-name
-             (file-exists-p buffer-file-name))
+	     (file-exists-p buffer-file-name)
+	     (not (equal (eve--resolve-compile-format t) "m4a")))
     (when (and eve--auto-render-process
                (process-live-p eve--auto-render-process))
       (delete-process eve--auto-render-process)
@@ -3690,6 +3724,8 @@ of leaving an empty visible-word state behind."
           (message "Cannot cache unsaved Eve buffer")
         (when (buffer-modified-p)
           (save-buffer))
+	(if (equal (eve--resolve-compile-format t) "m4a")
+	    (message "Audio rendering is uncached")
         (let* ((output (eve--default-output-file))
                (base-cmd (split-string
                           (eve--text-edit-command buffer-file-name output)
@@ -3701,7 +3737,7 @@ of leaving an empty visible-word state behind."
           (make-process :name "eve-panel-cache"
                         :buffer nil
                         :command full-cmd
-                        :noquery t))))))
+			  :noquery t)))))))
 
 (defun eve-segment-panel-undo ()
   "Undo Eve edit from the segment panel."
@@ -6498,6 +6534,9 @@ Collects all non-deleted segments from the same source, stores them in
 After compilation (or immediately if up-to-date), starts tracked playback
 using the rendered timeline from `eve--rendered-cumulative-times'."
   (interactive)
+  (when (and buffer-file-name (buffer-modified-p))
+    (save-buffer))
+  (eve--resolve-compile-format t)
   (let* ((output (or (eve--default-output-file)
                      (user-error "Cannot determine output file path")))
          (tjm-file buffer-file-name)

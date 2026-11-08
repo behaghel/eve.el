@@ -104,6 +104,8 @@
        (insert "{}")
        (goto-char (point-min))
        (eve-mode)
+       ;; This fixture names synthetic video files, not real inspectable media.
+       (setq-local eve-compile-output-format "mp4")
        (setq-local eve--data (copy-tree eve-test--sample-data t))
        (eve--render)
        ,@body)))
@@ -1465,6 +1467,111 @@
       (should (eq (plist-get result :valid) :false))
       (should (equal (plist-get (aref (plist-get result :errors) 0) :message)
 		     "No audio")))))
+
+(ert-deftest eve-auto-output-format-is-the-default ()
+  "New buffers use automatic format selection without a manual preference."
+  (should (equal (eval (car (get 'eve-compile-output-format 'standard-value)))
+		 "auto")))
+
+(ert-deftest eve-auto-output-format-uses-cli-stream-inspection ()
+  "Automatic format selection uses read-only CLI metadata and remembers it."
+  (with-temp-buffer
+    (setq-local buffer-file-name "/tmp/recording/session.tjm.json")
+    (let ((eve-compile-output-format "auto") calls)
+      (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+		((symbol-function 'call-process)
+		 (lambda (&rest args)
+		   (push args calls)
+		   (insert "{\"ok\":true,\"output_format\":\"m4a\"}") 0)))
+	(should (equal (eve--resolve-compile-format) "m4a"))
+	(should (equal (eve--default-output-file) "/tmp/recording/recording.m4a"))
+	(should (equal (eve--resolve-compile-format) "m4a"))
+	(should (= (length calls) 1))
+	(should (member "inspect-media" (car calls)))))))
+
+(ert-deftest eve-auto-compilation-inspects-after-saving ()
+  "One compile action saves, inspects and renders to the inferred M4A path."
+  (eve-test-with-buffer
+   (setq-local buffer-file-name "/tmp/audio/session.tjm.json")
+   (setq-local eve-compile-output-format "auto")
+   (let (saved output)
+     (set-buffer-modified-p t)
+     (cl-letf (((symbol-function 'save-buffer)
+		(lambda (&rest _) (setq saved t) (set-buffer-modified-p nil)))
+	       ((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+	       ((symbol-function 'call-process)
+		(lambda (&rest args)
+		  (should saved) (should (member "inspect-media" args))
+		  (insert "{\"output_format\":\"m4a\"}") 0))
+	       ((symbol-function 'eve--pre-flight-validate) (lambda (_) t))
+	       ((symbol-function 'eve--run-compile)
+		(lambda (_command path &rest _) (setq output path))))
+       (eve-compile)
+       (should (equal output "/tmp/audio/audio.m4a"))))))
+
+(ert-deftest eve-explicit-output-format-never-inspects-sources ()
+  "A deliberate output override does not trigger format guessing."
+  (let ((eve-compile-output-format "mp4"))
+    (cl-letf (((symbol-function 'call-process)
+	       (lambda (&rest _) (ert-fail "Explicit format triggered a probe"))))
+      (should (equal (eve--resolve-compile-format t) "mp4")))))
+
+(ert-deftest eve-audio-panel-cache-does-not-launch-video-job ()
+  "An audio inspection prevents the panel's explicit video-cache action."
+  (eve-test-with-buffer
+   (setq-local buffer-file-name "/tmp/audio/session.tjm.json")
+   (setq-local eve-compile-output-format "auto")
+   (set-buffer-modified-p nil)
+   (let ((source (current-buffer)))
+     (cl-letf (((symbol-function 'eve--segment-panel-source-buffer) (lambda () source))
+	       ((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+	       ((symbol-function 'call-process)
+		(lambda (&rest _) (insert "{\"output_format\":\"m4a\"}") 0))
+	       ((symbol-function 'make-process)
+		(lambda (&rest _) (ert-fail "Audio launched a panel cache job"))))
+       (eve-segment-panel-cache-current)))))
+
+(ert-deftest eve-auto-inspection-failure-does-not-fall-back-to-video ()
+  "An inspection failure cannot silently select the legacy MP4 path."
+  (with-temp-buffer
+    (setq-local buffer-file-name "/tmp/audio/session.tjm.json")
+    (let ((eve-compile-output-format "auto"))
+      (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+		((symbol-function 'call-process)
+		 (lambda (&rest _) (insert "{\"error\":\"Missing source\"}") 1)))
+	(should-error (eve--resolve-compile-format t) :type 'user-error)))))
+
+(ert-deftest eve-auto-output-format-refreshes-changed-source-kind ()
+  "A fresh action must not reuse an obsolete source-kind decision."
+  (with-temp-buffer
+    (setq-local buffer-file-name "/tmp/media/session.tjm.json")
+    (let ((eve-compile-output-format "auto") (format "m4a"))
+      (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+		((symbol-function 'call-process)
+		 (lambda (&rest _)
+		   (insert (format "{\"output_format\":\"%s\"}" format)) 0)))
+	(should (equal (eve--resolve-compile-format) "m4a"))
+	(setq format "mp4")
+	(should (equal (eve--resolve-compile-format t) "mp4"))
+	(should (equal (eve--default-output-file) "/tmp/media/media.mp4"))))))
+
+(ert-deftest eve-auto-rendered-playback-selects-the-m4a-file ()
+  "Rendered playback resolves audio without a manual container setting."
+  (eve-test-with-buffer
+   (setq-local buffer-file-name "/tmp/audio/session.tjm.json")
+   (setq-local eve-compile-output-format "auto")
+   (set-buffer-modified-p nil)
+   (let (played (stamp '(26864 1200 0 0)))
+     (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+	       ((symbol-function 'call-process)
+		(lambda (&rest _) (insert "{\"output_format\":\"m4a\"}") 0))
+	       ((symbol-function 'file-exists-p) (lambda (_) t))
+	       ((symbol-function 'file-attributes)
+		(lambda (_) (list nil nil nil nil nil stamp)))
+	       ((symbol-function 'eve--play-with-mpv)
+		(lambda (path &rest _) (setq played path))))
+       (eve-play-rendered)
+       (should (equal played "/tmp/audio/audio.m4a"))))))
 
 (ert-deftest eve-compile-command-errors-when-cli-program-is-missing ()
   "Compile commands fail early when the configured CLI is unavailable."

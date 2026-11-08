@@ -1328,11 +1328,23 @@ across segment boundaries without restarting.
 @node Audio-only compilation
 @section Audio-only compilation
 
-For an audio TJM, select M4A in its buffer with @samp{M-: (setq-local
- eve-compile-output-format "m4a") RET}, then use @samp{C-c C-c} normally.  The
-output is @samp{<directory-name>.m4a} with a matching @samp{.vtt} beside it.  Marker
-sections use the same selected container.  Return to @samp{"mp4"} for video;
-MP4 remains the default, so existing video sessions are unchanged.
+With the default @samp{eve-compile-output-format} of @samp{"auto"}, use @samp{C-c C-c}
+normally: Eve asks the CLI to inspect retained source streams.  Audio-only
+sources select M4A; video or visual b-roll selects MP4.  Actual streams, not
+filename extensions, determine the choice; an attached album cover is not
+motion video.  Unused or deleted sources do not force a video export.
+
+The audio output is @samp{<directory-name>.m4a} with a matching @samp{.vtt} beside it.
+Compilation refreshes the choice after saving; rendered playback and cache
+controls use the detected container too.  Detection writes no media metadata
+into the TJM and requires no version migration.  Missing/unreadable sources
+stop automatic selection instead of silently guessing MP4.
+
+To override the choice, use @samp{M-: (setq-local eve-compile-output-format "m4a")
+RET} or select @samp{"mp4"}.  This is useful when deliberately extracting audio
+from a video.  Automatic choice does not add new support for mixed timelines
+or b-roll: the selected renderer still validates its supported scope, and no
+black frames or other media are invented to make an unsupported edit work.
 
 M4A contains AAC audio at 192 kbit/s, encoded once after lossless assembly.
 WAV/PCM files are temporary intermediates, not an export choice.  The original
@@ -1518,13 +1530,13 @@ partial file, which Emacs can use to update a live preview.
 @node Configuration reference
 @section Configuration reference
 
-@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 @headitem Variable
 @tab Default
 @tab Description
 @item @samp{eve-compile-output-format}
-@tab @samp{"mp4"}
-@tab @samp{"mp4"} for video or @samp{"m4a"} for audio; may be buffer-local.
+@tab @samp{"auto"}
+@tab Inspect source streams; @samp{"mp4"} or @samp{"m4a"} explicitly overrides the choice.
 @item @samp{eve-compile-quality}
 @tab @samp{"draft"}
 @tab @samp{"draft"} for fast video preview, @samp{"final"} for video delivery.
@@ -2041,7 +2053,7 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @tab @samp{0}
 @tab Number of segments to encode in parallel, passed to `eve text-edit --jobs'.
 @item @samp{eve-compile-output-format}
-@tab @samp{"mp4"}
+@tab @samp{"auto"}
 @tab Container used when compiling the current TJM@.
 @item @samp{eve-compile-quality}
 @tab @samp{"draft"}

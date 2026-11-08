@@ -118,6 +118,11 @@ Example skeleton:
 
 ## 5. Versioning
 
+The version identifies the stored manifest contract, not a revision of this
+document or the CLI/editor release. Clarifying the specification or adding a
+consumer capability that preserves stored data semantics does not by itself
+change the format version.
+
 The only version defined by this specification is `"1.1"`.
 
 Conforming producers MUST emit `"version": "1.1"`.

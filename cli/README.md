@@ -337,6 +337,20 @@ devenv -q shell -- bash -c 'cd cli && uv run --no-sync eve text-edit \
   /path/edit.tjm.json --output /path/edited.m4a --subtitles'
 ```
 
+Emacs selects the container automatically by default: `C-c C-c` inspects the
+retained sources through the CLI and constructs `--output` with the appropriate
+extension. Audio-only streams select M4A; video or visual b-roll selects MP4.
+Filename extensions and attached cover art do not decide the source type.
+Explicit Emacs M4A/MP4 preferences remain available. No new TJM member or format
+version is needed.
+
+Scripts still specify their destination with `--output`. For read-only type
+inspection, use `eve inspect-media /path/edit.tjm.json --json`; its response
+includes `output_format` and per-source `has_audio`/`has_video` flags. It inspects
+retained source media without rendering, caching or rewriting the manifest.
+This selects a container, not a guarantee that every mixed-media combination
+is renderable; existing renderer restrictions still apply.
+
 The `.m4a` output selects audio-only rendering with AAC at 192 kbit/s; `.mp4`
 keeps the existing video renderer. Audio is decoded to temporary lossless PCM,
 cut on native sample boundaries, assembled on a single sample clock and encoded
