@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "role": "Evaluation only; never model input",
+  "profiles": {
+    "legacy-literal-v1": {
+      "casefold": true,
+      "strip_edge_characters": ".,!?;:\"'“”‘’",
+      "ignore_punctuation_only_tokens": false,
+      "one_token_aliases": {
+        "11": "eleven",
+        "[uh]": "uh",
+        "[um]": "um"
+      }
+    },
+    "conversations-literal-v2": {
+      "casefold": true,
+      "strip_edge_characters": ".,!?;:\"'“”‘’…",
+      "ignore_punctuation_only_tokens": true,
+      "number_aliases": false,
+      "number_spelling_and_other_tokenization": "Retained in raw WER and discussed separately; no reference/model word merging or repairs."
+    }
+  },
+  "alignment": {
+    "algorithm": "word-level Levenshtein, unit substitution/deletion/insertion costs",
+    "tie_order": [
+      "diagonal match/substitution",
+      "reference deletion",
+      "prediction insertion"
+    ],
+    "repetition_warning": "Traceback indices are not identities of indistinguishable spoken duplicates."
+  },
+  "metrics": {
+    "wer": "(substitutions+deletions+insertions)/reference_word_count",
+    "fillers": [
+      "um",
+      "uh"
+    ],
+    "filler_tp": "Reference filler aligned as exact normalized match",
+    "filler_fn": "Reference filler without exact normalized match",
+    "filler_fp": "Predicted filler not accounted for by a reference-filler exact match",
+    "uncertainty": "Keep canonical score plus all predeclared alternatives; never silently select a favorable reference."
+  },
+  "format_diagnostic": "references/format-equivalence-v1.json",
+  "format_diagnostic_limit": "Declared after baseline/Turbo outputs were inspected, before the later full-AMI candidate. Diagnostic only; not independent validation or permission to alter predictions."
+}

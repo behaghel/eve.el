@@ -1,0 +1,648 @@
+{
+  "role": "EVALUATION ONLY; never assessor/encoder input",
+  "version": 1,
+  "negative_cases": [
+    {
+      "id": "proposed-negative-01",
+      "source_id": "01-mental-health",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "today",
+        "before_reference_index": 1
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:002"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-02",
+      "source_id": "01-mental-health",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "also",
+        "before_reference_index": 8
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:079",
+        "03-walking-oscar:word:027",
+        "03-walking-oscar:word:045"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-03",
+      "source_id": "01-mental-health",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "because",
+        "before_reference_index": 29
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:053",
+        "03-walking-oscar:word:073"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-04",
+      "source_id": "01-mental-health",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "um",
+        "before_reference_index": 56
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:035",
+        "02-speed:word:033",
+        "03-walking-oscar:word:005",
+        "04-legacy-11yo:word:022",
+        "04-legacy-11yo:word:063"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-05",
+      "source_id": "01-mental-health",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent (only 2 'is')",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "is",
+        "before_reference_index": 74
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:007",
+        "01-mental-health:word:030",
+        "01-mental-health:word:072",
+        "01-mental-health:word:073",
+        "02-speed:word:015",
+        "02-speed:word:025",
+        "02-speed:word:056",
+        "02-speed:word:070",
+        "02-speed:word:072",
+        "03-walking-oscar:word:013",
+        "03-walking-oscar:word:026",
+        "03-walking-oscar:word:065",
+        "03-walking-oscar:word:075",
+        "04-legacy-11yo:word:011",
+        "04-legacy-11yo:word:030",
+        "04-legacy-11yo:word:049"
+      ],
+      "grading_mode": "surplus_count",
+      "candidate_run_indices_half_open": [
+        72,
+        75
+      ],
+      "run_literal_tokens": [
+        "is",
+        "is",
+        "is"
+      ],
+      "true_spoken_count_in_run": 2,
+      "candidate_count_in_run": 3,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": [
+        72,
+        73
+      ],
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-06",
+      "source_id": "01-mental-health",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "Brazil",
+        "before_reference_index": 22
+      },
+      "positive_control_occurrence_ids": [
+        "03-walking-oscar:word:071",
+        "03-walking-oscar:word:079"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-07",
+      "source_id": "02-speed",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "also",
+        "before_reference_index": 4
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:079",
+        "03-walking-oscar:word:027",
+        "03-walking-oscar:word:045"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-08",
+      "source_id": "02-speed",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "mental",
+        "before_reference_index": 18
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:009",
+        "01-mental-health:word:028",
+        "01-mental-health:word:057",
+        "01-mental-health:word:070"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-09",
+      "source_id": "02-speed",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "uh",
+        "before_reference_index": 43
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:005",
+        "01-mental-health:word:008",
+        "02-speed:word:016",
+        "02-speed:word:059",
+        "02-speed:word:064",
+        "02-speed:word:066",
+        "02-speed:word:071",
+        "02-speed:word:082",
+        "02-speed:word:088",
+        "03-walking-oscar:word:001",
+        "03-walking-oscar:word:017",
+        "03-walking-oscar:word:023",
+        "03-walking-oscar:word:030",
+        "03-walking-oscar:word:031",
+        "03-walking-oscar:word:064",
+        "03-walking-oscar:word:072",
+        "03-walking-oscar:word:081",
+        "04-legacy-11yo:word:009",
+        "04-legacy-11yo:word:027",
+        "04-legacy-11yo:word:065"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-10",
+      "source_id": "02-speed",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "with",
+        "before_reference_index": 54
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:049",
+        "04-legacy-11yo:word:005"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-11",
+      "source_id": "02-speed",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "very",
+        "before_reference_index": 89
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:036",
+        "02-speed:word:075"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-12",
+      "source_id": "02-speed",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent (only one 'second')",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "second",
+        "before_reference_index": 23
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:023"
+      ],
+      "grading_mode": "surplus_count",
+      "candidate_run_indices_half_open": [
+        23,
+        25
+      ],
+      "run_literal_tokens": [
+        "second",
+        "second"
+      ],
+      "true_spoken_count_in_run": 1,
+      "candidate_count_in_run": 2,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": [
+        23
+      ],
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-13",
+      "source_id": "03-walking-oscar",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "Uber",
+        "before_reference_index": 4
+      },
+      "positive_control_occurrence_ids": [
+        "02-speed:word:026"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-14",
+      "source_id": "03-walking-oscar",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "uh",
+        "before_reference_index": 18
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:005",
+        "01-mental-health:word:008",
+        "02-speed:word:016",
+        "02-speed:word:059",
+        "02-speed:word:064",
+        "02-speed:word:066",
+        "02-speed:word:071",
+        "02-speed:word:082",
+        "02-speed:word:088",
+        "03-walking-oscar:word:001",
+        "03-walking-oscar:word:017",
+        "03-walking-oscar:word:023",
+        "03-walking-oscar:word:030",
+        "03-walking-oscar:word:031",
+        "03-walking-oscar:word:064",
+        "03-walking-oscar:word:072",
+        "03-walking-oscar:word:081",
+        "04-legacy-11yo:word:009",
+        "04-legacy-11yo:word:027",
+        "04-legacy-11yo:word:065"
+      ],
+      "grading_mode": "surplus_count",
+      "candidate_run_indices_half_open": [
+        17,
+        19
+      ],
+      "run_literal_tokens": [
+        "uh",
+        "uh"
+      ],
+      "true_spoken_count_in_run": 1,
+      "candidate_count_in_run": 2,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": [
+        17
+      ],
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-15",
+      "source_id": "03-walking-oscar",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "uh",
+        "before_reference_index": 31
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:005",
+        "01-mental-health:word:008",
+        "02-speed:word:016",
+        "02-speed:word:059",
+        "02-speed:word:064",
+        "02-speed:word:066",
+        "02-speed:word:071",
+        "02-speed:word:082",
+        "02-speed:word:088",
+        "03-walking-oscar:word:001",
+        "03-walking-oscar:word:017",
+        "03-walking-oscar:word:023",
+        "03-walking-oscar:word:030",
+        "03-walking-oscar:word:031",
+        "03-walking-oscar:word:064",
+        "03-walking-oscar:word:072",
+        "03-walking-oscar:word:081",
+        "04-legacy-11yo:word:009",
+        "04-legacy-11yo:word:027",
+        "04-legacy-11yo:word:065"
+      ],
+      "grading_mode": "surplus_count",
+      "candidate_run_indices_half_open": [
+        30,
+        33
+      ],
+      "run_literal_tokens": [
+        "uh",
+        "uh",
+        "uh"
+      ],
+      "true_spoken_count_in_run": 2,
+      "candidate_count_in_run": 3,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": [
+        30,
+        31
+      ],
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-16",
+      "source_id": "03-walking-oscar",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "good",
+        "before_reference_index": 49
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:050",
+        "02-speed:word:093",
+        "03-walking-oscar:word:011"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-17",
+      "source_id": "03-walking-oscar",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "um",
+        "before_reference_index": 68
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:035",
+        "02-speed:word:033",
+        "03-walking-oscar:word:005",
+        "04-legacy-11yo:word:022",
+        "04-legacy-11yo:word:063"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "proposed-negative-18",
+      "source_id": "03-walking-oscar",
+      "reference_class": "clear_absent",
+      "human_label_verbatim": "clear_absent",
+      "label_basis": "Hubert completed audio-review worksheet; confirmed interpretation/asked to proceed. Not inferred from missing reference text or assessor output.",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "month",
+        "before_reference_index": 73
+      },
+      "positive_control_occurrence_ids": [
+        "01-mental-health:word:011"
+      ],
+      "grading_mode": "inserted_occurrence",
+      "candidate_run_indices_half_open": null,
+      "run_literal_tokens": null,
+      "true_spoken_count_in_run": null,
+      "candidate_count_in_run": null,
+      "true_surplus_count": 1,
+      "protected_original_reference_indices": null,
+      "counted_in_clear_negative_detection_denominator": true,
+      "extra_token_has_no_fabricated_time": true
+    },
+    {
+      "id": "legacy-unspoken-know-infix",
+      "source_id": "04-legacy-11yo",
+      "reference_class": "clear_absent",
+      "basis": "Previously explicit human-confirmed absent know in controlled first9.2s; known failures/predictions already inspected. NOT a new blind case.",
+      "family_id": "legacy-unspoken-know",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "know",
+        "before_reference_index": 2,
+        "reference_sequence_half_open": [
+          0,
+          22
+        ]
+      },
+      "evaluation_audio": "audio/legacy-phoneme-0-9.2.wav",
+      "evaluation_audio_sha256": "6fc73cbbb8adc7ce87323129050f9b5a344b50f18c6c2d944c588104b4bec3c2",
+      "source_window_seconds": [
+        0,
+        9.2
+      ],
+      "historical_fitted_interval_observation_only": {
+        "kind": "old artificial infix-know fitted interval",
+        "start_seconds": "1.02",
+        "end_seconds": "1.14",
+        "caution": "Overlaps the real name's ending; do NOT expect silence merely because know is unspoken."
+      },
+      "caution": "Not silence; overlaps existing name/team-ending speech. Historical fit interval is neither acoustic truth nor a fabricated candidate word interval.",
+      "negative_origin": "counterfactual",
+      "phonetic_outputs_already_inspected": true,
+      "grading_mode": "inserted_occurrence",
+      "human_label_verbatim": "Previously explicitly confirmed unspoken know; not reopened by this review.",
+      "counted_in_clear_negative_detection_denominator": true,
+      "true_surplus_count": 1
+    },
+    {
+      "id": "legacy-unspoken-know-tail",
+      "source_id": "04-legacy-11yo",
+      "reference_class": "clear_absent",
+      "basis": "Previously explicit human-confirmed absent know in controlled first9.2s; known failures/predictions already inspected. NOT a new blind case.",
+      "family_id": "legacy-unspoken-know",
+      "candidate_operation": {
+        "type": "insert_one_token",
+        "literal_token": "know",
+        "before_reference_index": 22,
+        "reference_sequence_half_open": [
+          0,
+          22
+        ]
+      },
+      "evaluation_audio": "audio/legacy-phoneme-0-9.2.wav",
+      "evaluation_audio_sha256": "6fc73cbbb8adc7ce87323129050f9b5a344b50f18c6c2d944c588104b4bec3c2",
+      "source_window_seconds": [
+        0,
+        9.2
+      ],
+      "historical_fitted_interval_observation_only": {
+        "kind": "old artificial tail-know fitted interval",
+        "start_seconds": "8.38",
+        "end_seconds": "8.50",
+        "caution": "Overlaps the real team ending; do NOT expect silence or delete real speech."
+      },
+      "caution": "Not silence; overlaps existing name/team-ending speech. Historical fit interval is neither acoustic truth nor a fabricated candidate word interval.",
+      "negative_origin": "counterfactual",
+      "phonetic_outputs_already_inspected": true,
+      "grading_mode": "inserted_occurrence",
+      "human_label_verbatim": "Previously explicitly confirmed unspoken know; not reopened by this review.",
+      "counted_in_clear_negative_detection_denominator": true,
+      "true_surplus_count": 1
+    }
+  ],
+  "genuine_baseline_word_occurrences": 343,
+  "protected_baseline_fillers": 25,
+  "quarantined_reference_slots": 21,
+  "clear_negative_detection_denominator": 20,
+  "minimum_case_hits_for_95_percent": 19,
+  "grading_modes": {
+    "inserted_occurrence": 16,
+    "surplus_count": 4
+  },
+  "case_rate_not_population_accuracy": true,
+  "family_dependence_must_be_reported": true
+}
