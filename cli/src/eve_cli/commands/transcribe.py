@@ -21,6 +21,7 @@ from typing import Any, Never
 
 from .. import alignment, tjm_v11
 from ..utils.fillers import DEFAULT_FILLERS
+from ..utils.typography import join_display_tokens
 from .common import add_json_flag, write_json_atomic
 from .tag_fillers import tag_manifest_fillers
 
@@ -526,7 +527,7 @@ def _v11_segments(
             "start": start_tick / rate,
             "end": end_tick / rate,
             "spoken_text": " ".join(word["spoken"] for word in words),
-            "display_text": " ".join(
+            "display_text": join_display_tokens(
                 word.get("display") or word["spoken"] for word in words
             ),
             "words": words,

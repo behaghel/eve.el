@@ -294,6 +294,17 @@ The display token for a word is:
 1. `word.display` when present and non-empty;
 2. otherwise `word.spoken`.
 
+Derived display joins MUST omit synthetic spaces at French elision boundaries
+such as `j` + `'espère`, `c` + `'` + `est`, or `l’` + `écouter`. Both straight and
+curly apostrophes retain their original spelling. This changes only presentation
+separators: consumers MUST NOT merge timed tokens, rewrite recognized words or
+display fragments, or change their source intervals. Ordinary quotation marks
+MUST NOT trigger blanket space removal. Existing single-space-joined word caches
+MAY be accepted as equivalent input for word-derived rendering/highlighting;
+the displayed projection uses elision spacing. Explicit segment-level display
+corrections that differ from the word projection remain authoritative for plain
+captions; original-clock export MUST preserve approved explicit `display_text`.
+
 A word object is an atomic timed editing token. Its `display` string MAY contain
 multiple written words or differ from `spoken` in spelling, punctuation, or
 meaning. Rewriting `display` MUST NOT change the token's identity, source timing,
@@ -899,7 +910,9 @@ model override, it MAY delegate language-aware model selection to the CLI.
 Known incompatible English-only choices MUST fail rather than silently switch
 language, model, or alignment policy. Full-source word-editing requests MUST
 request word timestamps. Asynchronous completion MUST retain the launch-time
-language and filler-review preferences in the result buffer. Canonical tick-based
+language, resolved CLI executable, and filler-review preferences in the result
+buffer. Subsequent inspection and rendering MUST use that captured CLI rather
+than revert to an unrelated older executable from PATH. Canonical tick-based
 output MUST NOT be offered legacy seconds-only retranscription as automatic repair.
 These editor preferences do not introduce new required TJM fields or certify
 recognition fidelity, word presence, or timing accuracy.

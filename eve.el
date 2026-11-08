@@ -1340,7 +1340,8 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
                                   :filter #'eve--transcribe-process-filter
                                   :sentinel (lambda (process event)
                                               (eve--transcribe-finished
-                                               process event output-file word-aligner settings)))))
+                                               process event output-file word-aligner
+                                               (cons (cons 'eve-cli-program program) settings))))))
       (when (processp process)
         (process-put process :eve-start-time start-time)
         (process-put process :eve-backend eve-transcribe-backend)
@@ -3104,7 +3105,8 @@ Return one display fragment per existing token, without mutating data."
     (let ((old (mapcar #'eve--word-render-text
                       (cl-subseq words start-index (1+ end-index)))))
       (cond
-       ((equal text (string-join old " ")) old)
+       ((or (equal text (string-join old " "))
+            (equal text (eve--join-display-tokens old))) old)
        ((and (= count 1) (eve--canonical-editor-p)) (list text))
        ((= count (length tokens)) tokens)
        (t (user-error "Ambiguous replacement: edit one timed token at a time; timings are never redistributed"))))))
@@ -3126,10 +3128,9 @@ Return one display fragment per existing token, without mutating data."
   (let* ((segment (eve--segment-panel-segment))
          (range (eve--segment-panel-word-range))
          (words (alist-get 'words segment))
-         (current (string-join
+         (current (eve--join-display-tokens
                    (mapcar #'eve--word-render-text
-                           (cl-subseq words (car range) (1+ (cdr range))))
-                   " "))
+                           (cl-subseq words (car range) (1+ (cdr range))))))
          (replacement (read-string "Rephrase words: " current)))
     (eve--segment-panel-rephrase-values segment (car range) (cdr range) replacement)
     (eve--segment-panel-record-state)
@@ -3143,7 +3144,7 @@ Return one display fragment per existing token, without mutating data."
   (interactive)
   (let* ((segment (eve--segment-panel-segment))
          (words (alist-get 'words segment))
-         (current (string-join (mapcar #'eve--word-render-text words) " "))
+         (current (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
          (replacement (read-string "Rephrase segment: " current)))
     (eve--segment-panel-rephrase-values segment 0 (1- (length words)) replacement)
     (eve--segment-panel-record-state)
@@ -3441,7 +3442,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
 
 (defun eve--segment-panel-words-label (words)
   "Return a compact display label for WORDS."
-  (string-join (mapcar #'eve--word-render-text words) " "))
+  (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
 
 (defun eve--segment-panel-set-word-token (word token)
   "Set WORD's visible TOKEN in place."
@@ -3479,7 +3480,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
   (let* ((canonical (eve--canonical-editor-p))
          (words (seq-remove (lambda (word) (and canonical (eve--word-media-cut-p word)))
                             (alist-get 'words segment))))
-    (string-join (mapcar #'eve--word-render-text words) " ")))
+    (eve--join-display-tokens (mapcar #'eve--word-render-text words))))
 
 (defun eve--segment-panel-refresh-segment-text (segment)
   "Refresh SEGMENT's caption cache without rewriting its spoken record."
@@ -4522,6 +4523,34 @@ Legacy manifests retain their seconds-based interpretation."
                                 eve--data))
            "1.1")))
 
+(defconst eve--french-elision-regexp
+  (concat "\\(?:\\`\\|[^[:alnum:]_'’]\\)"
+          "\\(?:c\\|d\\|j\\|l\\|m\\|n\\|s\\|t\\|qu\\|jusqu\\|lorsqu"
+          "\\|puisqu\\|quoiqu\\|presqu\\|quelqu\\|entr\\|aujourd\\)\\(['’]?\\)\\'")
+  "French elision stems at the end of a display fragment.")
+
+(defun eve--display-token-separator (left right)
+  "Return spacing between LEFT and RIGHT without changing either fragment."
+  (save-match-data
+    (let ((case-fold-search t))
+      (cond
+       ((or (string-empty-p left) (string-empty-p right)) "")
+       ((and (string-match eve--french-elision-regexp left)
+             (let ((apostrophe (match-string 1 left)))
+               (if (not (string-empty-p apostrophe))
+                   (string-match-p "\\`[[:alpha:]]" right)
+                 (or (member right '("'" "’"))
+                     (string-match-p "\\`['’][[:alpha:]]" right))))) "")
+       (t " ")))))
+
+(defun eve--join-display-tokens (fragments)
+  "Join display FRAGMENTS with French elision spacing, never merging records."
+  (let ((text ""))
+    (dolist (fragment fragments)
+      (unless (string-empty-p fragment)
+        (setq text (concat text (eve--display-token-separator text fragment) fragment))))
+    text))
+
 (defun eve--word-render-text (word)
   "Return WORD's display fragment, falling back to the format's source token."
   (let ((display (alist-get 'display word)))
@@ -4543,6 +4572,7 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
          (source-spans (and (not canonical) words (eve--segment-word-spans text)))
          (pieces nil)
          (word-spans nil)
+         (joined "")
          (cursor 0))
     (if (and words (= (length words) (length source-spans)))
         (cl-loop for word in words
@@ -4561,15 +4591,17 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
             (unless (and eve-hide-deleted-mode (eve--edit-deleted-p word))
               (let ((word-text (string-trim (eve--word-render-text word))))
                 (unless (string-empty-p word-text)
-                  (when pieces
-                    (setq cursor (1+ cursor)))
+                  (let ((separator (if canonical
+                                       (eve--display-token-separator joined word-text)
+                                     (if pieces " " ""))))
+                    (setq cursor (+ cursor (length separator))
+                          joined (concat joined separator word-text)))
                   (push word-text pieces)
                   (push (list cursor (+ cursor (length word-text)) word) word-spans)
                   (setq cursor (+ cursor (length word-text)))))))
         (setq pieces (unless (string-empty-p text) (list text)))))
-    (list :text (if pieces
-                    (string-join (nreverse pieces) " ")
-                  "")
+    (list :text (if (and canonical words) joined
+                  (if pieces (string-join (nreverse pieces) " ") ""))
           :word-spans (nreverse word-spans))))
 
 (defun eve--rendered-marker-duration (segment)

@@ -18,6 +18,7 @@ from fractions import Fraction
 from typing import Any
 
 from .. import subtitles, tjm_v11
+from ..utils.typography import join_display_tokens
 from .common import add_json_flag, write_json_atomic
 
 FFMPEG = "ffmpeg"
@@ -576,7 +577,7 @@ def segment_gap_bounds(segment: dict[str, Any]) -> tuple[float, float] | None:
 
 
 def render_word_text(segment: dict[str, Any]) -> str:
-    return " ".join(
+    return join_display_tokens(
         str(word.get("token", "")) for word in surviving_words(segment)
     ).strip()
 
@@ -601,7 +602,10 @@ def cue_text(segment: dict[str, Any]) -> str:
         text = render_word_text(segment)
     else:
         text = str(segment.get("text") or "").strip()
-        if not text:
+        legacy_join = " ".join(
+            str(word.get("token", "")) for word in surviving_words(segment)
+        ).strip()
+        if not text or text == legacy_join:
             text = render_word_text(segment)
     speaker = str(segment.get("speaker") or "").strip()
     if speaker and text:
@@ -989,9 +993,13 @@ def build_token_captions(
                     )
                 offset += range_end - range_start
             tokens.append(subtitles.TimedToken(fragment, intervals))
-        derived = " ".join(token.text for token in tokens)
+        derived = join_display_tokens(token.text for token in tokens)
+        legacy_join = " ".join(token.text for token in tokens)
         display = segment.get("display_text")
-        if display and str(display).strip() != derived.strip():
+        if display and str(display).strip() not in (
+            derived.strip(),
+            legacy_join.strip(),
+        ):
             raise subtitles.SubtitleError(
                 f"Segment '{label}' display_text must match its token display strings"
             )

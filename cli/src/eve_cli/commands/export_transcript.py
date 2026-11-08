@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from eve_cli import tjm_v11
+from eve_cli.utils.typography import join_display_tokens
 
 from .common import add_json_flag
 
@@ -39,7 +40,7 @@ def _text(segment: dict[str, Any]) -> str:
         raise tjm_v11.ValidationError("Source export does not apply word deletions")
     text = (
         segment.get("display_text")
-        or " ".join(word.get("display") or word["spoken"] for word in words)
+        or join_display_tokens(word.get("display") or word["spoken"] for word in words)
         or segment.get("spoken_text", "")
     )
     text = " ".join(text.split())

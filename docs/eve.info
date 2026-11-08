@@ -541,10 +541,12 @@ change language.
 is meaningless.  Configure ‘eve-filler-exception-phrases’ for
 expressions that must not be newly tagged.  English-only ‘.en’ model
 names, native CTC alignment, and ‘trained-verbatim’ are not French
-alternatives and are rejected before launch.  Language and phrase rules
-captured at launch follow the asynchronous result buffer, even if you
-change your settings while recognition runs.  They are editor
-preferences, not new manifest fields.
+alternatives and are rejected before launch.  Language, the resolved CLI
+executable, and phrase rules captured at launch follow the asynchronous
+result buffer, even if you change settings while recognition runs.
+Inspection and rendering therefore use the same CLI rather than an older
+‘eve’ found in PATH.  These are editor preferences, not new manifest
+fields.
 
   1. Run ‘M-x eve-transcribe’ or ‘M-x eve-dired-transcribe’.  Emacs
      requests timed words; recognized candidates are highlighted when
@@ -907,6 +909,13 @@ at point.  On a marker it edits the title.  For timed v1.1 segments it
 changes ‘display’ fragments, never the factual ‘spoken’ tokens or their
 source ticks.  The panel's ‘i’ action edits one focused token or the
 selected token range; ‘E’ edits the segment's token displays.
+
+   French elisions such as ‘j’ + ‘'espère’ and ‘l’’ + ‘écouter’ display
+as ‘j'espère’ and ‘l’écouter’ in the editor and word-derived captions.
+Straight and curly apostrophes keep their spelling.  This removes only
+synthetic spacing: the source tokens stay separate, with their original
+timings and editing identities.  Existing timed transcripts do not need
+retranscription.
 
    A single v1.1 token can display a complete phrase, which highlights
 and deletes as one unit.  For a bulk replacement, supply one replacement
@@ -2131,70 +2140,70 @@ Node: The raw JSON companion buffer14542
 Node: Transcription14976
 Node: Starting transcription from Emacs15279
 Node: French transcription and review16020
-Node: Timing and output validity19063
-Node: Backends24259
-Node: Configuration28944
-Node: Installing optional backends30499
-Node: Editing30957
-Node: Navigation31250
-Node: Deletion and restoration31627
-Node: Splitting and merging32266
-Node: Reordering34011
-Node: Markers and sections34655
-Node: Inline editing35354
-Node: Metadata36670
-Node: Undo and redo37268
-Node: Validation37595
-Node: Filler Words37921
-Node: Concept38133
-Node: Configuration (1)38766
-Node: Commands39960
-Node: Auto-tagging on file open41370
-Node: B-Roll41832
-Node: Concept (1)42138
-Node: Editing b-roll metadata42794
-Node: Compositing modes in detail44563
-Node: Replace mode44788
-Node: Pip mode45236
-Node: Audio policy46155
-Node: JSON templates46634
-Node: Overlay fields47927
-Node: Concrete example lower-third title card49330
-Node: Placeholders without templates51215
-Node: Continuation chains51638
-Node: Compilation and Rendering52661
-Node: Audio-only compilation53069
-Node: Two video modes draft and final55686
-Node: Burned-in captions56217
-Node: Under the hood60069
-Node: Pre-flight validation61732
-Node: Dry-run analysis62469
-Node: Checkpoint and resume62995
-Node: Progressive output63476
-Node: Configuration reference63878
-Node: CLI reference66162
-Node: Playback67592
-Node: Source playback67839
-Node: Rendered playback68300
-Node: Playback tracking and segment highlighting68798
-Node: Controls69225
-Node: Video layout70206
-Node: Display71742
-Node: Timestamp ruler71947
-Node: Context panels72535
-Node: Hiding deleted segments74499
-Node: Word-level display74932
-Node: Key Bindings76047
-Node: Single-key bindings76288
-Node: C-c prefix bindings78414
-Node: Playback-mode overrides79422
-Node: The hydra cheatsheet80023
-Node: Configuration Reference80425
-Node: Architecture88060
-Node: Two-layer boundary88247
-Node: Shared contract89051
-Node: Development89523
-Node: Appendix A TJM v11 Specification89999
+Node: Timing and output validity19187
+Node: Backends24383
+Node: Configuration29068
+Node: Installing optional backends30623
+Node: Editing31081
+Node: Navigation31374
+Node: Deletion and restoration31751
+Node: Splitting and merging32390
+Node: Reordering34135
+Node: Markers and sections34779
+Node: Inline editing35478
+Node: Metadata37202
+Node: Undo and redo37800
+Node: Validation38127
+Node: Filler Words38453
+Node: Concept38665
+Node: Configuration (1)39298
+Node: Commands40492
+Node: Auto-tagging on file open41902
+Node: B-Roll42364
+Node: Concept (1)42670
+Node: Editing b-roll metadata43326
+Node: Compositing modes in detail45095
+Node: Replace mode45320
+Node: Pip mode45768
+Node: Audio policy46687
+Node: JSON templates47166
+Node: Overlay fields48459
+Node: Concrete example lower-third title card49862
+Node: Placeholders without templates51747
+Node: Continuation chains52170
+Node: Compilation and Rendering53193
+Node: Audio-only compilation53601
+Node: Two video modes draft and final56218
+Node: Burned-in captions56749
+Node: Under the hood60601
+Node: Pre-flight validation62264
+Node: Dry-run analysis63001
+Node: Checkpoint and resume63527
+Node: Progressive output64008
+Node: Configuration reference64410
+Node: CLI reference66694
+Node: Playback68124
+Node: Source playback68371
+Node: Rendered playback68832
+Node: Playback tracking and segment highlighting69330
+Node: Controls69757
+Node: Video layout70738
+Node: Display72274
+Node: Timestamp ruler72479
+Node: Context panels73067
+Node: Hiding deleted segments75031
+Node: Word-level display75464
+Node: Key Bindings76579
+Node: Single-key bindings76820
+Node: C-c prefix bindings78946
+Node: Playback-mode overrides79954
+Node: The hydra cheatsheet80555
+Node: Configuration Reference80957
+Node: Architecture88592
+Node: Two-layer boundary88779
+Node: Shared contract89583
+Node: Development90055
+Node: Appendix A TJM v11 Specification90531
 
 End Tag Table
 

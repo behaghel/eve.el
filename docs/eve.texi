@@ -534,9 +534,11 @@ These phrases are review candidates, not a rule that every occurrence is
 meaningless.  Configure @samp{eve-filler-exception-phrases} for expressions that must
 not be newly tagged.  English-only @samp{.en} model names, native CTC alignment, and
 @samp{trained-verbatim} are not French alternatives and are rejected before launch.
-Language and phrase rules captured at launch follow the asynchronous result
-buffer, even if you change your settings while recognition runs.  They are
-editor preferences, not new manifest fields.
+Language, the resolved CLI executable, and phrase rules captured at launch
+follow the asynchronous result buffer, even if you change settings while
+recognition runs.  Inspection and rendering therefore use the same CLI rather
+than an older @samp{eve} found in PATH@.  These are editor preferences, not new manifest
+fields.
 
 @enumerate
 @item
@@ -902,6 +904,12 @@ point.  On a marker it edits the title.  For timed v1.1 segments it changes
 @samp{display} fragments, never the factual @samp{spoken} tokens or their source ticks.
 The panel's @samp{i} action edits one focused token or the selected token range;
 @samp{E} edits the segment's token displays.
+
+French elisions such as @samp{j} + @samp{'espère} and @samp{l’} + @samp{écouter} display as
+@samp{j'espère} and @samp{l’écouter} in the editor and word-derived captions.  Straight and
+curly apostrophes keep their spelling.  This removes only synthetic spacing:
+the source tokens stay separate, with their original timings and editing
+identities.  Existing timed transcripts do not need retranscription.
 
 A single v1.1 token can display a complete phrase, which highlights and deletes
 as one unit.  For a bulk replacement, supply one replacement word per selected

@@ -2081,7 +2081,7 @@
         (setq-local eve-transcribe-word-aligner nil)
         (setq-local eve-filler-phrases '("euh" "en fait"))
         (setq-local eve-filler-regex nil)
-        (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+        (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "/test/current/eve"))
                   ((symbol-function 'make-process)
                    (lambda (&rest args) (setq sentinel (plist-get args :sentinel)) 'fake))
                   ((symbol-function 'process-buffer) (lambda (_) nil))
@@ -2095,6 +2095,7 @@
           (funcall sentinel 'fake "finished\n")))
       (should (equal eve-transcribe-language "fr"))
       (should (equal eve-filler-phrases '("euh" "en fait")))
+      (should (equal eve-cli-program "/test/current/eve"))
       (should (eve--word-filler-p word)))))
 
 (ert-deftest eve-french-filler-removal-rejects-untimed-captions-atomically ()
@@ -2136,6 +2137,36 @@
         (should (equal (alist-get key before) (alist-get key word))))
       (eve-undo)
       (should (eve--word-filler-p (nth 1 (alist-get 'words (car (eve--segments)))))))))
+
+(ert-deftest eve-french-apostrophe-joining-keeps-exact-token-spans ()
+  "French elisions display without spaces, retaining independent timed tokens."
+  (eve-test-with-canonical-v11-buffer
+    (let* ((segment (car (eve--segments))) (words (alist-get 'words segment)))
+      (cl-loop for word in words for token in '("J" "'espère" "l’" "écouter")
+               do (setf (alist-get 'spoken word) token
+                        (alist-get 'display word) token))
+      (let* ((before (copy-tree eve--data t))
+             (view (eve--segment-render-data segment)))
+        (should (equal (plist-get view :text) "J'espère l’écouter"))
+        (should (equal (eve--segment-panel-rephrase-values segment 0 1 "J'espère")
+                       '("J" "'espère")))
+        (should (equal (mapcar (lambda (span) (list (nth 0 span) (nth 1 span)))
+                              (plist-get view :word-spans))
+                       '((0 1) (1 8) (9 11) (11 18))))
+        (eve--render)
+        (cl-loop for index from 0 below 4 for word in words do
+                 (eve--goto-word-by-index "seg-1" index)
+                 (should (eq (plist-get (eve--word-data-at-point) :word) word)))
+        (should (equal before eve--data))))))
+
+(ert-deftest eve-french-elision-joining-does-not-strip-quotation-spaces ()
+  "Straight/curly elisions and separate apostrophe fragments join, quotes do not."
+  (dolist (case '((("c" "'" "est") "c'est")
+                  (("qu" "’il" "m" "'écoute") "qu’il m'écoute")
+                  (("aujourd" "'hui") "aujourd'hui")
+                  (("Elle" "dit" "'bonjour'") "Elle dit 'bonjour'")
+                  (("rock" "'n'" "roll") "rock 'n' roll")))
+    (should (equal (eve--join-display-tokens (car case)) (cadr case)))))
 
 (ert-deftest eve-french-empty-language-is-rejected ()
   "An empty language cannot accidentally choose an English default model."
