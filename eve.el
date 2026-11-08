@@ -163,9 +163,19 @@ using source start/end times and ignoring word-level edits."
   :type 'string
   :group 'eve)
 
-(defcustom eve-transcribe-model "medium.en"
-  "Model passed to `eve transcribe'."
-  :type 'string
+(defcustom eve-transcribe-language "en"
+  "Language code passed to full-source and legacy region transcription.
+Use \"fr\" for French.  This selects recognition language, not filler phrases
+or a qualification of word-timing accuracy."
+  :type '(choice (const :tag "English" "en") (const :tag "French" "fr") string)
+  :group 'eve)
+
+(defcustom eve-transcribe-model nil
+  "Model passed to `eve transcribe', or nil for the CLI default.
+The CLI chooses medium.en for English and multilingual medium otherwise.
+An explicit model name or local path is preserved; models are not silently
+replaced when the language changes."
+  :type '(choice (const :tag "Language-aware CLI default" nil) string)
   :group 'eve)
 
 (defcustom eve-transcribe-recognition-profile "default"
@@ -1215,24 +1225,49 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
         (let ((count (eve--reprocess-suspicious-intervals intervals backend model)))
           (message "Reprocessed %d suspicious region(s)" count))))))
 
-(defun eve--transcribe-finished (process event output-path &optional word-aligner)
+(defun eve--transcribe-finished (process event output-path &optional word-aligner settings)
   "Handle completion of transcribe PROCESS EVENT for OUTPUT-PATH.
-WORD-ALIGNER is captured at launch; CTC output skips legacy ASR repair offers."
+WORD-ALIGNER and editor SETTINGS are captured at launch.  CTC and canonical
+output skip legacy seconds-only ASR repair offers."
   (eve--transcribe-finished-state)
   (let ((buffer (process-buffer process)))
     (if (and (eq (process-status process) 'exit)
              (= (process-exit-status process) 0))
         (progn
           (message "eve transcribe finished: %s" output-path)
-          (find-file output-path)
+          (cl-progv (mapcar #'car settings) (mapcar #'cdr settings)
+            (find-file output-path))
+          (when (derived-mode-p 'eve-mode)
+            (dolist (setting settings)
+              (set (make-local-variable (car setting)) (cdr setting)))
+            (when (and settings (> (eve--apply-filler-tags) 0))
+              (eve--mark-dirty)
+              (eve--render t)))
           (when (and (not (equal word-aligner "ctc"))
-                     (derived-mode-p 'eve-mode))
+                     (derived-mode-p 'eve-mode)
+                     (not (eve--canonical-editor-p)))
             (eve--maybe-offer-reprocess-suspicious-transcripts
              (or (process-get process :eve-backend) eve-transcribe-backend)
              (or (process-get process :eve-model) eve-transcribe-model))))
       (when (buffer-live-p buffer)
         (pop-to-buffer buffer))
       (message "eve transcribe failed: %s" (string-trim event)))))
+
+(defun eve--transcribe-language-arguments (model)
+  "Return recognition language arguments, validating an explicit MODEL."
+  (unless (and (stringp eve-transcribe-language)
+               (not (string-empty-p (string-trim eve-transcribe-language))))
+    (user-error "Choose a transcription language code, such as en or fr"))
+  (when (and model (not (stringp model)))
+    (user-error "Transcription model must be a name/path or nil"))
+  (when (and (not (equal eve-transcribe-language "en")) model
+             (string-suffix-p ".en" model)
+             (not (file-exists-p (expand-file-name model))))
+    (user-error "An English-only .en model cannot transcribe %s; choose a multilingual model or nil"
+                eve-transcribe-language))
+  (append (list "--language" eve-transcribe-language)
+          (when (and model (not (string-empty-p model)))
+            (list "--model" model))))
 
 (defun eve--transcribe-profile-arguments (profile)
   "Return CLI policy arguments for PROFILE without choosing a model.
@@ -1241,15 +1276,18 @@ responsible for model artifacts and authoritative word timing."
   (pcase profile
     ("default" nil)
     ("trained-verbatim"
-     (unless (and (equal eve-transcribe-backend "faster-whisper")
+     (unless (and (equal eve-transcribe-language "en")
+                  (stringp eve-transcribe-model)
+                  (not (string-empty-p eve-transcribe-model))
+                  (equal eve-transcribe-backend "faster-whisper")
                   (equal eve-transcribe-word-aligner "ctc")
                   eve-transcribe-verbatim
                   (or (null eve-transcribe-hotwords)
                       (and (stringp eve-transcribe-hotwords)
                            (string-empty-p eve-transcribe-hotwords))))
-       (user-error "trained-verbatim requires faster-whisper, word-aligner ctc, verbatim enabled and no hotwords"))
+       (user-error "trained-verbatim requires English, an explicit local model, faster-whisper, word-aligner ctc, verbatim enabled and no hotwords"))
      '("--recognition-profile" "trained-verbatim"
-       "--device" "cpu" "--language" "en" "--beam-size" "5"))
+       "--device" "cpu" "--beam-size" "5"))
     (_ (user-error "Unsupported recognition profile: %s" profile))))
 
 (defun eve--transcribe-async (files output-path &optional force)
@@ -1258,6 +1296,15 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
   (let* ((profile eve-transcribe-recognition-profile)
          (profile-arguments (eve--transcribe-profile-arguments profile))
          (word-aligner eve-transcribe-word-aligner)
+         (language-arguments (eve--transcribe-language-arguments eve-transcribe-model))
+         (settings (mapcar (lambda (symbol) (cons symbol (copy-tree (symbol-value symbol) t)))
+                          '(eve-transcribe-language eve-transcribe-model eve-transcribe-backend
+                            eve-transcribe-recognition-profile eve-transcribe-word-aligner
+                            eve-transcribe-verbatim eve-transcribe-hotwords eve-transcribe-tag-fillers
+                            eve-filler-phrases eve-filler-regex eve-filler-exception-phrases)))
+         (_ (when (and (equal word-aligner "ctc")
+                       (not (equal eve-transcribe-language "en")))
+              (user-error "Native CTC word alignment currently supports English only")))
          (_ (when (and force (not (equal word-aligner "ctc")))
               (user-error "Quality override requires eve-transcribe-word-aligner = ctc")))
          (program (or (eve--resolve-cli)
@@ -1269,7 +1316,8 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
                            files
                            (list "--output" output-file
                                  "--backend" eve-transcribe-backend
-                                 "--model" eve-transcribe-model)
+                                 "--timestamps" "words")
+                           language-arguments
                            profile-arguments
                            (when eve-transcribe-verbatim
                              '("--verbatim"))
@@ -1292,7 +1340,7 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
                                   :filter #'eve--transcribe-process-filter
                                   :sentinel (lambda (process event)
                                               (eve--transcribe-finished
-                                               process event output-file word-aligner)))))
+                                               process event output-file word-aligner settings)))))
       (when (processp process)
         (process-put process :eve-start-time start-time)
         (process-put process :eve-backend eve-transcribe-backend)
@@ -3127,7 +3175,8 @@ Return one display fragment per existing token, without mutating data."
                      (user-error "Cannot find eve CLI executable: %s"
                                  eve-cli-program))))
     (append (list program "transcribe" media "--output" output
-                  "--backend" backend "--model" model)
+                  "--backend" backend "--timestamps" "words")
+            (eve--transcribe-language-arguments model)
             (when eve-transcribe-verbatim
               '("--verbatim"))
             (when eve-transcribe-hotwords
@@ -5646,27 +5695,49 @@ Optional COUNT moves backward multiple segments."
   (interactive)
   (eve--goto-filler 'previous))
 
+(defun eve--words-in-region (start end)
+  "Return whole visible timed words intersecting display region START to END."
+  (let (words)
+    (dolist (segment (eve--segments))
+      (when-let* ((bounds (eve--segment-bounds (alist-get 'id segment))))
+        (dolist (span (plist-get (eve--segment-render-data segment) :word-spans))
+          (when (and (< (+ (car bounds) (nth 0 span)) end)
+                     (> (+ (car bounds) (nth 1 span)) start))
+            (cl-pushnew (nth 2 span) words :test #'eq)))))
+    (nreverse words)))
+
 (defun eve-accept-filler ()
-  "Mark the filler word at point as explicitly not filler.
-This keeps the word in the transcript and prevents future auto-tagging from
-marking it as filler again in this TJM file."
+  "Protect the filler at point, or selected fillers, from future deletion.
+An active region protects whole timed tokens, even when a display fragment
+contains several written words.  Other occurrences remain unchanged."
   (interactive)
-  (let* ((info (eve--word-data-at-point))
-         (segment-id (plist-get info :segment-id))
-         (word-index (plist-get info :word-index))
-         (word-text (plist-get info :word-text))
-         (word (plist-get info :word)))
-    (unless (eve--word-filler-p word)
-      (user-error "Word is not marked as filler"))
-    (eve--record-state)
-    (eve--mark-word-non-filler word)
-    (eve--mark-dirty)
-    (eve--render t)
-    (or (eve--goto-word-by-index segment-id word-index)
-        (eve--goto-segment segment-id))
-    (eve--update-focus-overlay)
-    (eve--echo-segment-info)
-    (message "Marked non-filler word '%s'" word-text)))
+  (if (use-region-p)
+      (let ((words (seq-filter #'eve--word-filler-p
+                               (eve--words-in-region (region-beginning) (region-end)))))
+        (unless words
+          (user-error "Selection contains no filler words with timings"))
+        (eve--record-state)
+        (dolist (word words) (eve--mark-word-non-filler word))
+        (eve--mark-dirty)
+        (deactivate-mark)
+        (eve--render t)
+        (message "Preserved %d selected filler word(s)" (length words)))
+    (let* ((info (eve--word-data-at-point))
+           (segment-id (plist-get info :segment-id))
+           (word-index (plist-get info :word-index))
+           (word-text (plist-get info :word-text))
+           (word (plist-get info :word)))
+      (unless (eve--word-filler-p word)
+        (user-error "Word is not marked as filler"))
+      (eve--record-state)
+      (eve--mark-word-non-filler word)
+      (eve--mark-dirty)
+      (eve--render t)
+      (or (eve--goto-word-by-index segment-id word-index)
+          (eve--goto-segment segment-id))
+      (eve--update-focus-overlay)
+      (eve--echo-segment-info)
+      (message "Marked non-filler word '%s'" word-text))))
 
 (defun eve-split-segment ()
   "Split the current segment at point, creating a new segment
@@ -6352,8 +6423,11 @@ TJM v1.1 rejects this seconds-only editor without changing data or history."
     (call-interactively #'eve-add-filler-at-point)))
 
 (defun eve-delete-fillers ()
-  "Mark every word tagged as filler as deleted."
+  "Mark every timed word tagged as filler as deleted.
+Segment-only captions cannot support word-level filler removal."
   (interactive)
+  (unless (seq-some (lambda (segment) (alist-get 'words segment)) (eve--segments))
+    (user-error "Filler removal requires timed words, not segment-only captions"))
   (eve--record-state)
   (let ((count 0))
     (dolist (segment (eve--segments))

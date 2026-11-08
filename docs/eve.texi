@@ -76,6 +76,7 @@ The TJM Manifest
 Transcription
 
 * Starting transcription from Emacs::
+* French transcription and review::
 * Timing and output validity::
 * Backends::
 * Configuration::
@@ -481,6 +482,7 @@ the eve-mode view.
 
 @menu
 * Starting transcription from Emacs::
+* French transcription and review::
 * Timing and output validity::
 * Backends::
 * Configuration::
@@ -506,6 +508,63 @@ file at point when nothing is marked).
 
 On failure, the @samp{*eve transcribe*} buffer appears so you can inspect the error
 output.
+
+@node French transcription and review
+@section French transcription and review
+
+Set @samp{eve-transcribe-language} to @samp{"fr"} through Custom or your Emacs config.
+The default @samp{eve-transcribe-model} is @samp{nil}: the CLI selects @samp{medium.en} for
+English and multilingual @samp{medium} otherwise.  An explicit model stays explicit;
+Eve does not silently replace it when you change language.
+
+For example, with an already cached multilingual @samp{large-v3} model:
+
+@lisp
+(setq eve-transcribe-language "fr"
+      eve-transcribe-backend "faster-whisper"
+      eve-transcribe-model "large-v3"
+      eve-transcribe-recognition-profile "default"
+      eve-transcribe-word-aligner nil
+      eve-filler-phrases '("euh" "en fait" "du coup")
+      eve-filler-regex nil)
+(setenv "HF_HUB_OFFLINE" "1") ; fail rather than download missing model files
+@end lisp
+
+These phrases are review candidates, not a rule that every occurrence is
+meaningless.  Configure @samp{eve-filler-exception-phrases} for expressions that must
+not be newly tagged.  English-only @samp{.en} model names, native CTC alignment, and
+@samp{trained-verbatim} are not French alternatives and are rejected before launch.
+Language and phrase rules captured at launch follow the asynchronous result
+buffer, even if you change your settings while recognition runs.  They are
+editor preferences, not new manifest fields.
+
+@enumerate
+@item
+Run @samp{M-x eve-transcribe} or @samp{M-x eve-dired-transcribe}.  Emacs requests timed
+words; recognized candidates are highlighted when the result opens.
+@item
+Review candidates with @samp{] f} and @samp{[ f}, and audition source audio.
+@item
+Keep a meaningful occurrence: put point on a candidate and press @samp{A}, or
+select an entire expression such as @emph{en fait} and press @samp{A}.  Only selected
+candidates are protected; the phrase list and other occurrences stay intact.
+@item
+After reviewing @emph{all} candidates, press @samp{F} to delete the remaining marked
+words across the @emph{whole manifest}.  Use ordinary word deletion for individual
+cuts instead.  @samp{u} undoes an edit; @samp{A} prevents future deletion rather than
+restoring an already deleted word.
+@item
+Save, then @samp{C-c C-c} renders audio-only sources as M4A with matching WebVTT@.
+Original media and recognized words/ticks stay unchanged.  Audition the
+result before accepting or publishing it.
+@end enumerate
+
+Phrase matching operates on recognized words within each caption.  It cannot
+recover a hesitation omitted by recognition, and successful transcription does
+not certify acoustic word boundaries.  A segment-only transcript remains useful
+for reading and following playback, but cannot support word-level filler
+removal.  Eve rejects that operation rather than inventing word intervals or
+silently retranscribing canonical source clocks through the legacy region path.
 
 @node Timing and output validity
 @section Timing and output validity
@@ -573,9 +632,10 @@ this requires the CTC opt-in and still cannot override invalid timing.
 A failure shows @samp{*eve transcribe*} and is never retried automatically.
 The alignment audit, including false booleans and empty arrays, survives
 editor saving and undo.  Empty segment tag lists also remain arrays in saved
-and render manifests.  CTC completion skips legacy suspicious-region ASR
-repair offers; the word-aligner setting does not change manual region
-retranscription commands.
+and render manifests.  Canonical v1.1 completion skips legacy suspicious-region
+ASR repair offers regardless of the selected word aligner.  Legacy region
+retranscription forwards the selected language but does not gain native CTC
+alignment; it remains unavailable for canonical tick-based manifests.
 
 The pause diagnostic is provisional and non-blocking: Silero-VAD gaps of at
 least 250 ms, with 80 ms excluded at each edge.  Representative validation is
@@ -681,9 +741,12 @@ or timing accuracy.  Model quality must be qualified separately; a backend's
 @item @samp{eve-transcribe-backend}
 @tab @samp{"faster-whisper"}
 @tab Backend name passed to @samp{eve transcribe}.
+@item @samp{eve-transcribe-language}
+@tab @samp{"en"}
+@tab Recognition language code; use @samp{"fr"} for French.
 @item @samp{eve-transcribe-model}
-@tab @samp{"medium.en"}
-@tab Model name/path, independent of recognition profile.
+@tab @samp{nil}
+@tab Optional model name/path; nil delegates language-aware defaults to the CLI@.
 @item @samp{eve-transcribe-recognition-profile}
 @tab @samp{"default"}
 @tab Full-source decoding/token policy; @samp{"trained-verbatim"} requires native CTC and a compatible local model.
@@ -909,8 +972,10 @@ Eve validates the manifest automatically on every save (controlled by
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
 workflow is non-destructive: words are @emph{marked} as fillers first, then
 @emph{optionally deleted}.  Marked fillers are highlighted in the buffer with a
-distinct face and excluded from compilation.  You can mark a word as non-filler
-for this TJM file so future auto-tagging leaves it alone.
+distinct face.  New transcripts keep marked words in audio until you delete
+them; an explicit @samp{render.filler_policy = "drop"} instead drops effective filler
+intervals during compilation.  You can mark words as non-filler for this TJM
+file so future auto-tagging and bulk filler deletion leave them alone.
 
 @node Configuration (1)
 @section Configuration
@@ -950,7 +1015,7 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @tab Mark all tagged fillers as deleted.
 @item @samp{A}
 @tab @samp{eve-accept-filler}
-@tab Mark the filler at point as non-filler in this TJM file.
+@tab Protect the filler at point or selected fillers for this file.
 @item @samp{]f} / @samp{[f}
 @tab @samp{eve-next-filler} / @samp{eve-previous-filler}
 @tab Jump to next / previous visible filler.
@@ -2136,9 +2201,12 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-transcribe-hotwords}
 @tab @samp{nil}
 @tab Optional hotwords string passed to `eve transcribe'.
+@item @samp{eve-transcribe-language}
+@tab @samp{"en"}
+@tab Language code passed to full-source and legacy region transcription.
 @item @samp{eve-transcribe-model}
-@tab @samp{"medium.en"}
-@tab Model passed to `eve transcribe'.
+@tab @samp{nil}
+@tab Model passed to `eve transcribe', or nil for the CLI default.
 @item @samp{eve-transcribe-offer-reprocess-suspicious}
 @tab @samp{t}
 @tab Whether to offer suspicious-region retranscription after transcription.

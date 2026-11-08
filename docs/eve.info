@@ -63,6 +63,7 @@ The TJM Manifest
 Transcription
 
 * Starting transcription from Emacs::
+* French transcription and review::
 * Timing and output validity::
 * Backends::
 * Configuration::
@@ -488,13 +489,14 @@ File: eve.info,  Node: Transcription,  Next: Editing,  Prev: The TJM Manifest,  
 * Menu:
 
 * Starting transcription from Emacs::
+* French transcription and review::
 * Timing and output validity::
 * Backends::
 * Configuration::
 * Installing optional backends::
 
 
-File: eve.info,  Node: Starting transcription from Emacs,  Next: Timing and output validity,  Up: Transcription
+File: eve.info,  Node: Starting transcription from Emacs,  Next: French transcription and review,  Up: Transcription
 
 4.1 Starting transcription from Emacs
 =====================================
@@ -513,9 +515,66 @@ Two commands launch transcription:
 the error output.
 
 
-File: eve.info,  Node: Timing and output validity,  Next: Backends,  Prev: Starting transcription from Emacs,  Up: Transcription
+File: eve.info,  Node: French transcription and review,  Next: Timing and output validity,  Prev: Starting transcription from Emacs,  Up: Transcription
 
-4.2 Timing and output validity
+4.2 French transcription and review
+===================================
+
+Set ‘eve-transcribe-language’ to ‘"fr"’ through Custom or your Emacs
+config.  The default ‘eve-transcribe-model’ is ‘nil’: the CLI selects
+‘medium.en’ for English and multilingual ‘medium’ otherwise.  An
+explicit model stays explicit; Eve does not silently replace it when you
+change language.
+
+   For example, with an already cached multilingual ‘large-v3’ model:
+
+     (setq eve-transcribe-language "fr"
+           eve-transcribe-backend "faster-whisper"
+           eve-transcribe-model "large-v3"
+           eve-transcribe-recognition-profile "default"
+           eve-transcribe-word-aligner nil
+           eve-filler-phrases '("euh" "en fait" "du coup")
+           eve-filler-regex nil)
+     (setenv "HF_HUB_OFFLINE" "1") ; fail rather than download missing model files
+
+   These phrases are review candidates, not a rule that every occurrence
+is meaningless.  Configure ‘eve-filler-exception-phrases’ for
+expressions that must not be newly tagged.  English-only ‘.en’ model
+names, native CTC alignment, and ‘trained-verbatim’ are not French
+alternatives and are rejected before launch.  Language and phrase rules
+captured at launch follow the asynchronous result buffer, even if you
+change your settings while recognition runs.  They are editor
+preferences, not new manifest fields.
+
+  1. Run ‘M-x eve-transcribe’ or ‘M-x eve-dired-transcribe’.  Emacs
+     requests timed words; recognized candidates are highlighted when
+     the result opens.
+  2. Review candidates with ‘] f’ and ‘[ f’, and audition source audio.
+  3. Keep a meaningful occurrence: put point on a candidate and press
+     ‘A’, or select an entire expression such as _en fait_ and press
+     ‘A’.  Only selected candidates are protected; the phrase list and
+     other occurrences stay intact.
+  4. After reviewing _all_ candidates, press ‘F’ to delete the remaining
+     marked words across the _whole manifest_.  Use ordinary word
+     deletion for individual cuts instead.  ‘u’ undoes an edit; ‘A’
+     prevents future deletion rather than restoring an already deleted
+     word.
+  5. Save, then ‘C-c C-c’ renders audio-only sources as M4A with
+     matching WebVTT.  Original media and recognized words/ticks stay
+     unchanged.  Audition the result before accepting or publishing it.
+
+   Phrase matching operates on recognized words within each caption.  It
+cannot recover a hesitation omitted by recognition, and successful
+transcription does not certify acoustic word boundaries.  A segment-only
+transcript remains useful for reading and following playback, but cannot
+support word-level filler removal.  Eve rejects that operation rather
+than inventing word intervals or silently retranscribing canonical
+source clocks through the legacy region path.
+
+
+File: eve.info,  Node: Timing and output validity,  Next: Backends,  Prev: French transcription and review,  Up: Transcription
+
+4.3 Timing and output validity
 ==============================
 
 The transcriber writes v1.1 with a per-source audio sample clock,
@@ -589,9 +648,11 @@ run; this requires the CTC opt-in and still cannot override invalid
 timing.  A failure shows ‘*eve transcribe*’ and is never retried
 automatically.  The alignment audit, including false booleans and empty
 arrays, survives editor saving and undo.  Empty segment tag lists also
-remain arrays in saved and render manifests.  CTC completion skips
-legacy suspicious-region ASR repair offers; the word-aligner setting
-does not change manual region retranscription commands.
+remain arrays in saved and render manifests.  Canonical v1.1 completion
+skips legacy suspicious-region ASR repair offers regardless of the
+selected word aligner.  Legacy region retranscription forwards the
+selected language but does not gain native CTC alignment; it remains
+unavailable for canonical tick-based manifests.
 
    The pause diagnostic is provisional and non-blocking: Silero-VAD gaps
 of at least 250 ms, with 80 ms excluded at each edge.  Representative
@@ -603,7 +664,7 @@ target of 95% normal completion.
 
 File: eve.info,  Node: Backends,  Next: Configuration,  Prev: Timing and output validity,  Up: Transcription
 
-4.3 Backends
+4.4 Backends
 ============
 
 ‘eve transcribe’ supports three backends:
@@ -690,13 +751,14 @@ guarantee of filler preservation.
 
 File: eve.info,  Node: Configuration,  Next: Installing optional backends,  Prev: Backends,  Up: Transcription
 
-4.4 Configuration
+4.5 Configuration
 =================
 
 Variable                               Default               Description
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 ‘eve-transcribe-backend’               ‘"faster-whisper"’    Backend name passed to ‘eve transcribe’.
-‘eve-transcribe-model’                 ‘"medium.en"’         Model name/path, independent of recognition profile.
+‘eve-transcribe-language’              ‘"en"’                Recognition language code; use ‘"fr"’ for French.
+‘eve-transcribe-model’                 ‘nil’                 Optional model name/path; nil delegates language-aware defaults to the CLI.
 ‘eve-transcribe-recognition-profile’   ‘"default"’           Full-source decoding/token policy; ‘"trained-verbatim"’ requires native CTC and a compatible local model.
 ‘eve-transcribe-word-aligner’          ‘nil’                 Set to ‘"ctc"’ for opt-in native word alignment on full-source transcription.
 ‘eve-transcribe-verbatim’              ‘t’                   Pass ‘--verbatim’ to the backend.
@@ -707,7 +769,7 @@ Variable                               Default               Description
 
 File: eve.info,  Node: Installing optional backends,  Prev: Configuration,  Up: Transcription
 
-4.5 Installing optional backends
+4.6 Installing optional backends
 ================================
 
 The ‘transformers’ and ‘nemo’ backends need extra Python dependencies.
@@ -916,8 +978,11 @@ File: eve.info,  Node: Concept,  Next: Configuration (1),  Up: Filler Words
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
 workflow is non-destructive: words are _marked_ as fillers first, then
 _optionally deleted_.  Marked fillers are highlighted in the buffer with
-a distinct face and excluded from compilation.  You can mark a word as
-non-filler for this TJM file so future auto-tagging leaves it alone.
+a distinct face.  New transcripts keep marked words in audio until you
+delete them; an explicit ‘render.filler_policy = "drop"’ instead drops
+effective filler intervals during compilation.  You can mark words as
+non-filler for this TJM file so future auto-tagging and bulk filler
+deletion leave them alone.
 
 
 File: eve.info,  Node: Configuration (1),  Next: Commands,  Prev: Concept,  Up: Filler Words
@@ -955,7 +1020,7 @@ Key           Command                                     Description
 ------------------------------------------------------------------------------------------------------------------------------------
 ‘f’           ‘eve-dwim-filler’                           Add the word at point to phrases and retag; or delete region as filler.
 ‘F’           ‘eve-delete-fillers’                        Mark all tagged fillers as deleted.
-‘A’           ‘eve-accept-filler’                         Mark the filler at point as non-filler in this TJM file.
+‘A’           ‘eve-accept-filler’                         Protect the filler at point or selected fillers for this file.
 ‘]f’ / ‘[f’   ‘eve-next-filler’ / ‘eve-previous-filler’   Jump to next / previous visible filler.
 ‘C-c C-d’     ‘eve-delete-fillers’                        Same as ‘F’ from the ‘C-c’ prefix map.
 —             ‘M-x eve-tag-fillers’                       Mark all matching words in the buffer.
@@ -1944,7 +2009,8 @@ Variable                                       Default                     Descr
 ‘eve-subtitle-defaults’                        ‘(...)’                     TJM subtitle configuration copied when enabling burning in a manifest.
 ‘eve-transcribe-backend’                       ‘"faster-whisper"’          Backend passed to 'eve transcribe'.
 ‘eve-transcribe-hotwords’                      ‘nil’                       Optional hotwords string passed to 'eve transcribe'.
-‘eve-transcribe-model’                         ‘"medium.en"’               Model passed to 'eve transcribe'.
+‘eve-transcribe-language’                      ‘"en"’                      Language code passed to full-source and legacy region transcription.
+‘eve-transcribe-model’                         ‘nil’                       Model passed to 'eve transcribe', or nil for the CLI default.
 ‘eve-transcribe-offer-reprocess-suspicious’    ‘t’                         Whether to offer suspicious-region retranscription after transcription.
 ‘eve-transcribe-recognition-profile’           ‘"default"’                 Decoding/token policy for full-source transcription, independent of model.
 ‘eve-transcribe-suspicious-gap-duration’       ‘5.0’                       Source gap duration in seconds above which transcription cleanup is offered.
@@ -2045,89 +2111,90 @@ or visit the repository at <https://github.com/behaghel/eve.el>.
 
 Tag Table:
 Node: Top205
-Node: Introduction3370
-Node: The Big Idea3676
-Node: The Core Workflow4448
-Node: About This Manual5624
-Node: Getting Started6023
-Node: Installation6201
-Node: Requirements6434
-Node: Installing the CLI6916
-Node: Installing the Emacs package8256
-Node: straightel8514
-Node: Manual9415
-Node: Accessing the manual in Emacs9751
-Node: Quick Start10452
-Node: The TJM Manifest11846
-Node: Structure12078
-Node: How eve-mode renders a manifest13874
-Node: The raw JSON companion buffer14506
-Node: Transcription14940
-Node: Starting transcription from Emacs15207
-Node: Timing and output validity15943
-Node: Backends21010
-Node: Configuration25695
-Node: Installing optional backends27104
-Node: Editing27562
-Node: Navigation27855
-Node: Deletion and restoration28232
-Node: Splitting and merging28871
-Node: Reordering30616
-Node: Markers and sections31260
-Node: Inline editing31959
-Node: Metadata33275
-Node: Undo and redo33873
-Node: Validation34200
-Node: Filler Words34526
-Node: Concept34738
-Node: Configuration (1)35200
-Node: Commands36394
-Node: Auto-tagging on file open37798
-Node: B-Roll38260
-Node: Concept (1)38566
-Node: Editing b-roll metadata39222
-Node: Compositing modes in detail40991
-Node: Replace mode41216
-Node: Pip mode41664
-Node: Audio policy42583
-Node: JSON templates43062
-Node: Overlay fields44355
-Node: Concrete example lower-third title card45758
-Node: Placeholders without templates47643
-Node: Continuation chains48066
-Node: Compilation and Rendering49089
-Node: Audio-only compilation49497
-Node: Two video modes draft and final52114
-Node: Burned-in captions52645
-Node: Under the hood56497
-Node: Pre-flight validation58160
-Node: Dry-run analysis58897
-Node: Checkpoint and resume59423
-Node: Progressive output59904
-Node: Configuration reference60306
-Node: CLI reference62590
-Node: Playback64020
-Node: Source playback64267
-Node: Rendered playback64728
-Node: Playback tracking and segment highlighting65226
-Node: Controls65653
-Node: Video layout66634
-Node: Display68170
-Node: Timestamp ruler68375
-Node: Context panels68963
-Node: Hiding deleted segments70927
-Node: Word-level display71360
-Node: Key Bindings72475
-Node: Single-key bindings72716
-Node: C-c prefix bindings74842
-Node: Playback-mode overrides75850
-Node: The hydra cheatsheet76451
-Node: Configuration Reference76853
-Node: Architecture84308
-Node: Two-layer boundary84495
-Node: Shared contract85299
-Node: Development85771
-Node: Appendix A TJM v11 Specification86247
+Node: Introduction3406
+Node: The Big Idea3712
+Node: The Core Workflow4484
+Node: About This Manual5660
+Node: Getting Started6059
+Node: Installation6237
+Node: Requirements6470
+Node: Installing the CLI6952
+Node: Installing the Emacs package8292
+Node: straightel8550
+Node: Manual9451
+Node: Accessing the manual in Emacs9787
+Node: Quick Start10488
+Node: The TJM Manifest11882
+Node: Structure12114
+Node: How eve-mode renders a manifest13910
+Node: The raw JSON companion buffer14542
+Node: Transcription14976
+Node: Starting transcription from Emacs15279
+Node: French transcription and review16020
+Node: Timing and output validity19063
+Node: Backends24259
+Node: Configuration28944
+Node: Installing optional backends30499
+Node: Editing30957
+Node: Navigation31250
+Node: Deletion and restoration31627
+Node: Splitting and merging32266
+Node: Reordering34011
+Node: Markers and sections34655
+Node: Inline editing35354
+Node: Metadata36670
+Node: Undo and redo37268
+Node: Validation37595
+Node: Filler Words37921
+Node: Concept38133
+Node: Configuration (1)38766
+Node: Commands39960
+Node: Auto-tagging on file open41370
+Node: B-Roll41832
+Node: Concept (1)42138
+Node: Editing b-roll metadata42794
+Node: Compositing modes in detail44563
+Node: Replace mode44788
+Node: Pip mode45236
+Node: Audio policy46155
+Node: JSON templates46634
+Node: Overlay fields47927
+Node: Concrete example lower-third title card49330
+Node: Placeholders without templates51215
+Node: Continuation chains51638
+Node: Compilation and Rendering52661
+Node: Audio-only compilation53069
+Node: Two video modes draft and final55686
+Node: Burned-in captions56217
+Node: Under the hood60069
+Node: Pre-flight validation61732
+Node: Dry-run analysis62469
+Node: Checkpoint and resume62995
+Node: Progressive output63476
+Node: Configuration reference63878
+Node: CLI reference66162
+Node: Playback67592
+Node: Source playback67839
+Node: Rendered playback68300
+Node: Playback tracking and segment highlighting68798
+Node: Controls69225
+Node: Video layout70206
+Node: Display71742
+Node: Timestamp ruler71947
+Node: Context panels72535
+Node: Hiding deleted segments74499
+Node: Word-level display74932
+Node: Key Bindings76047
+Node: Single-key bindings76288
+Node: C-c prefix bindings78414
+Node: Playback-mode overrides79422
+Node: The hydra cheatsheet80023
+Node: Configuration Reference80425
+Node: Architecture88060
+Node: Two-layer boundary88247
+Node: Shared contract89051
+Node: Development89523
+Node: Appendix A TJM v11 Specification89999
 
 End Tag Table
 

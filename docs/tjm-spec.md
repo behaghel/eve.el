@@ -389,7 +389,15 @@ Editors SHOULD preserve recognized and unrecognized kind values when
 round-tripping. Renderers MUST reject unknown legacy effective kind values.
 
 Filler classification is descriptive metadata. It does not itself delete or
-rewrite the word.
+rewrite the word. Protecting a selected display region MUST apply to whole
+intersecting timed filler tokens, including atomic tokens with multiword display
+fragments. Protection MUST write `word.edit.filler = "no-filler"` without changing
+recognized words, display corrections, source ticks, or other occurrences. A
+subsequent phrase scan and bulk filler deletion MUST preserve those protections.
+Selecting lexical words alongside candidates MUST NOT reclassify the lexical
+words. Word-level filler deletion MUST NOT invent words or timing for
+segment-only captions; an entirely untimed request MUST fail without changing
+manifest data or undo history.
 
 When present, `word.edit` MUST be an object, including `{}` when empty,
 not `null`. The following interoperable
@@ -884,6 +892,17 @@ valid timed word. Producers MUST NOT stretch or redistribute intervals solely
 to satisfy validation; any alignment repair requires evidence from the source
 audio. Output MUST satisfy the manifest validation rules before being reported
 as successfully produced.
+
+An editor invoking transcription MUST forward its selected recognition language
+for both full-source and supported legacy region requests. With no explicit
+model override, it MAY delegate language-aware model selection to the CLI.
+Known incompatible English-only choices MUST fail rather than silently switch
+language, model, or alignment policy. Full-source word-editing requests MUST
+request word timestamps. Asynchronous completion MUST retain the launch-time
+language and filler-review preferences in the result buffer. Canonical tick-based
+output MUST NOT be offered legacy seconds-only retranscription as automatic repair.
+These editor preferences do not introduce new required TJM fields or certify
+recognition fidelity, word presence, or timing accuracy.
 
 ### 15.1 Automatic alignment and quality overrides
 

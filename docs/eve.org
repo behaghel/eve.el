@@ -275,6 +275,55 @@ Two commands launch transcription:
 On failure, the =*eve transcribe*= buffer appears so you can inspect the error
 output.
 
+** French transcription and review
+
+Set =eve-transcribe-language= to ="fr"= through Custom or your Emacs config.
+The default =eve-transcribe-model= is =nil=: the CLI selects =medium.en= for
+English and multilingual =medium= otherwise.  An explicit model stays explicit;
+Eve does not silently replace it when you change language.
+
+For example, with an already cached multilingual =large-v3= model:
+
+#+begin_src emacs-lisp
+(setq eve-transcribe-language "fr"
+      eve-transcribe-backend "faster-whisper"
+      eve-transcribe-model "large-v3"
+      eve-transcribe-recognition-profile "default"
+      eve-transcribe-word-aligner nil
+      eve-filler-phrases '("euh" "en fait" "du coup")
+      eve-filler-regex nil)
+(setenv "HF_HUB_OFFLINE" "1") ; fail rather than download missing model files
+#+end_src
+
+These phrases are review candidates, not a rule that every occurrence is
+meaningless.  Configure =eve-filler-exception-phrases= for expressions that must
+not be newly tagged.  English-only =.en= model names, native CTC alignment, and
+=trained-verbatim= are not French alternatives and are rejected before launch.
+Language and phrase rules captured at launch follow the asynchronous result
+buffer, even if you change your settings while recognition runs.  They are
+editor preferences, not new manifest fields.
+
+1. Run =M-x eve-transcribe= or =M-x eve-dired-transcribe=.  Emacs requests timed
+   words; recognized candidates are highlighted when the result opens.
+2. Review candidates with =] f= and =[ f=, and audition source audio.
+3. Keep a meaningful occurrence: put point on a candidate and press =A=, or
+   select an entire expression such as /en fait/ and press =A=.  Only selected
+   candidates are protected; the phrase list and other occurrences stay intact.
+4. After reviewing /all/ candidates, press =F= to delete the remaining marked
+   words across the /whole manifest/.  Use ordinary word deletion for individual
+   cuts instead.  =u= undoes an edit; =A= prevents future deletion rather than
+   restoring an already deleted word.
+5. Save, then =C-c C-c= renders audio-only sources as M4A with matching WebVTT.
+   Original media and recognized words/ticks stay unchanged.  Audition the
+   result before accepting or publishing it.
+
+Phrase matching operates on recognized words within each caption.  It cannot
+recover a hesitation omitted by recognition, and successful transcription does
+not certify acoustic word boundaries.  A segment-only transcript remains useful
+for reading and following playback, but cannot support word-level filler
+removal.  Eve rejects that operation rather than inventing word intervals or
+silently retranscribing canonical source clocks through the legacy region path.
+
 ** Timing and output validity
 
 The transcriber writes v1.1 with a per-source audio sample clock, canonical
@@ -340,9 +389,10 @@ this requires the CTC opt-in and still cannot override invalid timing.
 A failure shows =*eve transcribe*= and is never retried automatically.
 The alignment audit, including false booleans and empty arrays, survives
 editor saving and undo.  Empty segment tag lists also remain arrays in saved
-and render manifests.  CTC completion skips legacy suspicious-region ASR
-repair offers; the word-aligner setting does not change manual region
-retranscription commands.
+and render manifests.  Canonical v1.1 completion skips legacy suspicious-region
+ASR repair offers regardless of the selected word aligner.  Legacy region
+retranscription forwards the selected language but does not gain native CTC
+alignment; it remains unavailable for canonical tick-based manifests.
 
 The pause diagnostic is provisional and non-blocking: Silero-VAD gaps of at
 least 250 ms, with 80 ms excluded at each edge.  Representative validation is
@@ -433,7 +483,8 @@ or timing accuracy.  Model quality must be qualified separately; a backend's
 | Variable | Default | Description |
 |----------+---------+-------------|
 | =eve-transcribe-backend= | ="faster-whisper"= | Backend name passed to =eve transcribe=. |
-| =eve-transcribe-model= | ="medium.en"= | Model name/path, independent of recognition profile. |
+| =eve-transcribe-language= | ="en"= | Recognition language code; use ="fr"= for French. |
+| =eve-transcribe-model= | =nil= | Optional model name/path; nil delegates language-aware defaults to the CLI. |
 | =eve-transcribe-recognition-profile= | ="default"= | Full-source decoding/token policy; ="trained-verbatim"= requires native CTC and a compatible local model. |
 | =eve-transcribe-word-aligner= | =nil= | Set to ="ctc"= for opt-in native word alignment on full-source transcription. |
 | =eve-transcribe-verbatim= | =t= | Pass =--verbatim= to the backend. |
@@ -584,8 +635,10 @@ Eve validates the manifest automatically on every save (controlled by
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
 workflow is non-destructive: words are /marked/ as fillers first, then
 /optionally deleted/.  Marked fillers are highlighted in the buffer with a
-distinct face and excluded from compilation.  You can mark a word as non-filler
-for this TJM file so future auto-tagging leaves it alone.
+distinct face.  New transcripts keep marked words in audio until you delete
+them; an explicit =render.filler_policy = "drop"= instead drops effective filler
+intervals during compilation.  You can mark words as non-filler for this TJM
+file so future auto-tagging and bulk filler deletion leave them alone.
 
 ** Configuration
 
@@ -615,7 +668,7 @@ compatibility but =eve-filler-phrases= is preferred.
 |-----+---------+-------------|
 | =f= | =eve-dwim-filler= | Add the word at point to phrases and retag; or delete region as filler. |
 | =F= | =eve-delete-fillers= | Mark all tagged fillers as deleted. |
-| =A= | =eve-accept-filler= | Mark the filler at point as non-filler in this TJM file. |
+| =A= | =eve-accept-filler= | Protect the filler at point or selected fillers for this file. |
 | =]f= / =[f= | =eve-next-filler= / =eve-previous-filler= | Jump to next / previous visible filler. |
 | =C-c C-d= | =eve-delete-fillers= | Same as =F= from the =C-c= prefix map. |
 | — | =M-x eve-tag-fillers= | Mark all matching words in the buffer. |
