@@ -272,28 +272,48 @@ Two commands launch transcription:
 - =M-x eve-dired-transcribe= runs from Dired using the marked files (or the
   file at point when nothing is marked).
 
+Both commands use =eve-transcribe-language=, which defaults to English, without
+asking.  A prefix opens a language chooser for /this job only/:
+
+| Invocation | Language |
+|------------+----------|
+| =M-x eve-dired-transcribe= | Configured default (English unless customized). |
+| =C-u M-x eve-dired-transcribe= | Choose =Français (fr)=, =English (en)= or another language code. |
+| =C-u M-x eve-transcribe= | Choose a directory, then the language for that job. |
+
+Choosing French never changes the configured default: the next ordinary
+transcription uses that default again (English unless customized).  Cancel the
+chooser with =C-g= to start nothing.
+Language selection never requests a quality override.  The same convention
+applies to =C-c C-t=, which invokes =eve-transcribe=.
+
 On failure, the =*eve transcribe*= buffer appears so you can inspect the error
 output.
 
 ** French transcription and review
 
-Set =eve-transcribe-language= to ="fr"= through Custom or your Emacs config.
-The default =eve-transcribe-model= is =nil=: the CLI selects =medium.en= for
-English and multilingual =medium= otherwise.  An explicit model stays explicit;
-Eve does not silently replace it when you change language.
+Keep English as your usual language.  In Dired, mark the French audio file,
+run =C-u M-x eve-dired-transcribe=, and choose =Français (fr)=.  There is no
+need to change your language preference or evaluate a Lisp setup block.
 
-For example, with an already cached multilingual =large-v3= model:
+Model selection remains independent: =eve-transcribe-model= defaults to =nil=,
+so the CLI selects =medium.en= for English and multilingual =medium= otherwise.
+To use an already cached multilingual =large-v3= for either language, set
+=eve-transcribe-model= once through =M-x customize-variable=.  Eve does not
+silently replace an explicit model when you change language.  An incompatible
+English-only model or alignment policy is rejected before launch; choose a
+compatible setting rather than forcing it.  Choosing a language does not
+qualify recognition fidelity or acoustic word boundaries.
+
+Filler review is configured separately.  For example, a personal phrase list
+may include both English and French candidates:
 
 #+begin_src emacs-lisp
-(setq eve-transcribe-language "fr"
-      eve-transcribe-backend "faster-whisper"
-      eve-transcribe-model "large-v3"
-      eve-transcribe-recognition-profile "default"
-      eve-transcribe-word-aligner nil
-      eve-filler-phrases '("euh" "en fait" "du coup")
-      eve-filler-regex nil)
-(setenv "HF_HUB_OFFLINE" "1") ; fail rather than download missing model files
+(setq eve-filler-phrases '("um" "uh" "euh" "en fait" "du coup"))
 #+end_src
+
+For strictly offline use, model files must already be cached; setting
+=HF_HUB_OFFLINE= to =1= in Emacs's environment prohibits missing-file downloads.
 
 These phrases are review candidates, not a rule that every occurrence is
 meaningless.  Configure =eve-filler-exception-phrases= for expressions that must
@@ -305,8 +325,9 @@ recognition runs.  Inspection and rendering therefore use the same CLI rather
 than an older =eve= found in PATH.  These are editor preferences, not new manifest
 fields.
 
-1. Run =M-x eve-transcribe= or =M-x eve-dired-transcribe=.  Emacs requests timed
-   words; recognized candidates are highlighted when the result opens.
+1. Run =C-u M-x eve-transcribe= or =C-u M-x eve-dired-transcribe= and choose
+   =Français (fr)=.  Emacs requests timed words; recognized candidates are
+   highlighted when the result opens.
 2. Review candidates with =] f= and =[ f=, and audition source audio.
 3. Keep a meaningful occurrence: put point on a candidate and press =A=, or
    select an entire expression such as /en fait/ and press =A=.  Only selected
@@ -385,9 +406,12 @@ keeps backend word timings.  The CTC path requires English =faster-whisper=
 and the CLI's declared =alignment= dependencies.  Its progress shows the word
 alignment stage, and success opens the manifest as usual.
 
-A normal run never passes =--force=.  Use =C-u M-x eve-transcribe= or
-=C-u M-x eve-dired-transcribe= to request a quality override for that run;
-this requires the CTC opt-in and still cannot override invalid timing.
+A normal run and a language-selection prefix never pass =--force=.  To request
+an advanced per-run quality override, explicitly invoke
+=M-x eve-transcribe-with-quality-override= or
+=M-x eve-dired-transcribe-with-quality-override=.  These commands use the
+configured language, require the CTC opt-in, and still cannot override invalid
+timing.  Migration note: =C-u= now selects language, not a quality override.
 A failure shows =*eve transcribe*= and is never retried automatically.
 The alignment audit, including false booleans and empty arrays, survives
 editor saving and undo.  Empty segment tag lists also remain arrays in saved

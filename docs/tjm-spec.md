@@ -914,6 +914,18 @@ language, resolved CLI executable, and filler-review preferences in the result
 buffer. Subsequent inspection and rendering MUST use that captured CLI rather
 than revert to an unrelated older executable from PATH. Canonical tick-based
 output MUST NOT be offered legacy seconds-only retranscription as automatic repair.
+English is the default editor recognition language; users MAY configure another
+default. Ordinary directory and Dired transcription commands MUST use that
+preference without a language prompt. Their prefix argument MUST request a
+per-run language choice, not a quality override. This choice MUST NOT change the
+configured default, including after cancellation or a rejected request, and
+MUST NOT replace an explicit model or alignment policy. Cancellation MUST NOT
+start transcription. The result buffer retains the chosen job language.
+
+Quality overrides MUST require an explicit advanced command or programmatic
+request independent of language selection. They remain subject to native CTC
+opt-in and the authoritative timing guarantees in Section 15.1.
+
 These editor preferences do not introduce new required TJM fields or certify
 recognition fidelity, word presence, or timing accuracy.
 

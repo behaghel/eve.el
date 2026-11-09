@@ -511,6 +511,22 @@ Two commands launch transcription:
    • ‘M-x eve-dired-transcribe’ runs from Dired using the marked files
      (or the file at point when nothing is marked).
 
+   Both commands use ‘eve-transcribe-language’, which defaults to
+English, without asking.  A prefix opens a language chooser for _this
+job only_:
+
+Invocation                       Language
+----------------------------------------------------------------------------------------------------
+‘M-x eve-dired-transcribe’       Configured default (English unless customized).
+‘C-u M-x eve-dired-transcribe’   Choose ‘Français (fr)’, ‘English (en)’ or another language code.
+‘C-u M-x eve-transcribe’         Choose a directory, then the language for that job.
+
+   Choosing French never changes the configured default: the next
+ordinary transcription uses that default again (English unless
+customized).  Cancel the chooser with ‘C-g’ to start nothing.  Language
+selection never requests a quality override.  The same convention
+applies to ‘C-c C-t’, which invokes ‘eve-transcribe’.
+
    On failure, the ‘*eve transcribe*’ buffer appears so you can inspect
 the error output.
 
@@ -520,22 +536,29 @@ File: eve.info,  Node: French transcription and review,  Next: Timing and output
 4.2 French transcription and review
 ===================================
 
-Set ‘eve-transcribe-language’ to ‘"fr"’ through Custom or your Emacs
-config.  The default ‘eve-transcribe-model’ is ‘nil’: the CLI selects
-‘medium.en’ for English and multilingual ‘medium’ otherwise.  An
-explicit model stays explicit; Eve does not silently replace it when you
-change language.
+Keep English as your usual language.  In Dired, mark the French audio
+file, run ‘C-u M-x eve-dired-transcribe’, and choose ‘Français (fr)’.
+There is no need to change your language preference or evaluate a Lisp
+setup block.
 
-   For example, with an already cached multilingual ‘large-v3’ model:
+   Model selection remains independent: ‘eve-transcribe-model’ defaults
+to ‘nil’, so the CLI selects ‘medium.en’ for English and multilingual
+‘medium’ otherwise.  To use an already cached multilingual ‘large-v3’
+for either language, set ‘eve-transcribe-model’ once through ‘M-x
+customize-variable’.  Eve does not silently replace an explicit model
+when you change language.  An incompatible English-only model or
+alignment policy is rejected before launch; choose a compatible setting
+rather than forcing it.  Choosing a language does not qualify
+recognition fidelity or acoustic word boundaries.
 
-     (setq eve-transcribe-language "fr"
-           eve-transcribe-backend "faster-whisper"
-           eve-transcribe-model "large-v3"
-           eve-transcribe-recognition-profile "default"
-           eve-transcribe-word-aligner nil
-           eve-filler-phrases '("euh" "en fait" "du coup")
-           eve-filler-regex nil)
-     (setenv "HF_HUB_OFFLINE" "1") ; fail rather than download missing model files
+   Filler review is configured separately.  For example, a personal
+phrase list may include both English and French candidates:
+
+     (setq eve-filler-phrases '("um" "uh" "euh" "en fait" "du coup"))
+
+   For strictly offline use, model files must already be cached; setting
+‘HF_HUB_OFFLINE’ to ‘1’ in Emacs's environment prohibits missing-file
+downloads.
 
    These phrases are review candidates, not a rule that every occurrence
 is meaningless.  Configure ‘eve-filler-exception-phrases’ for
@@ -548,9 +571,9 @@ Inspection and rendering therefore use the same CLI rather than an older
 ‘eve’ found in PATH.  These are editor preferences, not new manifest
 fields.
 
-  1. Run ‘M-x eve-transcribe’ or ‘M-x eve-dired-transcribe’.  Emacs
-     requests timed words; recognized candidates are highlighted when
-     the result opens.
+  1. Run ‘C-u M-x eve-transcribe’ or ‘C-u M-x eve-dired-transcribe’ and
+     choose ‘Français (fr)’.  Emacs requests timed words; recognized
+     candidates are highlighted when the result opens.
   2. Review candidates with ‘] f’ and ‘[ f’, and audition source audio.
   3. Keep a meaningful occurrence: put point on a candidate and press
      ‘A’, or select an entire expression such as _en fait_ and press
@@ -644,16 +667,19 @@ default ‘nil’ keeps backend word timings.  The CTC path requires English
 progress shows the word alignment stage, and success opens the manifest
 as usual.
 
-   A normal run never passes ‘--force’.  Use ‘C-u M-x eve-transcribe’ or
-‘C-u M-x eve-dired-transcribe’ to request a quality override for that
-run; this requires the CTC opt-in and still cannot override invalid
-timing.  A failure shows ‘*eve transcribe*’ and is never retried
-automatically.  The alignment audit, including false booleans and empty
-arrays, survives editor saving and undo.  Empty segment tag lists also
-remain arrays in saved and render manifests.  Canonical v1.1 completion
-skips legacy suspicious-region ASR repair offers regardless of the
-selected word aligner.  Legacy region retranscription forwards the
-selected language but does not gain native CTC alignment; it remains
+   A normal run and a language-selection prefix never pass ‘--force’.
+To request an advanced per-run quality override, explicitly invoke ‘M-x
+eve-transcribe-with-quality-override’ or ‘M-x
+eve-dired-transcribe-with-quality-override’.  These commands use the
+configured language, require the CTC opt-in, and still cannot override
+invalid timing.  Migration note: ‘C-u’ now selects language, not a
+quality override.  A failure shows ‘*eve transcribe*’ and is never
+retried automatically.  The alignment audit, including false booleans
+and empty arrays, survives editor saving and undo.  Empty segment tag
+lists also remain arrays in saved and render manifests.  Canonical v1.1
+completion skips legacy suspicious-region ASR repair offers regardless
+of the selected word aligner.  Legacy region retranscription forwards
+the selected language but does not gain native CTC alignment; it remains
 unavailable for canonical tick-based manifests.
 
    The pause diagnostic is provisional and non-blocking: Silero-VAD gaps
@@ -2139,71 +2165,71 @@ Node: How eve-mode renders a manifest13910
 Node: The raw JSON companion buffer14542
 Node: Transcription14976
 Node: Starting transcription from Emacs15279
-Node: French transcription and review16020
-Node: Timing and output validity19187
-Node: Backends24383
-Node: Configuration29068
-Node: Installing optional backends30623
-Node: Editing31081
-Node: Navigation31374
-Node: Deletion and restoration31751
-Node: Splitting and merging32390
-Node: Reordering34135
-Node: Markers and sections34779
-Node: Inline editing35478
-Node: Metadata37202
-Node: Undo and redo37800
-Node: Validation38127
-Node: Filler Words38453
-Node: Concept38665
-Node: Configuration (1)39298
-Node: Commands40492
-Node: Auto-tagging on file open41902
-Node: B-Roll42364
-Node: Concept (1)42670
-Node: Editing b-roll metadata43326
-Node: Compositing modes in detail45095
-Node: Replace mode45320
-Node: Pip mode45768
-Node: Audio policy46687
-Node: JSON templates47166
-Node: Overlay fields48459
-Node: Concrete example lower-third title card49862
-Node: Placeholders without templates51747
-Node: Continuation chains52170
-Node: Compilation and Rendering53193
-Node: Audio-only compilation53601
-Node: Two video modes draft and final56218
-Node: Burned-in captions56749
-Node: Under the hood60601
-Node: Pre-flight validation62264
-Node: Dry-run analysis63001
-Node: Checkpoint and resume63527
-Node: Progressive output64008
-Node: Configuration reference64410
-Node: CLI reference66694
-Node: Playback68124
-Node: Source playback68371
-Node: Rendered playback68832
-Node: Playback tracking and segment highlighting69330
-Node: Controls69757
-Node: Video layout70738
-Node: Display72274
-Node: Timestamp ruler72479
-Node: Context panels73067
-Node: Hiding deleted segments75031
-Node: Word-level display75464
-Node: Key Bindings76579
-Node: Single-key bindings76820
-Node: C-c prefix bindings78946
-Node: Playback-mode overrides79954
-Node: The hydra cheatsheet80555
-Node: Configuration Reference80957
-Node: Architecture88592
-Node: Two-layer boundary88779
-Node: Shared contract89583
-Node: Development90055
-Node: Appendix A TJM v11 Specification90531
+Node: French transcription and review16935
+Node: Timing and output validity20562
+Node: Backends25956
+Node: Configuration30641
+Node: Installing optional backends32196
+Node: Editing32654
+Node: Navigation32947
+Node: Deletion and restoration33324
+Node: Splitting and merging33963
+Node: Reordering35708
+Node: Markers and sections36352
+Node: Inline editing37051
+Node: Metadata38775
+Node: Undo and redo39373
+Node: Validation39700
+Node: Filler Words40026
+Node: Concept40238
+Node: Configuration (1)40871
+Node: Commands42065
+Node: Auto-tagging on file open43475
+Node: B-Roll43937
+Node: Concept (1)44243
+Node: Editing b-roll metadata44899
+Node: Compositing modes in detail46668
+Node: Replace mode46893
+Node: Pip mode47341
+Node: Audio policy48260
+Node: JSON templates48739
+Node: Overlay fields50032
+Node: Concrete example lower-third title card51435
+Node: Placeholders without templates53320
+Node: Continuation chains53743
+Node: Compilation and Rendering54766
+Node: Audio-only compilation55174
+Node: Two video modes draft and final57791
+Node: Burned-in captions58322
+Node: Under the hood62174
+Node: Pre-flight validation63837
+Node: Dry-run analysis64574
+Node: Checkpoint and resume65100
+Node: Progressive output65581
+Node: Configuration reference65983
+Node: CLI reference68267
+Node: Playback69697
+Node: Source playback69944
+Node: Rendered playback70405
+Node: Playback tracking and segment highlighting70903
+Node: Controls71330
+Node: Video layout72311
+Node: Display73847
+Node: Timestamp ruler74052
+Node: Context panels74640
+Node: Hiding deleted segments76604
+Node: Word-level display77037
+Node: Key Bindings78152
+Node: Single-key bindings78393
+Node: C-c prefix bindings80519
+Node: Playback-mode overrides81527
+Node: The hydra cheatsheet82128
+Node: Configuration Reference82530
+Node: Architecture90165
+Node: Two-layer boundary90352
+Node: Shared contract91156
+Node: Development91628
+Node: Appendix A TJM v11 Specification92104
 
 End Tag Table
 

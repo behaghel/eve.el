@@ -165,6 +165,8 @@ using source start/end times and ignoring word-level edits."
 
 (defcustom eve-transcribe-language "en"
   "Language code passed to full-source and legacy region transcription.
+Full-source commands use this default without prompting; a prefix chooses
+another language for one job without changing this preference.
 Use \"fr\" for French.  This selects recognition language, not filler phrases
 or a qualification of word-timing accuracy."
   :type '(choice (const :tag "English" "en") (const :tag "French" "fr") string)
@@ -6531,12 +6533,25 @@ Segment-only captions cannot support word-level filler removal."
     (eve--populate-raw-buffer buf buffer-file-name)
     (switch-to-buffer buf)))
 
-(defun eve-transcribe (directory &optional force)
+(defun eve--read-transcription-language ()
+  "Read a per-run recognition language without changing user preferences."
+  (let* ((choices '(("English (en)" . "en") ("Français (fr)" . "fr")))
+         (default (or (car (rassoc eve-transcribe-language choices))
+                      eve-transcribe-language))
+         (choice (completing-read "Transcription language (or language code): "
+                                  choices nil nil nil nil default)))
+    (or (cdr (assoc choice choices)) (string-trim choice))))
+
+(defun eve-transcribe (directory &optional force language)
   "Transcribe supported media files from DIRECTORY.
-With prefix FORCE, request an explicit CTC quality override for this run.
-Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails."
-  (interactive "DDirectory to transcribe: \nP")
-  (let* ((expanded-directory (file-name-as-directory
+A prefix asks for LANGUAGE for this run only; otherwise use
+`eve-transcribe-language', whose default is English.
+Non-interactive FORCE requests a CTC quality override.  Interactively use
+`eve-transcribe-with-quality-override'; invalid timing still fails."
+  (interactive (list (read-directory-name "Directory to transcribe: " nil nil t)
+                     nil (when current-prefix-arg (eve--read-transcription-language))))
+  (let* ((eve-transcribe-language (or language eve-transcribe-language))
+         (expanded-directory (file-name-as-directory
 				      (expand-file-name directory)))
 	 (files (seq-filter #'file-regular-p
 			    (directory-files expanded-directory t
@@ -6547,18 +6562,35 @@ Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails
     (eve--transcribe-async media-files
                           (eve--infer-manifest-path media-files) force)))
 
-(defun eve-dired-transcribe (&optional force)
+(defun eve-dired-transcribe (&optional force language)
   "Transcribe supported marked media files from the current Dired buffer.
-With prefix FORCE, request an explicit CTC quality override for this run.
-Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails."
-  (interactive "P")
+A prefix asks for LANGUAGE for this run only; otherwise use
+`eve-transcribe-language', whose default is English.
+Non-interactive FORCE requests a CTC quality override.  Interactively use
+`eve-dired-transcribe-with-quality-override'; invalid timing still fails."
+  (interactive (list nil (when current-prefix-arg (eve--read-transcription-language))))
   (unless (derived-mode-p 'dired-mode)
     (user-error "Not in a Dired buffer"))
-  (let ((media-files (eve--filter-media-files (dired-get-marked-files t))))
+  (let ((media-files (eve--filter-media-files (dired-get-marked-files t)))
+        (eve-transcribe-language (or language eve-transcribe-language)))
     (unless media-files
       (user-error "No media files selected"))
     (eve--transcribe-async media-files
                           (eve--infer-manifest-path media-files) force)))
+
+(defun eve-transcribe-with-quality-override (directory)
+  "Transcribe DIRECTORY with an explicit per-run native CTC quality override.
+Use the configured language.  CTC opt-in is required and invalid timing still
+fails.  Ordinary transcription and language selection never request force."
+  (interactive (list (read-directory-name "Directory to transcribe: " nil nil t)))
+  (eve-transcribe directory t))
+
+(defun eve-dired-transcribe-with-quality-override ()
+  "Transcribe Dired media with an explicit per-run native CTC quality override.
+Use the configured language.  CTC opt-in is required and invalid timing still
+fails.  Ordinary transcription and language selection never request force."
+  (interactive)
+  (eve-dired-transcribe t))
 
 (defun eve-play-segment (&optional segment)
   "Play SEGMENT using `eve-play-program', or the rendered section when on a marker."
