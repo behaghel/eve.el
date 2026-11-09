@@ -76,6 +76,7 @@ The TJM Manifest
 Transcription
 
 * Starting transcription from Emacs::
+* French transcription and review::
 * Timing and output validity::
 * Backends::
 * Configuration::
@@ -481,6 +482,7 @@ the eve-mode view.
 
 @menu
 * Starting transcription from Emacs::
+* French transcription and review::
 * Timing and output validity::
 * Backends::
 * Configuration::
@@ -504,8 +506,93 @@ automatically in eve-mode.
 file at point when nothing is marked).
 @end itemize
 
+Both commands use @samp{eve-transcribe-language}, which defaults to English, without
+asking.  A prefix opens a language chooser for @emph{this job only}:
+
+@multitable {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+@headitem Invocation
+@tab Language
+@item @samp{M-x eve-dired-transcribe}
+@tab Configured default (English unless customized).
+@item @samp{C-u M-x eve-dired-transcribe}
+@tab Choose @samp{Français (fr)}, @samp{English (en)} or another language code.
+@item @samp{C-u M-x eve-transcribe}
+@tab Choose a directory, then the language for that job.
+@end multitable
+
+Choosing French never changes the configured default: the next ordinary
+transcription uses that default again (English unless customized).  Cancel the
+chooser with @samp{C-g} to start nothing.
+Language selection never requests a quality override.  The same convention
+applies to @samp{C-c C-t}, which invokes @samp{eve-transcribe}.
+
 On failure, the @samp{*eve transcribe*} buffer appears so you can inspect the error
 output.
+
+@node French transcription and review
+@section French transcription and review
+
+Keep English as your usual language.  In Dired, mark the French audio file,
+run @samp{C-u M-x eve-dired-transcribe}, and choose @samp{Français (fr)}.  There is no
+need to change your language preference or evaluate a Lisp setup block.
+
+Model selection remains independent: @samp{eve-transcribe-model} defaults to @samp{nil},
+so the CLI selects @samp{medium.en} for English and multilingual @samp{medium} otherwise.
+To use an already cached multilingual @samp{large-v3} for either language, set
+@samp{eve-transcribe-model} once through @samp{M-x customize-variable}.  Eve does not
+silently replace an explicit model when you change language.  An incompatible
+English-only model or alignment policy is rejected before launch; choose a
+compatible setting rather than forcing it.  Choosing a language does not
+qualify recognition fidelity or acoustic word boundaries.
+
+Filler review is configured separately.  For example, a personal phrase list
+may include both English and French candidates:
+
+@lisp
+(setq eve-filler-phrases '("um" "uh" "euh" "en fait" "du coup"))
+@end lisp
+
+For strictly offline use, model files must already be cached; setting
+@samp{HF_HUB_OFFLINE} to @samp{1} in Emacs's environment prohibits missing-file downloads.
+
+These phrases are review candidates, not a rule that every occurrence is
+meaningless.  Configure @samp{eve-filler-exception-phrases} for expressions that must
+not be newly tagged.  English-only @samp{.en} model names, native CTC alignment, and
+@samp{trained-verbatim} are not French alternatives and are rejected before launch.
+Language, the resolved CLI executable, and phrase rules captured at launch
+follow the asynchronous result buffer, even if you change settings while
+recognition runs.  Inspection and rendering therefore use the same CLI rather
+than an older @samp{eve} found in PATH@.  These are editor preferences, not new manifest
+fields.
+
+@enumerate
+@item
+Run @samp{C-u M-x eve-transcribe} or @samp{C-u M-x eve-dired-transcribe} and choose
+@samp{Français (fr)}.  Emacs requests timed words; recognized candidates are
+highlighted when the result opens.
+@item
+Review candidates with @samp{] f} and @samp{[ f}, and audition source audio.
+@item
+Keep a meaningful occurrence: put point on a candidate and press @samp{A}, or
+select an entire expression such as @emph{en fait} and press @samp{A}.  Only selected
+candidates are protected; the phrase list and other occurrences stay intact.
+@item
+After reviewing @emph{all} candidates, press @samp{F} to delete the remaining marked
+words across the @emph{whole manifest}.  Use ordinary word deletion for individual
+cuts instead.  @samp{u} undoes an edit; @samp{A} prevents future deletion rather than
+restoring an already deleted word.
+@item
+Save, then @samp{C-c C-c} renders audio-only sources as M4A with matching WebVTT@.
+Original media and recognized words/ticks stay unchanged.  Audition the
+result before accepting or publishing it.
+@end enumerate
+
+Phrase matching operates on recognized words within each caption.  It cannot
+recover a hesitation omitted by recognition, and successful transcription does
+not certify acoustic word boundaries.  A segment-only transcript remains useful
+for reading and following playback, but cannot support word-level filler
+removal.  Eve rejects that operation rather than inventing word intervals or
+silently retranscribing canonical source clocks through the legacy region path.
 
 @node Timing and output validity
 @section Timing and output validity
@@ -567,15 +654,19 @@ keeps backend word timings.  The CTC path requires English @samp{faster-whisper}
 and the CLI's declared @samp{alignment} dependencies.  Its progress shows the word
 alignment stage, and success opens the manifest as usual.
 
-A normal run never passes @samp{--force}.  Use @samp{C-u M-x eve-transcribe} or
-@samp{C-u M-x eve-dired-transcribe} to request a quality override for that run;
-this requires the CTC opt-in and still cannot override invalid timing.
+A normal run and a language-selection prefix never pass @samp{--force}.  To request
+an advanced per-run quality override, explicitly invoke
+@samp{M-x eve-transcribe-with-quality-override} or
+@samp{M-x eve-dired-transcribe-with-quality-override}.  These commands use the
+configured language, require the CTC opt-in, and still cannot override invalid
+timing.  Migration note: @samp{C-u} now selects language, not a quality override.
 A failure shows @samp{*eve transcribe*} and is never retried automatically.
 The alignment audit, including false booleans and empty arrays, survives
 editor saving and undo.  Empty segment tag lists also remain arrays in saved
-and render manifests.  CTC completion skips legacy suspicious-region ASR
-repair offers; the word-aligner setting does not change manual region
-retranscription commands.
+and render manifests.  Canonical v1.1 completion skips legacy suspicious-region
+ASR repair offers regardless of the selected word aligner.  Legacy region
+retranscription forwards the selected language but does not gain native CTC
+alignment; it remains unavailable for canonical tick-based manifests.
 
 The pause diagnostic is provisional and non-blocking: Silero-VAD gaps of at
 least 250 ms, with 80 ms excluded at each edge.  Representative validation is
@@ -681,9 +772,12 @@ or timing accuracy.  Model quality must be qualified separately; a backend's
 @item @samp{eve-transcribe-backend}
 @tab @samp{"faster-whisper"}
 @tab Backend name passed to @samp{eve transcribe}.
+@item @samp{eve-transcribe-language}
+@tab @samp{"en"}
+@tab Recognition language code; use @samp{"fr"} for French.
 @item @samp{eve-transcribe-model}
-@tab @samp{"medium.en"}
-@tab Model name/path, independent of recognition profile.
+@tab @samp{nil}
+@tab Optional model name/path; nil delegates language-aware defaults to the CLI@.
 @item @samp{eve-transcribe-recognition-profile}
 @tab @samp{"default"}
 @tab Full-source decoding/token policy; @samp{"trained-verbatim"} requires native CTC and a compatible local model.
@@ -840,6 +934,12 @@ point.  On a marker it edits the title.  For timed v1.1 segments it changes
 The panel's @samp{i} action edits one focused token or the selected token range;
 @samp{E} edits the segment's token displays.
 
+French elisions such as @samp{j} + @samp{'espère} and @samp{l’} + @samp{écouter} display as
+@samp{j'espère} and @samp{l’écouter} in the editor and word-derived captions.  Straight and
+curly apostrophes keep their spelling.  This removes only synthetic spacing:
+the source tokens stay separate, with their original timings and editing
+identities.  Existing timed transcripts do not need retranscription.
+
 A single v1.1 token can display a complete phrase, which highlights and deletes
 as one unit.  For a bulk replacement, supply one replacement word per selected
 timed token; otherwise edit the tokens individually.  Ambiguous replacements
@@ -909,8 +1009,10 @@ Eve validates the manifest automatically on every save (controlled by
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
 workflow is non-destructive: words are @emph{marked} as fillers first, then
 @emph{optionally deleted}.  Marked fillers are highlighted in the buffer with a
-distinct face and excluded from compilation.  You can mark a word as non-filler
-for this TJM file so future auto-tagging leaves it alone.
+distinct face.  New transcripts keep marked words in audio until you delete
+them; an explicit @samp{render.filler_policy = "drop"} instead drops effective filler
+intervals during compilation.  You can mark words as non-filler for this TJM
+file so future auto-tagging and bulk filler deletion leave them alone.
 
 @node Configuration (1)
 @section Configuration
@@ -950,7 +1052,7 @@ compatibility but @samp{eve-filler-phrases} is preferred.
 @tab Mark all tagged fillers as deleted.
 @item @samp{A}
 @tab @samp{eve-accept-filler}
-@tab Mark the filler at point as non-filler in this TJM file.
+@tab Protect the filler at point or selected fillers for this file.
 @item @samp{]f} / @samp{[f}
 @tab @samp{eve-next-filler} / @samp{eve-previous-filler}
 @tab Jump to next / previous visible filler.
@@ -2136,9 +2238,12 @@ The table below is auto-generated from the defcustom forms in @samp{eve.el} by
 @item @samp{eve-transcribe-hotwords}
 @tab @samp{nil}
 @tab Optional hotwords string passed to `eve transcribe'.
+@item @samp{eve-transcribe-language}
+@tab @samp{"en"}
+@tab Language code passed to full-source and legacy region transcription.
 @item @samp{eve-transcribe-model}
-@tab @samp{"medium.en"}
-@tab Model passed to `eve transcribe'.
+@tab @samp{nil}
+@tab Model passed to `eve transcribe', or nil for the CLI default.
 @item @samp{eve-transcribe-offer-reprocess-suspicious}
 @tab @samp{t}
 @tab Whether to offer suspicious-region retranscription after transcription.

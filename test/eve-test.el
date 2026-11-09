@@ -1894,7 +1894,7 @@
       (should (member "--progress-json" command)))))
 
 (ert-deftest eve-transcribe-force-requires-ctc-opt-in ()
-  "A prefix must not become a blanket force flag on ordinary transcription."
+  "An explicit quality override requires native CTC before any launch."
   (let ((eve-transcribe-word-aligner nil))
     (cl-letf (((symbol-function 'make-process)
                (lambda (&rest _args) (ert-fail "must not launch"))))
@@ -1911,6 +1911,7 @@
   "The launch choice survives customization changes while the job runs."
   (dolist (profile '("default" "trained-verbatim"))
     (let ((eve-transcribe-recognition-profile profile)
+          (eve-transcribe-model "/models/local-ct2")
           (eve-transcribe-word-aligner "ctc")
           (eve-transcribe-backend "faster-whisper")
           (eve-transcribe-verbatim t)
@@ -1996,6 +1997,182 @@
                      "/tmp/region.wav" "/tmp/region.tjm.json" "faster-whisper" "/models/local-ct2")
                     :type 'user-error))))
 
+(ert-deftest eve-french-transcription-selects-language-without-an-english-model ()
+  "French launches let the CLI select its multilingual default model."
+  (let ((eve-transcribe-language "fr") (eve-transcribe-model nil)
+        (eve-transcribe-backend "faster-whisper")
+        (eve-transcribe-recognition-profile "default")
+        (eve-transcribe-word-aligner nil)
+        (eve--transcribe-process-count 0) (global-mode-string nil) command)
+    (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve"))
+              ((symbol-function 'make-process)
+               (lambda (&rest args) (setq command (plist-get args :command)) 'fake)))
+      (eve--transcribe-async '("/tmp/french.m4a") "/tmp/french.tjm.json"))
+    (should (equal (cadr (member "--language" command)) "fr"))
+    (should-not (member "--model" command))
+    (should-not (member "--hotwords" command))))
+
+(ert-deftest eve-french-transcription-rejects-english-only-settings-before-launch ()
+  "French must not silently run an English model or English-only aligner."
+  (dolist (settings '(("medium.en" nil "default")
+                      (nil "ctc" "default")
+                      ("/models/local" "ctc" "trained-verbatim")))
+    (let ((eve-transcribe-language "fr")
+          (eve-transcribe-model (nth 0 settings))
+          (eve-transcribe-word-aligner (nth 1 settings))
+          (eve-transcribe-recognition-profile (nth 2 settings)))
+      (cl-letf (((symbol-function 'make-process)
+                 (lambda (&rest _) (ert-fail "Invalid French settings launched"))))
+        (should-error (eve--transcribe-async '("/tmp/fr.m4a") "/tmp/fr.tjm.json")
+                      :type 'user-error)))))
+
+(ert-deftest eve-french-selection-protection-preserves-both-words ()
+  "Protecting an occurrence of en fait keeps both timed words through retagging."
+  (eve-test-with-canonical-v11-buffer
+    (let* ((segment (car (eve--segments)))
+           (words (alist-get 'words segment))
+           original
+           (eve-filler-phrases '("en fait")) (eve-filler-regex nil))
+      (setf (alist-get 'spoken (nth 0 words)) "En"
+            (alist-get 'display (nth 0 words)) "En"
+            (alist-get 'spoken (nth 1 words)) "fait"
+            (alist-get 'display (nth 1 words)) "fait"
+            (alist-get 'spoken (nth 2 words)) "en"
+            (alist-get 'display (nth 2 words)) "en"
+            (alist-get 'spoken (nth 3 words)) "fait"
+            (alist-get 'display (nth 3 words)) "fait"
+            (alist-get 'spoken_text segment) "En fait en fait"
+            (alist-get 'display_text segment) "En fait en fait")
+      (setq original (copy-tree words t))
+      (eve--apply-filler-tags) (eve--render)
+      (eve--goto-word-by-index (alist-get 'id segment) 0)
+      (let ((bounds (plist-get (eve--word-info-at-point) :word-bounds)))
+        (should (eve-test--span-has-face-p (car bounds) (cdr bounds) 'eve-filler-face)))
+      (let ((start (point)) (transient-mark-mode t))
+        (eve--goto-word-by-index (alist-get 'id segment) 1)
+        (goto-char (cdr (plist-get (eve--word-info-at-point) :word-bounds)))
+        (set-mark start) (activate-mark)
+        (call-interactively #'eve-accept-filler))
+      (eve--apply-filler-tags)
+      (should (eve--word-no-filler-p (nth 0 words)))
+      (should (eve--word-no-filler-p (nth 1 words)))
+      (eve-delete-fillers)
+      (should-not (eve--edit-deleted-p (nth 0 words)))
+      (should-not (eve--edit-deleted-p (nth 1 words)))
+      (should (eve--edit-deleted-p (nth 2 words)))
+      (should (eve--edit-deleted-p (nth 3 words)))
+      (cl-loop for word in words for before in original do
+               (should (equal (alist-get 'spoken word) (alist-get 'spoken before)))
+               (should (= (alist-get 'start_tick word) (alist-get 'start_tick before)))
+               (should (= (alist-get 'end_tick word) (alist-get 'end_tick before)))))))
+
+(ert-deftest eve-french-job-keeps-launch-settings-in-the-result-buffer ()
+  "Async completion retains French and candidate rules despite later changes."
+  (eve-test-with-canonical-v11-buffer
+    (let* ((target (current-buffer))
+           (word (car (alist-get 'words (car (eve--segments)))))
+           (eve--transcribe-process-count 0) (eve--transcribe-mode-line-string nil)
+           (global-mode-string nil) sentinel)
+      (setf (alist-get 'spoken word) "euh" (alist-get 'display word) "euh")
+      (with-temp-buffer
+        (setq-local eve-transcribe-language "fr")
+        (setq-local eve-transcribe-model nil)
+        (setq-local eve-transcribe-recognition-profile "default")
+        (setq-local eve-transcribe-word-aligner nil)
+        (setq-local eve-filler-phrases '("euh" "en fait"))
+        (setq-local eve-filler-regex nil)
+        (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "/test/current/eve"))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest args) (setq sentinel (plist-get args :sentinel)) 'fake))
+                  ((symbol-function 'process-buffer) (lambda (_) nil))
+                  ((symbol-function 'process-status) (lambda (_) 'exit))
+                  ((symbol-function 'process-exit-status) (lambda (_) 0))
+                  ((symbol-function 'find-file) (lambda (_) (set-buffer target)))
+                  ((symbol-function 'eve--maybe-offer-reprocess-suspicious-transcripts)
+                   (lambda (&rest _) (ert-fail "Canonical output offered seconds-only repair"))))
+          (eve--transcribe-async '("/tmp/fr.wav") "/tmp/fr.tjm.json")
+          (setq-local eve-transcribe-language "en" eve-filler-phrases '("um"))
+          (funcall sentinel 'fake "finished\n")))
+      (should (equal eve-transcribe-language "fr"))
+      (should (equal eve-filler-phrases '("euh" "en fait")))
+      (should (equal eve-cli-program "/test/current/eve"))
+      (should (eve--word-filler-p word)))))
+
+(ert-deftest eve-french-filler-removal-rejects-untimed-captions-atomically ()
+  "Caption-only review cannot pretend to delete individual spoken fillers."
+  (eve-test-with-canonical-v11-buffer
+    (dolist (segment (eve--segments)) (setf (alist-get 'words segment) nil))
+    (let ((before (copy-tree eve--data t)) (history eve--undo-stack))
+      (should-error (eve-delete-fillers) :type 'user-error)
+      (should (equal before eve--data))
+      (should (equal history eve--undo-stack)))))
+
+(ert-deftest eve-french-region-transcription-uses-the-selected-language ()
+  "The legacy region path must not retain a hardcoded English/model choice."
+  (let ((eve-transcribe-language "fr")
+        (eve-transcribe-recognition-profile "default"))
+    (cl-letf (((symbol-function 'eve--resolve-cli) (lambda () "eve")))
+      (let ((command (eve--segment-panel-transcribe-command "source.wav" "out.tjm.json"
+                                                           "faster-whisper" nil)))
+        (should (equal (cadr (member "--language" command)) "fr"))
+        (should-not (member "--model" command))))))
+
+(ert-deftest eve-french-selection-protects-an-atomic-display-fragment-in-one-undo ()
+  "A selection inside a multiword display protects its one original timed token."
+  (eve-test-with-canonical-v11-buffer
+    (let* ((word (nth 1 (alist-get 'words (car (eve--segments)))))
+           (before (copy-tree word t)) (history (length eve--undo-stack))
+           (transient-mark-mode t))
+      (eve--mark-word-filler word) (eve--render)
+      (let ((range (eve-test--match-range "written")))
+        (eve--goto-word-by-index "seg-1" 2)
+        (goto-char (cdr (plist-get (eve--word-info-at-point) :word-bounds)))
+        (set-mark (car range)) (activate-mark))
+      (eve-accept-filler)
+      (should (eve--word-no-filler-p word))
+      (should-not (eve--word-filler-state
+                   (nth 2 (alist-get 'words (car (eve--segments))))))
+      (should (= (1+ history) (length eve--undo-stack)))
+      (dolist (key '(id spoken display start_tick end_tick))
+        (should (equal (alist-get key before) (alist-get key word))))
+      (eve-undo)
+      (should (eve--word-filler-p (nth 1 (alist-get 'words (car (eve--segments)))))))))
+
+(ert-deftest eve-french-apostrophe-joining-keeps-exact-token-spans ()
+  "French elisions display without spaces, retaining independent timed tokens."
+  (eve-test-with-canonical-v11-buffer
+    (let* ((segment (car (eve--segments))) (words (alist-get 'words segment)))
+      (cl-loop for word in words for token in '("J" "'espère" "l’" "écouter")
+               do (setf (alist-get 'spoken word) token
+                        (alist-get 'display word) token))
+      (let* ((before (copy-tree eve--data t))
+             (view (eve--segment-render-data segment)))
+        (should (equal (plist-get view :text) "J'espère l’écouter"))
+        (should (equal (eve--segment-panel-rephrase-values segment 0 1 "J'espère")
+                       '("J" "'espère")))
+        (should (equal (mapcar (lambda (span) (list (nth 0 span) (nth 1 span)))
+                              (plist-get view :word-spans))
+                       '((0 1) (1 8) (9 11) (11 18))))
+        (eve--render)
+        (cl-loop for index from 0 below 4 for word in words do
+                 (eve--goto-word-by-index "seg-1" index)
+                 (should (eq (plist-get (eve--word-data-at-point) :word) word)))
+        (should (equal before eve--data))))))
+
+(ert-deftest eve-french-elision-joining-does-not-strip-quotation-spaces ()
+  "Straight/curly elisions and separate apostrophe fragments join, quotes do not."
+  (dolist (case '((("c" "'" "est") "c'est")
+                  (("qu" "’il" "m" "'écoute") "qu’il m'écoute")
+                  (("aujourd" "'hui") "aujourd'hui")
+                  (("Elle" "dit" "'bonjour'") "Elle dit 'bonjour'")
+                  (("rock" "'n'" "roll") "rock 'n' roll")))
+    (should (equal (eve--join-display-tokens (car case)) (cadr case)))))
+
+(ert-deftest eve-french-empty-language-is-rejected ()
+  "An empty language cannot accidentally choose an English default model."
+  (dolist (eve-transcribe-language '(nil "" " "))
+    (should-error (eve--transcribe-language-arguments nil) :type 'user-error)))
+
 (ert-deftest eve-transcribe-async-builds-command ()
   "Launcher clears the transcribe buffer and builds argv for `make-process`."
   (let ((eve-cli-program "eve-custom")
@@ -2034,6 +2211,8 @@
                             "/tmp/clip.mp4" "/tmp/voice.wav"
                             "--output" "/tmp/session.tjm.json"
                             "--backend" "mlx-whisper"
+                            "--timestamps" "words"
+                            "--language" "en"
                             "--model" "large-v3"
                             "--verbatim"
                             "--hotwords" "um uh custom"
@@ -2078,6 +2257,8 @@
                            "/tmp/clip.mp4"
                            "--output" "/tmp/session.tjm.json"
                            "--backend" "whisper.cpp"
+                           "--timestamps" "words"
+                           "--language" "en"
                            "--model" "small.en"
                            "--progress-json"))))
       (when (buffer-live-p buffer)
@@ -2199,14 +2380,136 @@
                        captured-output output-path
                        captured-force force))))
       (dolist (force '(nil (4)))
-        (let ((current-prefix-arg force))
-          (call-interactively #'eve-dired-transcribe))
+        (eve-dired-transcribe force)
         (should (equal captured-force force)))
       (should (equal captured-files
                      '("/tmp/session/voice.WAV"
                        "/tmp/session/clip.mp4")))
       (should (equal captured-output
                      "/tmp/session/session.tjm.json")))))
+
+(ert-deftest eve-transcription-prefix-selects-language-without-changing-defaults ()
+  "Both entry points use English normally and a prefix chooses language, never force."
+  (dolist (case '((eve-dired-transcribe nil nil "en" nil)
+                  (eve-dired-transcribe (4) "Français (fr)" "fr" nil)
+                  (eve-dired-transcribe (16) "fr" "fr" nil)
+                  (eve-dired-transcribe (4) "English (en)" "en" "ctc")
+                  (eve-transcribe nil nil "en" nil)
+                  (eve-transcribe (4) "Français (fr)" "fr" nil)
+                  (eve-transcribe (4) "es" "es" nil)))
+    (with-temp-buffer
+      (setq-local eve-transcribe-language "en")
+      (let ((eve-transcribe-model "large-v3")
+            (eve-transcribe-backend "faster-whisper")
+            (eve-transcribe-recognition-profile "default")
+            (eve-transcribe-word-aligner (nth 4 case))
+            (eve--transcribe-process-count 0) (eve--transcribe-mode-line-string nil)
+            (global-mode-string nil) (prompts 0) command)
+        (cl-letf (((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+                  ((symbol-function 'dired-get-marked-files)
+                   (lambda (&rest _) '("/tmp/transcription/audio.m4a")))
+                  ((symbol-function 'read-directory-name)
+                   (lambda (&rest _) "/tmp/transcription/"))
+                  ((symbol-function 'directory-files)
+                   (lambda (&rest _) '("/tmp/transcription/audio.m4a")))
+                  ((symbol-function 'file-regular-p) (lambda (_) t))
+                  ((symbol-function 'completing-read)
+                   (lambda (&rest args)
+                     (setq prompts (1+ prompts))
+                     (should (equal (nth 6 args) "English (en)"))
+                     (or (nth 2 case) (ert-fail "Normal transcription prompted"))))
+                  ((symbol-function 'eve--resolve-cli) (lambda () "/test/eve"))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest args) (setq command (plist-get args :command)) 'fake)))
+          (let ((current-prefix-arg (nth 1 case)))
+            (call-interactively (car case))))
+        (should (equal (cadr (member "--language" command)) (nth 3 case)))
+        (should-not (member "--force" command))
+        (should (equal (cadr (member "--model" command)) "large-v3"))
+        (should (= prompts (if (nth 1 case) 1 0)))
+        (should (equal eve-transcribe-language "en"))
+        (should (equal (default-value 'eve-transcribe-language) "en"))))))
+
+(ert-deftest eve-transcription-french-choice-is-followed-by-normal-english ()
+  "A French job must not make the next ordinary Dired transcription French."
+  (with-temp-buffer
+    (setq-local eve-transcribe-language "en")
+    (let (jobs)
+      (cl-letf (((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+                ((symbol-function 'dired-get-marked-files)
+                 (lambda (&rest _) '("/tmp/audio.m4a")))
+                ((symbol-function 'completing-read) (lambda (&rest _) "Français (fr)"))
+                ((symbol-function 'eve--transcribe-async)
+                 (lambda (_files _output &optional force)
+                   (push (list eve-transcribe-language force) jobs))))
+        (let ((current-prefix-arg '(4))) (call-interactively #'eve-dired-transcribe))
+        (let ((current-prefix-arg nil)) (call-interactively #'eve-dired-transcribe)))
+      (should (equal (nreverse jobs) '(("fr" nil) ("en" nil)))))))
+
+(ert-deftest eve-transcription-language-error-preserves-the-default ()
+  "An incompatible explicit model stays explicit, and a rejected job changes no default."
+  (with-temp-buffer
+    (setq-local eve-transcribe-language "en")
+    (let ((eve-transcribe-model "medium.en")
+          (eve-transcribe-word-aligner nil)
+          (eve-transcribe-recognition-profile "default") (current-prefix-arg '(4)))
+      (cl-letf (((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+                ((symbol-function 'dired-get-marked-files)
+                 (lambda (&rest _) '("/tmp/audio.m4a")))
+                ((symbol-function 'completing-read) (lambda (&rest _) "Français (fr)"))
+                ((symbol-function 'make-process)
+                 (lambda (&rest _) (ert-fail "Incompatible model launched"))))
+        (should-error (call-interactively #'eve-dired-transcribe) :type 'user-error))
+      (should (equal eve-transcribe-language "en"))
+      (should (equal eve-transcribe-model "medium.en")))))
+
+(ert-deftest eve-transcription-language-cancellation-does-not-launch ()
+  "Cancelling a per-run language choice leaves preferences and media untouched."
+  (with-temp-buffer
+    (setq-local eve-transcribe-language "en")
+    (let ((current-prefix-arg '(4)) cancelled)
+      (cl-letf (((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+                ((symbol-function 'completing-read) (lambda (&rest _) (signal 'quit nil)))
+                ((symbol-function 'dired-get-marked-files)
+                 (lambda (&rest _) (ert-fail "Cancelled request inspected media")))
+                ((symbol-function 'make-process)
+                 (lambda (&rest _) (ert-fail "Cancelled request launched"))))
+        (condition-case nil
+            (call-interactively #'eve-dired-transcribe)
+          (quit (setq cancelled t))))
+      (should cancelled)
+      (should (equal eve-transcribe-language "en")))))
+
+(ert-deftest eve-transcription-explicit-quality-commands-retain-safety-gates ()
+  "Named advanced commands alone opt into quality overrides, with CTC required."
+  (dolist (entry '(eve-transcribe-with-quality-override
+                   eve-dired-transcribe-with-quality-override))
+    (dolist (aligner '(nil "ctc"))
+      (let ((eve-transcribe-language "en") (eve-transcribe-model "large-v3")
+            (eve-transcribe-backend "faster-whisper")
+            (eve-transcribe-recognition-profile "default")
+            (eve-transcribe-word-aligner aligner)
+            (eve--transcribe-process-count 0) (eve--transcribe-mode-line-string nil)
+            (global-mode-string nil) command)
+        (cl-letf (((symbol-function 'derived-mode-p) (lambda (&rest _) t))
+                  ((symbol-function 'dired-get-marked-files)
+                   (lambda (&rest _) '("/tmp/transcription/audio.m4a")))
+                  ((symbol-function 'read-directory-name)
+                   (lambda (&rest _) "/tmp/transcription/"))
+                  ((symbol-function 'directory-files)
+                   (lambda (&rest _) '("/tmp/transcription/audio.m4a")))
+                  ((symbol-function 'file-regular-p) (lambda (_) t))
+                  ((symbol-function 'completing-read)
+                   (lambda (&rest _) (ert-fail "Quality override prompted for language")))
+                  ((symbol-function 'eve--resolve-cli) (lambda () "/test/eve"))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest args) (setq command (plist-get args :command)) 'fake)))
+          (if aligner
+              (progn (call-interactively entry)
+                     (should (member "--force" command))
+                     (should (equal (cadr (member "--language" command)) "en")))
+            (should-error (call-interactively entry) :type 'user-error)
+            (should-not command)))))))
 
 (ert-deftest eve-transcribe-async-opens-output-on-success ()
   "Successful completion visits the output manifest without surfacing the log."

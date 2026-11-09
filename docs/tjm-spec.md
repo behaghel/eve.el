@@ -294,6 +294,17 @@ The display token for a word is:
 1. `word.display` when present and non-empty;
 2. otherwise `word.spoken`.
 
+Derived display joins MUST omit synthetic spaces at French elision boundaries
+such as `j` + `'espère`, `c` + `'` + `est`, or `l’` + `écouter`. Both straight and
+curly apostrophes retain their original spelling. This changes only presentation
+separators: consumers MUST NOT merge timed tokens, rewrite recognized words or
+display fragments, or change their source intervals. Ordinary quotation marks
+MUST NOT trigger blanket space removal. Existing single-space-joined word caches
+MAY be accepted as equivalent input for word-derived rendering/highlighting;
+the displayed projection uses elision spacing. Explicit segment-level display
+corrections that differ from the word projection remain authoritative for plain
+captions; original-clock export MUST preserve approved explicit `display_text`.
+
 A word object is an atomic timed editing token. Its `display` string MAY contain
 multiple written words or differ from `spoken` in spelling, punctuation, or
 meaning. Rewriting `display` MUST NOT change the token's identity, source timing,
@@ -389,7 +400,15 @@ Editors SHOULD preserve recognized and unrecognized kind values when
 round-tripping. Renderers MUST reject unknown legacy effective kind values.
 
 Filler classification is descriptive metadata. It does not itself delete or
-rewrite the word.
+rewrite the word. Protecting a selected display region MUST apply to whole
+intersecting timed filler tokens, including atomic tokens with multiword display
+fragments. Protection MUST write `word.edit.filler = "no-filler"` without changing
+recognized words, display corrections, source ticks, or other occurrences. A
+subsequent phrase scan and bulk filler deletion MUST preserve those protections.
+Selecting lexical words alongside candidates MUST NOT reclassify the lexical
+words. Word-level filler deletion MUST NOT invent words or timing for
+segment-only captions; an entirely untimed request MUST fail without changing
+manifest data or undo history.
 
 When present, `word.edit` MUST be an object, including `{}` when empty,
 not `null`. The following interoperable
@@ -884,6 +903,31 @@ valid timed word. Producers MUST NOT stretch or redistribute intervals solely
 to satisfy validation; any alignment repair requires evidence from the source
 audio. Output MUST satisfy the manifest validation rules before being reported
 as successfully produced.
+
+An editor invoking transcription MUST forward its selected recognition language
+for both full-source and supported legacy region requests. With no explicit
+model override, it MAY delegate language-aware model selection to the CLI.
+Known incompatible English-only choices MUST fail rather than silently switch
+language, model, or alignment policy. Full-source word-editing requests MUST
+request word timestamps. Asynchronous completion MUST retain the launch-time
+language, resolved CLI executable, and filler-review preferences in the result
+buffer. Subsequent inspection and rendering MUST use that captured CLI rather
+than revert to an unrelated older executable from PATH. Canonical tick-based
+output MUST NOT be offered legacy seconds-only retranscription as automatic repair.
+English is the default editor recognition language; users MAY configure another
+default. Ordinary directory and Dired transcription commands MUST use that
+preference without a language prompt. Their prefix argument MUST request a
+per-run language choice, not a quality override. This choice MUST NOT change the
+configured default, including after cancellation or a rejected request, and
+MUST NOT replace an explicit model or alignment policy. Cancellation MUST NOT
+start transcription. The result buffer retains the chosen job language.
+
+Quality overrides MUST require an explicit advanced command or programmatic
+request independent of language selection. They remain subject to native CTC
+opt-in and the authoritative timing guarantees in Section 15.1.
+
+These editor preferences do not introduce new required TJM fields or certify
+recognition fidelity, word presence, or timing accuracy.
 
 ### 15.1 Automatic alignment and quality overrides
 

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 
+from .utils.typography import display_separator
+
 
 class SubtitleError(ValueError):
     """A subtitle request cannot be honored without changing its meaning."""
@@ -219,6 +221,7 @@ def _timed_events(
         )
         visibility += rf"\t({visible_end},{visible_end},\alpha&HFF&)"
         parts: list[str] = []
+        visible = ""
         for token in caption.tokens:
             color = rf"\1c{base}"
             for start, end in token.intervals:
@@ -231,8 +234,10 @@ def _timed_events(
                 else:
                     color += rf"\t({first},{first},\1c{active})"
                 color += rf"\t({last},{last},\1c{base})"
-            parts.append("{" + color + "}" + _ass_text(token.text))
-        text = "{" + visibility + "}" + _ass_text(caption.prefix) + " ".join(parts)
+            separator = display_separator(visible, token.text)
+            parts.append(separator + "{" + color + "}" + _ass_text(token.text))
+            visible += separator + token.text
+        text = "{" + visibility + "}" + _ass_text(caption.prefix) + "".join(parts)
         events.append(
             f"Dialogue: 0,{_ass_timestamp(float(container_start))},"
             f"{_ass_timestamp(float(container_end))},Default,,0,0,0,,{text}\n"

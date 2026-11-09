@@ -272,8 +272,80 @@ Two commands launch transcription:
 - =M-x eve-dired-transcribe= runs from Dired using the marked files (or the
   file at point when nothing is marked).
 
+Both commands use =eve-transcribe-language=, which defaults to English, without
+asking.  A prefix opens a language chooser for /this job only/:
+
+| Invocation | Language |
+|------------+----------|
+| =M-x eve-dired-transcribe= | Configured default (English unless customized). |
+| =C-u M-x eve-dired-transcribe= | Choose =Français (fr)=, =English (en)= or another language code. |
+| =C-u M-x eve-transcribe= | Choose a directory, then the language for that job. |
+
+Choosing French never changes the configured default: the next ordinary
+transcription uses that default again (English unless customized).  Cancel the
+chooser with =C-g= to start nothing.
+Language selection never requests a quality override.  The same convention
+applies to =C-c C-t=, which invokes =eve-transcribe=.
+
 On failure, the =*eve transcribe*= buffer appears so you can inspect the error
 output.
+
+** French transcription and review
+
+Keep English as your usual language.  In Dired, mark the French audio file,
+run =C-u M-x eve-dired-transcribe=, and choose =Français (fr)=.  There is no
+need to change your language preference or evaluate a Lisp setup block.
+
+Model selection remains independent: =eve-transcribe-model= defaults to =nil=,
+so the CLI selects =medium.en= for English and multilingual =medium= otherwise.
+To use an already cached multilingual =large-v3= for either language, set
+=eve-transcribe-model= once through =M-x customize-variable=.  Eve does not
+silently replace an explicit model when you change language.  An incompatible
+English-only model or alignment policy is rejected before launch; choose a
+compatible setting rather than forcing it.  Choosing a language does not
+qualify recognition fidelity or acoustic word boundaries.
+
+Filler review is configured separately.  For example, a personal phrase list
+may include both English and French candidates:
+
+#+begin_src emacs-lisp
+(setq eve-filler-phrases '("um" "uh" "euh" "en fait" "du coup"))
+#+end_src
+
+For strictly offline use, model files must already be cached; setting
+=HF_HUB_OFFLINE= to =1= in Emacs's environment prohibits missing-file downloads.
+
+These phrases are review candidates, not a rule that every occurrence is
+meaningless.  Configure =eve-filler-exception-phrases= for expressions that must
+not be newly tagged.  English-only =.en= model names, native CTC alignment, and
+=trained-verbatim= are not French alternatives and are rejected before launch.
+Language, the resolved CLI executable, and phrase rules captured at launch
+follow the asynchronous result buffer, even if you change settings while
+recognition runs.  Inspection and rendering therefore use the same CLI rather
+than an older =eve= found in PATH.  These are editor preferences, not new manifest
+fields.
+
+1. Run =C-u M-x eve-transcribe= or =C-u M-x eve-dired-transcribe= and choose
+   =Français (fr)=.  Emacs requests timed words; recognized candidates are
+   highlighted when the result opens.
+2. Review candidates with =] f= and =[ f=, and audition source audio.
+3. Keep a meaningful occurrence: put point on a candidate and press =A=, or
+   select an entire expression such as /en fait/ and press =A=.  Only selected
+   candidates are protected; the phrase list and other occurrences stay intact.
+4. After reviewing /all/ candidates, press =F= to delete the remaining marked
+   words across the /whole manifest/.  Use ordinary word deletion for individual
+   cuts instead.  =u= undoes an edit; =A= prevents future deletion rather than
+   restoring an already deleted word.
+5. Save, then =C-c C-c= renders audio-only sources as M4A with matching WebVTT.
+   Original media and recognized words/ticks stay unchanged.  Audition the
+   result before accepting or publishing it.
+
+Phrase matching operates on recognized words within each caption.  It cannot
+recover a hesitation omitted by recognition, and successful transcription does
+not certify acoustic word boundaries.  A segment-only transcript remains useful
+for reading and following playback, but cannot support word-level filler
+removal.  Eve rejects that operation rather than inventing word intervals or
+silently retranscribing canonical source clocks through the legacy region path.
 
 ** Timing and output validity
 
@@ -334,15 +406,19 @@ keeps backend word timings.  The CTC path requires English =faster-whisper=
 and the CLI's declared =alignment= dependencies.  Its progress shows the word
 alignment stage, and success opens the manifest as usual.
 
-A normal run never passes =--force=.  Use =C-u M-x eve-transcribe= or
-=C-u M-x eve-dired-transcribe= to request a quality override for that run;
-this requires the CTC opt-in and still cannot override invalid timing.
+A normal run and a language-selection prefix never pass =--force=.  To request
+an advanced per-run quality override, explicitly invoke
+=M-x eve-transcribe-with-quality-override= or
+=M-x eve-dired-transcribe-with-quality-override=.  These commands use the
+configured language, require the CTC opt-in, and still cannot override invalid
+timing.  Migration note: =C-u= now selects language, not a quality override.
 A failure shows =*eve transcribe*= and is never retried automatically.
 The alignment audit, including false booleans and empty arrays, survives
 editor saving and undo.  Empty segment tag lists also remain arrays in saved
-and render manifests.  CTC completion skips legacy suspicious-region ASR
-repair offers; the word-aligner setting does not change manual region
-retranscription commands.
+and render manifests.  Canonical v1.1 completion skips legacy suspicious-region
+ASR repair offers regardless of the selected word aligner.  Legacy region
+retranscription forwards the selected language but does not gain native CTC
+alignment; it remains unavailable for canonical tick-based manifests.
 
 The pause diagnostic is provisional and non-blocking: Silero-VAD gaps of at
 least 250 ms, with 80 ms excluded at each edge.  Representative validation is
@@ -433,7 +509,8 @@ or timing accuracy.  Model quality must be qualified separately; a backend's
 | Variable | Default | Description |
 |----------+---------+-------------|
 | =eve-transcribe-backend= | ="faster-whisper"= | Backend name passed to =eve transcribe=. |
-| =eve-transcribe-model= | ="medium.en"= | Model name/path, independent of recognition profile. |
+| =eve-transcribe-language= | ="en"= | Recognition language code; use ="fr"= for French. |
+| =eve-transcribe-model= | =nil= | Optional model name/path; nil delegates language-aware defaults to the CLI. |
 | =eve-transcribe-recognition-profile= | ="default"= | Full-source decoding/token policy; ="trained-verbatim"= requires native CTC and a compatible local model. |
 | =eve-transcribe-word-aligner= | =nil= | Set to ="ctc"= for opt-in native word alignment on full-source transcription. |
 | =eve-transcribe-verbatim= | =t= | Pass =--verbatim= to the backend. |
@@ -539,6 +616,12 @@ point.  On a marker it edits the title.  For timed v1.1 segments it changes
 The panel's =i= action edits one focused token or the selected token range;
 =E= edits the segment's token displays.
 
+French elisions such as =j= + ='espère= and =l’= + =écouter= display as
+=j'espère= and =l’écouter= in the editor and word-derived captions.  Straight and
+curly apostrophes keep their spelling.  This removes only synthetic spacing:
+the source tokens stay separate, with their original timings and editing
+identities.  Existing timed transcripts do not need retranscription.
+
 A single v1.1 token can display a complete phrase, which highlights and deletes
 as one unit.  For a bulk replacement, supply one replacement word per selected
 timed token; otherwise edit the tokens individually.  Ambiguous replacements
@@ -584,8 +667,10 @@ Eve validates the manifest automatically on every save (controlled by
 Filler words ("um", "uh", "you know") clutter transcripts.  Eve's filler
 workflow is non-destructive: words are /marked/ as fillers first, then
 /optionally deleted/.  Marked fillers are highlighted in the buffer with a
-distinct face and excluded from compilation.  You can mark a word as non-filler
-for this TJM file so future auto-tagging leaves it alone.
+distinct face.  New transcripts keep marked words in audio until you delete
+them; an explicit =render.filler_policy = "drop"= instead drops effective filler
+intervals during compilation.  You can mark words as non-filler for this TJM
+file so future auto-tagging and bulk filler deletion leave them alone.
 
 ** Configuration
 
@@ -615,7 +700,7 @@ compatibility but =eve-filler-phrases= is preferred.
 |-----+---------+-------------|
 | =f= | =eve-dwim-filler= | Add the word at point to phrases and retag; or delete region as filler. |
 | =F= | =eve-delete-fillers= | Mark all tagged fillers as deleted. |
-| =A= | =eve-accept-filler= | Mark the filler at point as non-filler in this TJM file. |
+| =A= | =eve-accept-filler= | Protect the filler at point or selected fillers for this file. |
 | =]f= / =[f= | =eve-next-filler= / =eve-previous-filler= | Jump to next / previous visible filler. |
 | =C-c C-d= | =eve-delete-fillers= | Same as =F= from the =C-c= prefix map. |
 | — | =M-x eve-tag-fillers= | Mark all matching words in the buffer. |

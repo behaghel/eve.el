@@ -163,9 +163,21 @@ using source start/end times and ignoring word-level edits."
   :type 'string
   :group 'eve)
 
-(defcustom eve-transcribe-model "medium.en"
-  "Model passed to `eve transcribe'."
-  :type 'string
+(defcustom eve-transcribe-language "en"
+  "Language code passed to full-source and legacy region transcription.
+Full-source commands use this default without prompting; a prefix chooses
+another language for one job without changing this preference.
+Use \"fr\" for French.  This selects recognition language, not filler phrases
+or a qualification of word-timing accuracy."
+  :type '(choice (const :tag "English" "en") (const :tag "French" "fr") string)
+  :group 'eve)
+
+(defcustom eve-transcribe-model nil
+  "Model passed to `eve transcribe', or nil for the CLI default.
+The CLI chooses medium.en for English and multilingual medium otherwise.
+An explicit model name or local path is preserved; models are not silently
+replaced when the language changes."
+  :type '(choice (const :tag "Language-aware CLI default" nil) string)
   :group 'eve)
 
 (defcustom eve-transcribe-recognition-profile "default"
@@ -1215,24 +1227,49 @@ non-renderable markers) and required for markers that carry intro/outro b-roll."
         (let ((count (eve--reprocess-suspicious-intervals intervals backend model)))
           (message "Reprocessed %d suspicious region(s)" count))))))
 
-(defun eve--transcribe-finished (process event output-path &optional word-aligner)
+(defun eve--transcribe-finished (process event output-path &optional word-aligner settings)
   "Handle completion of transcribe PROCESS EVENT for OUTPUT-PATH.
-WORD-ALIGNER is captured at launch; CTC output skips legacy ASR repair offers."
+WORD-ALIGNER and editor SETTINGS are captured at launch.  CTC and canonical
+output skip legacy seconds-only ASR repair offers."
   (eve--transcribe-finished-state)
   (let ((buffer (process-buffer process)))
     (if (and (eq (process-status process) 'exit)
              (= (process-exit-status process) 0))
         (progn
           (message "eve transcribe finished: %s" output-path)
-          (find-file output-path)
+          (cl-progv (mapcar #'car settings) (mapcar #'cdr settings)
+            (find-file output-path))
+          (when (derived-mode-p 'eve-mode)
+            (dolist (setting settings)
+              (set (make-local-variable (car setting)) (cdr setting)))
+            (when (and settings (> (eve--apply-filler-tags) 0))
+              (eve--mark-dirty)
+              (eve--render t)))
           (when (and (not (equal word-aligner "ctc"))
-                     (derived-mode-p 'eve-mode))
+                     (derived-mode-p 'eve-mode)
+                     (not (eve--canonical-editor-p)))
             (eve--maybe-offer-reprocess-suspicious-transcripts
              (or (process-get process :eve-backend) eve-transcribe-backend)
              (or (process-get process :eve-model) eve-transcribe-model))))
       (when (buffer-live-p buffer)
         (pop-to-buffer buffer))
       (message "eve transcribe failed: %s" (string-trim event)))))
+
+(defun eve--transcribe-language-arguments (model)
+  "Return recognition language arguments, validating an explicit MODEL."
+  (unless (and (stringp eve-transcribe-language)
+               (not (string-empty-p (string-trim eve-transcribe-language))))
+    (user-error "Choose a transcription language code, such as en or fr"))
+  (when (and model (not (stringp model)))
+    (user-error "Transcription model must be a name/path or nil"))
+  (when (and (not (equal eve-transcribe-language "en")) model
+             (string-suffix-p ".en" model)
+             (not (file-exists-p (expand-file-name model))))
+    (user-error "An English-only .en model cannot transcribe %s; choose a multilingual model or nil"
+                eve-transcribe-language))
+  (append (list "--language" eve-transcribe-language)
+          (when (and model (not (string-empty-p model)))
+            (list "--model" model))))
 
 (defun eve--transcribe-profile-arguments (profile)
   "Return CLI policy arguments for PROFILE without choosing a model.
@@ -1241,15 +1278,18 @@ responsible for model artifacts and authoritative word timing."
   (pcase profile
     ("default" nil)
     ("trained-verbatim"
-     (unless (and (equal eve-transcribe-backend "faster-whisper")
+     (unless (and (equal eve-transcribe-language "en")
+                  (stringp eve-transcribe-model)
+                  (not (string-empty-p eve-transcribe-model))
+                  (equal eve-transcribe-backend "faster-whisper")
                   (equal eve-transcribe-word-aligner "ctc")
                   eve-transcribe-verbatim
                   (or (null eve-transcribe-hotwords)
                       (and (stringp eve-transcribe-hotwords)
                            (string-empty-p eve-transcribe-hotwords))))
-       (user-error "trained-verbatim requires faster-whisper, word-aligner ctc, verbatim enabled and no hotwords"))
+       (user-error "trained-verbatim requires English, an explicit local model, faster-whisper, word-aligner ctc, verbatim enabled and no hotwords"))
      '("--recognition-profile" "trained-verbatim"
-       "--device" "cpu" "--language" "en" "--beam-size" "5"))
+       "--device" "cpu" "--beam-size" "5"))
     (_ (user-error "Unsupported recognition profile: %s" profile))))
 
 (defun eve--transcribe-async (files output-path &optional force)
@@ -1258,6 +1298,15 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
   (let* ((profile eve-transcribe-recognition-profile)
          (profile-arguments (eve--transcribe-profile-arguments profile))
          (word-aligner eve-transcribe-word-aligner)
+         (language-arguments (eve--transcribe-language-arguments eve-transcribe-model))
+         (settings (mapcar (lambda (symbol) (cons symbol (copy-tree (symbol-value symbol) t)))
+                          '(eve-transcribe-language eve-transcribe-model eve-transcribe-backend
+                            eve-transcribe-recognition-profile eve-transcribe-word-aligner
+                            eve-transcribe-verbatim eve-transcribe-hotwords eve-transcribe-tag-fillers
+                            eve-filler-phrases eve-filler-regex eve-filler-exception-phrases)))
+         (_ (when (and (equal word-aligner "ctc")
+                       (not (equal eve-transcribe-language "en")))
+              (user-error "Native CTC word alignment currently supports English only")))
          (_ (when (and force (not (equal word-aligner "ctc")))
               (user-error "Quality override requires eve-transcribe-word-aligner = ctc")))
          (program (or (eve--resolve-cli)
@@ -1269,7 +1318,8 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
                            files
                            (list "--output" output-file
                                  "--backend" eve-transcribe-backend
-                                 "--model" eve-transcribe-model)
+                                 "--timestamps" "words")
+                           language-arguments
                            profile-arguments
                            (when eve-transcribe-verbatim
                              '("--verbatim"))
@@ -1292,7 +1342,8 @@ Optional FORCE requests a per-run quality override with the CTC opt-in."
                                   :filter #'eve--transcribe-process-filter
                                   :sentinel (lambda (process event)
                                               (eve--transcribe-finished
-                                               process event output-file word-aligner)))))
+                                               process event output-file word-aligner
+                                               (cons (cons 'eve-cli-program program) settings))))))
       (when (processp process)
         (process-put process :eve-start-time start-time)
         (process-put process :eve-backend eve-transcribe-backend)
@@ -3056,7 +3107,8 @@ Return one display fragment per existing token, without mutating data."
     (let ((old (mapcar #'eve--word-render-text
                       (cl-subseq words start-index (1+ end-index)))))
       (cond
-       ((equal text (string-join old " ")) old)
+       ((or (equal text (string-join old " "))
+            (equal text (eve--join-display-tokens old))) old)
        ((and (= count 1) (eve--canonical-editor-p)) (list text))
        ((= count (length tokens)) tokens)
        (t (user-error "Ambiguous replacement: edit one timed token at a time; timings are never redistributed"))))))
@@ -3078,10 +3130,9 @@ Return one display fragment per existing token, without mutating data."
   (let* ((segment (eve--segment-panel-segment))
          (range (eve--segment-panel-word-range))
          (words (alist-get 'words segment))
-         (current (string-join
+         (current (eve--join-display-tokens
                    (mapcar #'eve--word-render-text
-                           (cl-subseq words (car range) (1+ (cdr range))))
-                   " "))
+                           (cl-subseq words (car range) (1+ (cdr range))))))
          (replacement (read-string "Rephrase words: " current)))
     (eve--segment-panel-rephrase-values segment (car range) (cdr range) replacement)
     (eve--segment-panel-record-state)
@@ -3095,7 +3146,7 @@ Return one display fragment per existing token, without mutating data."
   (interactive)
   (let* ((segment (eve--segment-panel-segment))
          (words (alist-get 'words segment))
-         (current (string-join (mapcar #'eve--word-render-text words) " "))
+         (current (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
          (replacement (read-string "Rephrase segment: " current)))
     (eve--segment-panel-rephrase-values segment 0 (1- (length words)) replacement)
     (eve--segment-panel-record-state)
@@ -3127,7 +3178,8 @@ Return one display fragment per existing token, without mutating data."
                      (user-error "Cannot find eve CLI executable: %s"
                                  eve-cli-program))))
     (append (list program "transcribe" media "--output" output
-                  "--backend" backend "--model" model)
+                  "--backend" backend "--timestamps" "words")
+            (eve--transcribe-language-arguments model)
             (when eve-transcribe-verbatim
               '("--verbatim"))
             (when eve-transcribe-hotwords
@@ -3392,7 +3444,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
 
 (defun eve--segment-panel-words-label (words)
   "Return a compact display label for WORDS."
-  (string-join (mapcar #'eve--word-render-text words) " "))
+  (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
 
 (defun eve--segment-panel-set-word-token (word token)
   "Set WORD's visible TOKEN in place."
@@ -3430,7 +3482,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
   (let* ((canonical (eve--canonical-editor-p))
          (words (seq-remove (lambda (word) (and canonical (eve--word-media-cut-p word)))
                             (alist-get 'words segment))))
-    (string-join (mapcar #'eve--word-render-text words) " ")))
+    (eve--join-display-tokens (mapcar #'eve--word-render-text words))))
 
 (defun eve--segment-panel-refresh-segment-text (segment)
   "Refresh SEGMENT's caption cache without rewriting its spoken record."
@@ -4473,6 +4525,34 @@ Legacy manifests retain their seconds-based interpretation."
                                 eve--data))
            "1.1")))
 
+(defconst eve--french-elision-regexp
+  (concat "\\(?:\\`\\|[^[:alnum:]_'’]\\)"
+          "\\(?:c\\|d\\|j\\|l\\|m\\|n\\|s\\|t\\|qu\\|jusqu\\|lorsqu"
+          "\\|puisqu\\|quoiqu\\|presqu\\|quelqu\\|entr\\|aujourd\\)\\(['’]?\\)\\'")
+  "French elision stems at the end of a display fragment.")
+
+(defun eve--display-token-separator (left right)
+  "Return spacing between LEFT and RIGHT without changing either fragment."
+  (save-match-data
+    (let ((case-fold-search t))
+      (cond
+       ((or (string-empty-p left) (string-empty-p right)) "")
+       ((and (string-match eve--french-elision-regexp left)
+             (let ((apostrophe (match-string 1 left)))
+               (if (not (string-empty-p apostrophe))
+                   (string-match-p "\\`[[:alpha:]]" right)
+                 (or (member right '("'" "’"))
+                     (string-match-p "\\`['’][[:alpha:]]" right))))) "")
+       (t " ")))))
+
+(defun eve--join-display-tokens (fragments)
+  "Join display FRAGMENTS with French elision spacing, never merging records."
+  (let ((text ""))
+    (dolist (fragment fragments)
+      (unless (string-empty-p fragment)
+        (setq text (concat text (eve--display-token-separator text fragment) fragment))))
+    text))
+
 (defun eve--word-render-text (word)
   "Return WORD's display fragment, falling back to the format's source token."
   (let ((display (alist-get 'display word)))
@@ -4494,6 +4574,7 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
          (source-spans (and (not canonical) words (eve--segment-word-spans text)))
          (pieces nil)
          (word-spans nil)
+         (joined "")
          (cursor 0))
     (if (and words (= (length words) (length source-spans)))
         (cl-loop for word in words
@@ -4512,15 +4593,17 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
             (unless (and eve-hide-deleted-mode (eve--edit-deleted-p word))
               (let ((word-text (string-trim (eve--word-render-text word))))
                 (unless (string-empty-p word-text)
-                  (when pieces
-                    (setq cursor (1+ cursor)))
+                  (let ((separator (if canonical
+                                       (eve--display-token-separator joined word-text)
+                                     (if pieces " " ""))))
+                    (setq cursor (+ cursor (length separator))
+                          joined (concat joined separator word-text)))
                   (push word-text pieces)
                   (push (list cursor (+ cursor (length word-text)) word) word-spans)
                   (setq cursor (+ cursor (length word-text)))))))
         (setq pieces (unless (string-empty-p text) (list text)))))
-    (list :text (if pieces
-                    (string-join (nreverse pieces) " ")
-                  "")
+    (list :text (if (and canonical words) joined
+                  (if pieces (string-join (nreverse pieces) " ") ""))
           :word-spans (nreverse word-spans))))
 
 (defun eve--rendered-marker-duration (segment)
@@ -5646,27 +5729,49 @@ Optional COUNT moves backward multiple segments."
   (interactive)
   (eve--goto-filler 'previous))
 
+(defun eve--words-in-region (start end)
+  "Return whole visible timed words intersecting display region START to END."
+  (let (words)
+    (dolist (segment (eve--segments))
+      (when-let* ((bounds (eve--segment-bounds (alist-get 'id segment))))
+        (dolist (span (plist-get (eve--segment-render-data segment) :word-spans))
+          (when (and (< (+ (car bounds) (nth 0 span)) end)
+                     (> (+ (car bounds) (nth 1 span)) start))
+            (cl-pushnew (nth 2 span) words :test #'eq)))))
+    (nreverse words)))
+
 (defun eve-accept-filler ()
-  "Mark the filler word at point as explicitly not filler.
-This keeps the word in the transcript and prevents future auto-tagging from
-marking it as filler again in this TJM file."
+  "Protect the filler at point, or selected fillers, from future deletion.
+An active region protects whole timed tokens, even when a display fragment
+contains several written words.  Other occurrences remain unchanged."
   (interactive)
-  (let* ((info (eve--word-data-at-point))
-         (segment-id (plist-get info :segment-id))
-         (word-index (plist-get info :word-index))
-         (word-text (plist-get info :word-text))
-         (word (plist-get info :word)))
-    (unless (eve--word-filler-p word)
-      (user-error "Word is not marked as filler"))
-    (eve--record-state)
-    (eve--mark-word-non-filler word)
-    (eve--mark-dirty)
-    (eve--render t)
-    (or (eve--goto-word-by-index segment-id word-index)
-        (eve--goto-segment segment-id))
-    (eve--update-focus-overlay)
-    (eve--echo-segment-info)
-    (message "Marked non-filler word '%s'" word-text)))
+  (if (use-region-p)
+      (let ((words (seq-filter #'eve--word-filler-p
+                               (eve--words-in-region (region-beginning) (region-end)))))
+        (unless words
+          (user-error "Selection contains no filler words with timings"))
+        (eve--record-state)
+        (dolist (word words) (eve--mark-word-non-filler word))
+        (eve--mark-dirty)
+        (deactivate-mark)
+        (eve--render t)
+        (message "Preserved %d selected filler word(s)" (length words)))
+    (let* ((info (eve--word-data-at-point))
+           (segment-id (plist-get info :segment-id))
+           (word-index (plist-get info :word-index))
+           (word-text (plist-get info :word-text))
+           (word (plist-get info :word)))
+      (unless (eve--word-filler-p word)
+        (user-error "Word is not marked as filler"))
+      (eve--record-state)
+      (eve--mark-word-non-filler word)
+      (eve--mark-dirty)
+      (eve--render t)
+      (or (eve--goto-word-by-index segment-id word-index)
+          (eve--goto-segment segment-id))
+      (eve--update-focus-overlay)
+      (eve--echo-segment-info)
+      (message "Marked non-filler word '%s'" word-text))))
 
 (defun eve-split-segment ()
   "Split the current segment at point, creating a new segment
@@ -6352,8 +6457,11 @@ TJM v1.1 rejects this seconds-only editor without changing data or history."
     (call-interactively #'eve-add-filler-at-point)))
 
 (defun eve-delete-fillers ()
-  "Mark every word tagged as filler as deleted."
+  "Mark every timed word tagged as filler as deleted.
+Segment-only captions cannot support word-level filler removal."
   (interactive)
+  (unless (seq-some (lambda (segment) (alist-get 'words segment)) (eve--segments))
+    (user-error "Filler removal requires timed words, not segment-only captions"))
   (eve--record-state)
   (let ((count 0))
     (dolist (segment (eve--segments))
@@ -6425,12 +6533,25 @@ TJM v1.1 rejects this seconds-only editor without changing data or history."
     (eve--populate-raw-buffer buf buffer-file-name)
     (switch-to-buffer buf)))
 
-(defun eve-transcribe (directory &optional force)
+(defun eve--read-transcription-language ()
+  "Read a per-run recognition language without changing user preferences."
+  (let* ((choices '(("English (en)" . "en") ("Français (fr)" . "fr")))
+         (default (or (car (rassoc eve-transcribe-language choices))
+                      eve-transcribe-language))
+         (choice (completing-read "Transcription language (or language code): "
+                                  choices nil nil nil nil default)))
+    (or (cdr (assoc choice choices)) (string-trim choice))))
+
+(defun eve-transcribe (directory &optional force language)
   "Transcribe supported media files from DIRECTORY.
-With prefix FORCE, request an explicit CTC quality override for this run.
-Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails."
-  (interactive "DDirectory to transcribe: \nP")
-  (let* ((expanded-directory (file-name-as-directory
+A prefix asks for LANGUAGE for this run only; otherwise use
+`eve-transcribe-language', whose default is English.
+Non-interactive FORCE requests a CTC quality override.  Interactively use
+`eve-transcribe-with-quality-override'; invalid timing still fails."
+  (interactive (list (read-directory-name "Directory to transcribe: " nil nil t)
+                     nil (when current-prefix-arg (eve--read-transcription-language))))
+  (let* ((eve-transcribe-language (or language eve-transcribe-language))
+         (expanded-directory (file-name-as-directory
 				      (expand-file-name directory)))
 	 (files (seq-filter #'file-regular-p
 			    (directory-files expanded-directory t
@@ -6441,18 +6562,35 @@ Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails
     (eve--transcribe-async media-files
                           (eve--infer-manifest-path media-files) force)))
 
-(defun eve-dired-transcribe (&optional force)
+(defun eve-dired-transcribe (&optional force language)
   "Transcribe supported marked media files from the current Dired buffer.
-With prefix FORCE, request an explicit CTC quality override for this run.
-Requires `eve-transcribe-word-aligner' to be \"ctc\"; invalid timing still fails."
-  (interactive "P")
+A prefix asks for LANGUAGE for this run only; otherwise use
+`eve-transcribe-language', whose default is English.
+Non-interactive FORCE requests a CTC quality override.  Interactively use
+`eve-dired-transcribe-with-quality-override'; invalid timing still fails."
+  (interactive (list nil (when current-prefix-arg (eve--read-transcription-language))))
   (unless (derived-mode-p 'dired-mode)
     (user-error "Not in a Dired buffer"))
-  (let ((media-files (eve--filter-media-files (dired-get-marked-files t))))
+  (let ((media-files (eve--filter-media-files (dired-get-marked-files t)))
+        (eve-transcribe-language (or language eve-transcribe-language)))
     (unless media-files
       (user-error "No media files selected"))
     (eve--transcribe-async media-files
                           (eve--infer-manifest-path media-files) force)))
+
+(defun eve-transcribe-with-quality-override (directory)
+  "Transcribe DIRECTORY with an explicit per-run native CTC quality override.
+Use the configured language.  CTC opt-in is required and invalid timing still
+fails.  Ordinary transcription and language selection never request force."
+  (interactive (list (read-directory-name "Directory to transcribe: " nil nil t)))
+  (eve-transcribe directory t))
+
+(defun eve-dired-transcribe-with-quality-override ()
+  "Transcribe Dired media with an explicit per-run native CTC quality override.
+Use the configured language.  CTC opt-in is required and invalid timing still
+fails.  Ordinary transcription and language selection never request force."
+  (interactive)
+  (eve-dired-transcribe t))
 
 (defun eve-play-segment (&optional segment)
   "Play SEGMENT using `eve-play-program', or the rendered section when on a marker."
