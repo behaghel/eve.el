@@ -606,10 +606,15 @@ New manifests explicitly keep fillers and set @samp{render.preserve_short_gaps} 
 @samp{0}.  Change these saved render settings in the raw JSON companion when needed;
 they are authoritative for v1.1 rendering.
 
-Missing, reversed, zero-duration, or sub-tick-collapsed word intervals block
-publication of a successful transcription.  Eve does not add a tick or stretch
-neighbouring words to make validation pass.  Existing output is left untouched
-on validation failure.  Default transcription preserves ASR estimates without
+Zero-duration words are valid transcript tokens with empty media intervals.
+They retain their text and exact source ticks; Eve does not add a tick, stretch
+neighbouring words, or require a repair before opening the transcript.  An
+existing positive-duration source segment remains playable even if all its
+words have empty intervals.  Automatic caption regrouping keeps that segment's
+existing envelope when needed; unrelated captions still regroup normally.
+Missing, reversed, non-finite or out-of-bounds timing remains an error, and
+media segments must still have positive duration.  Existing output is left
+untouched on validation failure.  Default transcription preserves ASR estimates without
 certifying acoustic accuracy.  The CLI's opt-in @samp{--word-aligner ctc} path uses
 unchanged native CTC estimates after English faster-whisper recognition; no human
 timing annotations are needed.  Unsigned English integers, including grouped
@@ -992,6 +997,24 @@ Eve maintains its own undo stack separate from Emacs's built-in undo.
 Eve validates the manifest automatically on every save (controlled by
 @samp{eve-validation-on-save}).  Manual validation runs with @samp{C-c C-v}
 (@samp{eve-validate}).  Timing inconsistencies are reported in the echo area.
+
+Zero-duration words use warning highlighting in the transcript and segment
+panel.  Hovering explains their empty media extent.  They remain normal text
+editing and filler-classification targets, but deleting them removes no
+samples or frames: edit feedback makes that explicit.  A deletion does not
+borrow audio from neighbours, remove unrelated gaps, or implicitly delete an
+otherwise playable segment whose words all have empty intervals.
+
+@samp{C-c C-v} includes informational zero-duration warnings, even for hidden or
+deleted tokens.  These warnings require no acknowledgement on save or export
+and do not open a report during an ordinary save.  Fixing the interval removes
+the warning naturally; undo/reload derive it again from the current data.
+
+Undeleted empty tokens remain in subtitles in transcript order.  They have no
+active karaoke highlight interval.  If all caption text is deleted but media
+remains, export produces an empty WebVTT sidecar rather than failing or
+inventing a cue.  Whole-segment edits remain available; caption splits still
+require valid positive-duration media on both sides.
 
 @node Filler Words
 @chapter Filler Words

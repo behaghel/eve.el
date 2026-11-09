@@ -43,10 +43,16 @@ the declared original-source clock. Source paths are relative to the manifest.
 The output records explicit render settings: keep fillers and preserve no gaps
 unless the manifest is subsequently edited. Available backend timing precision
 is preserved, but this does not turn ASR estimates into sample-accurate acoustic
-alignment. Missing, reversed, zero-duration or sub-tick-collapsed word intervals
-produce a diagnostic rather than fabricated durations. Failed validation leaves
-an existing output untouched; successful manifests are published atomically
-after validation.
+alignment. Empty word intervals, including sub-tick collapses, are valid:
+their text and actual ticks are retained with an informational warning. Deleting
+or dropping them changes captions but removes no media. They have no active
+word-highlighting interval; existing positive-duration segment media remains
+usable, even when all word intervals are empty. No neighbouring duration is
+borrowed, and caption regrouping preserves existing media envelopes where
+needed. This behavior is independent of recognition language and backend.
+Missing, non-finite, reversed or out-of-bounds timing remains invalid; media
+segments still require positive duration. Failed validation leaves an existing
+output untouched; successful manifests are published atomically after validation.
 
 ### French recordings and standalone transcript export
 

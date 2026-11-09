@@ -328,7 +328,10 @@ a stale cached focus MUST NOT redirect the action to another token.
 ### 8.5 Segment-level timing and words
 
 If a media segment supplies `words`, the segment's `start_tick` and `end_tick`
-SHOULD match the first and last remaining word timing after any editing step.
+SHOULD match the first and last remaining word timing after media edits when
+that preserves source coverage. Empty word anchors MUST NOT truncate existing
+media coverage or collapse a valid segment. Text-only edits of empty words
+MUST leave the segment's media bounds unchanged.
 
 Consumers that implement word-level editing SHOULD preserve word order exactly.
 
@@ -372,7 +375,29 @@ Conforming word objects use:
 - `start`: OPTIONAL numeric seconds convenience value;
 - `end`: OPTIONAL numeric seconds convenience value.
 
-`end_tick` MUST be strictly greater than `start_tick`.
+`end_tick` MUST be greater than or equal to `start_tick`. An equal pair is a
+valid empty word interval: the token retains its spoken/display identity and
+source position but selects no samples or frames. It MUST remain within its
+parent segment, including an empty interval at either outer boundary.
+
+Deleting, moving or dropping an empty word MUST NOT remove, add or relocate
+source media. Its text follows the same editorial rules as other words.
+Consumers MUST NOT invent duration, borrow neighboring media, or silently
+omit undeleted text because the interval is empty. Caption text includes such
+tokens in manifest order; time-based word highlighting has no active interval.
+
+An empty word MUST NOT invalidate otherwise valid segment media bounds. When
+all words have empty intervals, the positive-duration segment remains renderable,
+even if all word text is deleted. Removing that media requires a segment edit.
+Regrouping MUST still produce positive-duration media segments and preserve
+source coverage; an impossible split MUST fail before changing data or history.
+
+Editors SHOULD signal empty word intervals through their existing editing and
+validation facilities, without requiring acknowledgement on save or export.
+Deleting an empty word SHOULD report that no audio/video was removed. Hidden
+or deleted tokens remain discoverable in validation reporting. Warnings are
+informational and MUST NOT be treated as malformed timing. Missing, reversed,
+non-integer or out-of-bounds source ticks remain invalid.
 
 The canonical home for editable filler classification is `word.edit.filler`.
 It records explicit local editorial intent for this TJM file:
@@ -459,7 +484,7 @@ the associated source timebase.
 If `words` is present:
 
 - each word MUST use the same source timebase as its parent segment;
-- each word MUST satisfy `segment.start_tick <= word.start_tick < word.end_tick
+- each word MUST satisfy `segment.start_tick <= word.start_tick <= word.end_tick
   <= segment.end_tick`.
 
 ## 11. Marker Segments
@@ -637,9 +662,10 @@ For a renderable marker segment, the renderer renders the marker's
 If `segment.edit.deleted` is `true`, the renderer MUST omit that segment from
 rendered output while leaving the manifest entry itself intact.
 
-If `word.edit.deleted` is `true`, consumers MUST omit that word from rendered
-output and from display-text derivation in the same way they would omit any
-other word intentionally removed by an edit workflow.
+If `word.edit.deleted` is `true`, consumers MUST omit that word's source-media
+extent and display text in the same way they would omit any other word
+intentionally removed by an edit workflow. An empty extent removes no media;
+it MUST NOT trigger an unrelated cut or remove gaps between other words.
 
 ### 13.3 Filler policy behavior
 
@@ -649,7 +675,8 @@ selection by themselves.
 When `render.filler_policy` is `"drop"` and a segment has `words`, the renderer
 MUST remove the source-media intervals covered by words whose effective kind is
 `"filler"`. The remaining non-filler, non-deleted intervals from that segment
-MUST be concatenated in word order.
+MUST be concatenated in word order. Dropping only empty filler intervals MUST
+leave media selection unchanged, while removing their caption text.
 
 ### 13.4 Missing source and zero-duration behavior
 
@@ -898,10 +925,14 @@ consumers treat the words as lexical by default.
 Producers MUST preserve available timing precision through transcription
 segmentation until conversion to the declared source clock. They MUST NOT first
 round backend timings to milliseconds. A word whose interval is missing,
-reversed, zero-duration, or collapses to zero ticks MUST NOT be published as a
-valid timed word. Producers MUST NOT stretch or redistribute intervals solely
-to satisfy validation; any alignment repair requires evidence from the source
-audio. Output MUST satisfy the manifest validation rules before being reported
+reversed, non-finite or out-of-bounds MUST NOT be published as a valid word.
+Zero-duration intervals, including intervals that quantize to an empty extent,
+MUST retain their actual source ticks and text under Section 9. Producers MUST
+NOT stretch or redistribute intervals solely to satisfy validation; any
+alignment repair requires evidence from the source audio. Automatic caption
+regrouping MUST NOT turn empty words into zero-duration media segments: retain
+an existing valid media envelope where necessary, without affecting unrelated
+caption regrouping. Output MUST satisfy the manifest validation rules before being reported
 as successfully produced.
 
 An editor invoking transcription MUST forward its selected recognition language

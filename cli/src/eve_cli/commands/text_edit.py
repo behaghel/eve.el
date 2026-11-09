@@ -31,7 +31,7 @@ QUALITY_FINAL = "final"
 CODEC_H264 = "h264"
 CODEC_MJPEG = "mjpeg"
 INTERMEDIATE_AUDIO_CODEC = "alac"
-TIMELINE_RENDER_VERSION = "native-frame-clock-v2"
+TIMELINE_RENDER_VERSION = "native-frame-clock-v3-empty-words"
 
 _VIDEO_PROBE_CACHE: dict[pathlib.Path, dict[str, Any]] = {}
 
@@ -510,6 +510,23 @@ def has_deleted_words(segment: dict[str, Any]) -> bool:
     return any(edit_deleted(word) for word in segment_words(segment))
 
 
+def empty_word_interval(word: dict[str, Any]) -> bool:
+    """An empty text token has no media extent, even when explicitly deleted."""
+    start, end = (
+        (word.get("start_tick"), word.get("end_tick"))
+        if "start_tick" in word and "end_tick" in word
+        else (word.get("start"), word.get("end"))
+    )
+    return start is not None and end is not None and start == end
+
+
+def has_media_word_deletions(segment: dict[str, Any]) -> bool:
+    return any(
+        edit_deleted(word) and not empty_word_interval(word)
+        for word in segment_words(segment)
+    )
+
+
 def raw_segment_bounds(segment: dict[str, Any]) -> tuple[float, float] | None:
     start = segment.get("start")
     end = segment.get("end")
@@ -536,7 +553,7 @@ def merge_ranges(ranges: list[tuple[float, float]]) -> list[tuple[float, float]]
 
 
 def surviving_word_ranges(segment: dict[str, Any]) -> list[tuple[float, float]]:
-    if not has_deleted_words(segment):
+    if not has_media_word_deletions(segment):
         return []
     bounds = raw_segment_bounds(segment)
     if bounds is None:
@@ -559,7 +576,7 @@ def surviving_word_ranges(segment: dict[str, Any]) -> list[tuple[float, float]]:
 
 
 def segment_media_ranges(segment: dict[str, Any]) -> list[tuple[float, float]]:
-    if has_deleted_words(segment):
+    if has_media_word_deletions(segment):
         return surviving_word_ranges(segment)
     bounds = raw_segment_bounds(segment)
     if bounds is None:
@@ -847,7 +864,7 @@ def _subtitle_ranges(
     bounds = _subtitle_bounds(segment, clock)
     if bounds is None or bounds[1] <= bounds[0]:
         return []
-    if not has_deleted_words(segment):
+    if not has_media_word_deletions(segment):
         return [bounds]
     ranges: list[tuple[Fraction, Fraction]] = []
     for word in surviving_words(segment):
@@ -975,7 +992,7 @@ def build_token_captions(
                 word.get("display") or word.get("spoken") or word.get("token") or ""
             )
             bounds = _subtitle_bounds(word, clock)
-            if bounds is None or bounds[1] <= bounds[0]:
+            if bounds is None or bounds[1] < bounds[0]:
                 start_value = word.get("start_tick", word.get("start"))
                 end_value = word.get("end_tick", word.get("end"))
                 raise subtitles.SubtitleError(
@@ -995,7 +1012,7 @@ def build_token_captions(
             tokens.append(subtitles.TimedToken(fragment, intervals))
         derived = join_display_tokens(token.text for token in tokens)
         legacy_join = " ".join(token.text for token in tokens)
-        display = segment.get("display_text")
+        display = None if has_deleted_words(segment) else segment.get("display_text")
         if display and str(display).strip() not in (
             derived.strip(),
             legacy_join.strip(),
@@ -1013,8 +1030,6 @@ def build_token_captions(
 
 
 def write_webvtt(cues: list[tuple[float, float, str]], path: pathlib.Path) -> None:
-    if not cues:
-        raise RuntimeError("No subtitle cues were generated from the manifest")
     path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[eve text-edit] Writing WebVTT subtitles to {path}", flush=True)
     with path.open("w", encoding="utf-8") as file_handle:
@@ -2162,9 +2177,14 @@ def validate_manifest_for_render(
             if ws is not None and we is not None:
                 try:
                     wstart, wend = float(ws), float(we)
-                    if wend <= wstart:
+                    if wend == wstart:
+                        warnings.append(
+                            f"Segment '{sid_val}' word[{j}]: zero-duration; "
+                            "individual word media effects are empty"
+                        )
+                    if wend < wstart:
                         errors.append(
-                            f"Segment '{sid_val}' word[{j}]: non-positive duration"
+                            f"Segment '{sid_val}' word[{j}]: negative duration"
                         )
                     if start_val is not None and end_val is not None:
                         seg_s, seg_e = float(start_val), float(end_val)
@@ -2488,7 +2508,7 @@ def run(args: Namespace) -> int:
                 preserve_gap_threshold=args.preserve_short_gaps,
             )
             write_webvtt(cues, subtitles_path)
-            if not args.no_subtitle_mux:
+            if cues and not args.no_subtitle_mux:
                 print(
                     (
                         "[eve text-edit] Muxing subtitles from "

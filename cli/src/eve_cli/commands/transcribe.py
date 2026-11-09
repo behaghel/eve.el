@@ -206,7 +206,46 @@ def _split_at_natural_boundaries(
 def resegment_naturally(
     segments: list[dict[str, Any]],
     max_words: int,
+    *,
+    sample_rates: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
+    # Empty word extents do not define a playable caption. Keep the existing
+    # media envelope for their SDK segment; regroup unaffected runs normally.
+    def has_empty_word(segment: dict[str, Any]) -> bool:
+        rate = (sample_rates or {}).get(segment["source"], 1)
+        for word in segment.get("words", []):
+            try:
+                start, end = Fraction(str(word["start"])), Fraction(str(word["end"]))
+                if start == end or (
+                    sample_rates and round(start * rate) == round(end * rate)
+                ):
+                    return True
+            except (KeyError, ValueError, ZeroDivisionError):
+                continue  # Malformed intervals still fail canonical validation.
+        return False
+
+    if any(has_empty_word(segment) for segment in segments):
+        preserved: list[dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
+        for segment in segments:
+            if has_empty_word(segment):
+                preserved.extend(
+                    resegment_naturally(pending, max_words, sample_rates=sample_rates)
+                )
+                pending = []
+                preserved.append(deepcopy(segment))
+            else:
+                pending.append(segment)
+        preserved.extend(
+            resegment_naturally(pending, max_words, sample_rates=sample_rates)
+        )
+        counts: dict[str, int] = {}
+        for segment in preserved:
+            source = segment["source"]
+            counts[source] = counts.get(source, 0) + 1
+            segment["id"] = f"{source}-s{counts[source]:04d}"
+        return preserved
+
     by_source: dict[str, list[dict[str, Any]]] = {}
     for seg in segments:
         by_source.setdefault(seg["source"], []).append(seg)
@@ -271,7 +310,7 @@ def segment_to_dict(
         else (words[-1]["end"] if words else None)
     )
 
-    if max_duration and words:
+    if max_duration and words and not any(w["start"] == w["end"] for w in words):
         if start is None:
             raise tjm_v11.ValidationError(
                 f"Segment '{source_id}-s{index:04d}' lacks a timed start; "
@@ -463,7 +502,7 @@ def probe_audio_sample_rate(path: pathlib.Path) -> int:
 
 
 def _transcription_interval(
-    item: dict[str, Any], rate: int, label: str
+    item: dict[str, Any], rate: int, label: str, *, allow_empty: bool = False
 ) -> tuple[int, int]:
     """Quantize once to nearest source samples, never stretch an ASR interval."""
     try:
@@ -475,7 +514,12 @@ def _transcription_interval(
             f"(start={item.get('start')}, end={item.get('end')})"
         ) from error
     start_tick, end_tick = round(start * rate), round(end * rate)
-    if start < 0 or end <= start or end_tick <= start_tick:
+    if (
+        start < 0
+        or end < start
+        or end_tick < start_tick
+        or (not allow_empty and (end == start or end_tick == start_tick))
+    ):
         raise tjm_v11.ValidationError(
             f"{label}: unresolved timing (start={item.get('start')}, "
             f"end={item.get('end')}, ticks={start_tick}..{end_tick} at {rate} Hz); "
@@ -500,7 +544,7 @@ def _v11_segments(
         for raw in segment["words"] if timestamps == "words" else []:
             spoken = str(raw.get("spoken") or raw.get("token") or "")
             word_start, word_end = _transcription_interval(
-                raw, rate, f"{label}, token {spoken!r}"
+                raw, rate, f"{label}, token {spoken!r}", allow_empty=True
             )
             word: dict[str, Any] = {
                 "spoken": spoken,
@@ -1394,7 +1438,7 @@ def run(args: Namespace) -> int:
             ):
                 _emit_progress(args, "resegment", max_words=args.max_segment_words)
                 manifest_segments = resegment_naturally(
-                    manifest_segments, args.max_segment_words
+                    manifest_segments, args.max_segment_words, sample_rates=sample_rates
                 )
             if align_words:
                 alignment_record = _align_transcription(
@@ -1418,7 +1462,7 @@ def run(args: Namespace) -> int:
     if args.tag_fillers:
         _emit_progress(args, "tag-fillers")
         tag_manifest_fillers({"segments": manifest_segments}, DEFAULT_FILLERS)
-    manifest = {
+    manifest: dict[str, Any] = {
         "version": "1.1",
         "sources": manifest_sources,
         "segments": _v11_segments(
@@ -1429,6 +1473,17 @@ def run(args: Namespace) -> int:
     if alignment_record is not None:
         manifest["alignment"] = alignment_record
     tjm_v11.validate_manifest(manifest)
+    empty_count = sum(
+        word["start_tick"] == word["end_tick"]
+        for segment in manifest["segments"]
+        for word in segment.get("words", [])
+    )
+    if empty_count:
+        print(
+            f"[eve transcribe] WARNING: {empty_count} zero-duration word(s); "
+            "text retained, individual word media effects are empty",
+            file=sys.stderr,
+        )
     if alignment_record is not None:
         permitted = (
             not alignment_record["quality_concerns"] or alignment_record["forced"]

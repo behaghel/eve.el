@@ -283,6 +283,126 @@
       (delete-file file)
       (when (file-exists-p (concat file "~")) (delete-file (concat file "~"))))))
 
+(ert-deftest eve-empty-word-delete-is-text-only-and-discoverable ()
+  "An empty token edits normally without cutting gaps or losing its warning."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment))) messages)
+     (setf (alist-get 'end_tick word) (alist-get 'start_tick word))
+     (let ((before (eve-test--word-records segment)))
+       (eve--render)
+       (goto-char (car (eve-test--match-range "written")))
+       (should (eve-test--face-contains-p (get-text-property (point) 'face)
+                                         'font-lock-warning-face))
+       (should (string-match-p "Zero-duration" (get-text-property (point) 'help-echo)))
+       (cl-letf (((symbol-function 'message)
+                  (lambda (format-string &rest args)
+                    (push (apply #'format format-string args) messages))))
+         (eve-delete-word))
+       (should (eve--edit-deleted-p word))
+       (should-not (eve-test--match-range "written"))
+       (should (= 3.0 (eve--rendered-segment-duration segment t)))
+       (should (= 1 (length (eve--zero-duration-warnings))))
+       (should (seq-some (lambda (text) (string-match-p "no audio/video removed" text)) messages))
+       (should (equal (mapcar (lambda (w) (list (alist-get 'spoken w)
+                                               (alist-get 'start_tick w) (alist-get 'end_tick w))) before)
+                      (mapcar (lambda (w) (list (alist-get 'spoken w)
+                                               (alist-get 'start_tick w) (alist-get 'end_tick w)))
+                              (alist-get 'words segment))))
+       (cl-letf (((symbol-function 'eve--display-validation)
+                  (lambda (&rest _) (ert-fail "Warning interrupted silent validation"))))
+         (should-not (eve-validate t)))
+       (eve-undo)
+       (should (= 1 (length (eve--zero-duration-warnings))))
+       (should (eve-test--match-range "written"))))))
+
+(ert-deftest eve-empty-words-bulk-delete-retains-segment-media ()
+  "Deleting only empty fillers cannot remove a positive-duration segment."
+  (eve-test-with-canonical-v11-buffer
+   (let ((segment (car (eve--segments))) messages)
+     (dolist (word (alist-get 'words segment))
+       (setf (alist-get 'start_tick word) 72000
+             (alist-get 'end_tick word) 72000)
+       (eve--set-word-filler word t))
+     (eve--render)
+     (cl-letf (((symbol-function 'message)
+                (lambda (format-string &rest args)
+                  (push (apply #'format format-string args) messages))))
+       (eve-delete-fillers))
+     (should (= 3.0 (eve--rendered-segment-duration segment t)))
+     (should-not (eve--edit-deleted-p segment))
+     (should (= 4 (length (eve--zero-duration-warnings))))
+     (should (seq-some (lambda (text) (string-match-p "no audio/video removed" text)) messages)))))
+
+(ert-deftest eve-empty-word-save-and-report-never-require-acknowledgement ()
+  "Warnings survive reopen but neither prompt nor open a report during save."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((file (make-temp-file "eve-empty-" nil ".tjm.json"))
+          (word (nth 1 (alist-get 'words (car (eve--segments))))))
+     (unwind-protect
+         (progn
+           (setq-local buffer-file-name file)
+           (setf (alist-get 'end_tick word) (alist-get 'start_tick word))
+           (eve--mark-dirty)
+           (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) (ert-fail "Warning prompted")))
+                     ((symbol-function 'eve--display-validation) (lambda (&rest _) (ert-fail "Save opened a report"))))
+             (eve--write-file))
+           (eve-reload)
+           (should (= 1 (length (eve--zero-duration-warnings))))
+           (let (report)
+             (cl-letf (((symbol-function 'eve--display-validation) (lambda (issues) (setq report issues))))
+               (should-not (eve-validate)))
+             (should (= 1 (length report)))))
+       (delete-file file)
+       (when (file-exists-p (concat file "~")) (delete-file (concat file "~")))))))
+
+(ert-deftest eve-empty-word-caption-splits-require-positive-media-not-positive-words ()
+  "Empty anchors allow valid splits but cannot create empty media segments."
+  (dolist (anchor '(48000 72000 192000))
+    (eve-test-with-canonical-v11-buffer
+     (let ((segment (car (eve--segments))))
+       (dolist (word (alist-get 'words segment))
+         (setf (alist-get 'start_tick word) anchor (alist-get 'end_tick word) anchor))
+       (eve--render)
+       (goto-char (car (eve-test--match-range "written")))
+       (if (= anchor 72000)
+           (progn (eve-split-segment)
+                  (should (= 2 (length (eve--segments))))
+                  (should (= 3.0 (eve--rendered-total-duration (eve--segments) t))))
+         (let ((before (copy-tree eve--data t)))
+           (should-error (eve-split-segment) :type 'user-error)
+           (should (equal before eve--data))
+           (should-not eve--undo-stack)))))))
+
+(ert-deftest eve-empty-word-panel-delete-keeps-whole-segment-available ()
+  "Deleting the sole empty token from the panel preserves playable media."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((source (current-buffer)) (segment (car (eve--segments)))
+          (word (car (alist-get 'words segment))))
+     (setf (alist-get 'words segment) (list word)
+           (alist-get 'end_tick word) (alist-get 'start_tick word))
+     (eve--render)
+     (with-temp-buffer
+       (eve--segment-panel-render source nil)
+       (eve-segment-panel-delete-words))
+     (should (eve--edit-deleted-p word))
+     (should-not (eve--edit-deleted-p segment))
+     (should (= 3.0 (eve--rendered-segment-duration segment t))))))
+
+(ert-deftest eve-empty-word-deletion-does-not-block-caption-regrouping ()
+  "A text-only deletion is not a source cut that forbids caption regrouping."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments)))
+          (word (nth 1 (alist-get 'words segment))))
+     (setf (alist-get 'end_tick word) (alist-get 'start_tick word))
+     (eve--set-edit-deleted word t)
+     (eve--render)
+     (goto-char (car (eve-test--match-range "gamma")))
+     (eve-split-segment)
+     (should (= 2 (length (eve--segments))))
+     (should (= 3.0 (eve--rendered-total-duration (eve--segments) t)))
+     (should (eve--edit-deleted-p (nth 1 (alist-get 'words (car (eve--segments)))))))))
+
 (defun eve-test--word-records (segment)
   "Return SEGMENT word records without their mutable display strings."
   (mapcar (lambda (word) (assq-delete-all 'display (copy-tree word t)))

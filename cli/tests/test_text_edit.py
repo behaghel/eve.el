@@ -844,8 +844,8 @@ def test_text_edit_helper_error_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="missing 'file'"):
         text_edit.load_broll_spec({})
 
-    with pytest.raises(RuntimeError, match="No subtitle cues"):
-        text_edit.write_webvtt([], tmp_path / "empty.vtt")
+    text_edit.write_webvtt([], tmp_path / "empty.vtt")
+    assert (tmp_path / "empty.vtt").read_text() == "WEBVTT\n\n"
 
     with pytest.raises(ValueError, match="Unsupported b-roll mode"):
         text_edit.build_broll_command(

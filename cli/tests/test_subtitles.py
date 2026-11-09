@@ -239,7 +239,7 @@ def test_bad_token_is_a_cli_diagnostic_not_a_python_traceback(
                 "source": "s",
                 "start_tick": 181410,
                 "end_tick": 184150,
-                "words": [{"spoken": "it.", "start_tick": 184150, "end_tick": 184150}],
+                "words": [{"spoken": "it.", "start_tick": 184150, "end_tick": 184149}],
             }
         ],
         "subtitles": configuration()

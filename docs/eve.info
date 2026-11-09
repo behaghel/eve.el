@@ -613,23 +613,29 @@ media-time offsets.
 in the raw JSON companion when needed; they are authoritative for v1.1
 rendering.
 
-   Missing, reversed, zero-duration, or sub-tick-collapsed word
-intervals block publication of a successful transcription.  Eve does not
-add a tick or stretch neighbouring words to make validation pass.
-Existing output is left untouched on validation failure.  Default
-transcription preserves ASR estimates without certifying acoustic
-accuracy.  The CLI's opt-in ‘--word-aligner ctc’ path uses unchanged
-native CTC estimates after English faster-whisper recognition; no human
-timing annotations are needed.  Unsigned English integers, including
-grouped thousands and sentence punctuation, use alignment-only
-verbalization.  ‘11,’ remains the same token and spelling while CTC
-matches ‘ELEVEN’.  Multiword readings remain atomic.  Four-digit numbers
-compare cardinal and year readings against the same acoustic emissions,
-rather than assuming a year pronunciation.  Selected readings and the
-pinned normalizer's version are saved in the alignment audit.  Ambiguous
-score ties or more than 32 reading paths fail without guessing.
-Decimals, signed/currency/percentage forms, leading zeros, numeric
-compounds and ordinals remain unsupported.
+   Zero-duration words are valid transcript tokens with empty media
+intervals.  They retain their text and exact source ticks; Eve does not
+add a tick, stretch neighbouring words, or require a repair before
+opening the transcript.  An existing positive-duration source segment
+remains playable even if all its words have empty intervals.  Automatic
+caption regrouping keeps that segment's existing envelope when needed;
+unrelated captions still regroup normally.  Missing, reversed,
+non-finite or out-of-bounds timing remains an error, and media segments
+must still have positive duration.  Existing output is left untouched on
+validation failure.  Default transcription preserves ASR estimates
+without certifying acoustic accuracy.  The CLI's opt-in ‘--word-aligner
+ctc’ path uses unchanged native CTC estimates after English
+faster-whisper recognition; no human timing annotations are needed.
+Unsigned English integers, including grouped thousands and sentence
+punctuation, use alignment-only verbalization.  ‘11,’ remains the same
+token and spelling while CTC matches ‘ELEVEN’.  Multiword readings
+remain atomic.  Four-digit numbers compare cardinal and year readings
+against the same acoustic emissions, rather than assuming a year
+pronunciation.  Selected readings and the pinned normalizer's version
+are saved in the alignment audit.  Ambiguous score ties or more than 32
+reading paths fail without guessing.  Decimals,
+signed/currency/percentage forms, leading zeros, numeric compounds and
+ordinals remain unsupported.
 
    Experimental backend status does not require force.  A recognizer/CTC
 boundary disagreement greater than 160 ms is recorded in
@@ -990,6 +996,27 @@ File: eve.info,  Node: Validation,  Prev: Undo and redo,  Up: Editing
 Eve validates the manifest automatically on every save (controlled by
 ‘eve-validation-on-save’).  Manual validation runs with ‘C-c C-v’
 (‘eve-validate’).  Timing inconsistencies are reported in the echo area.
+
+   Zero-duration words use warning highlighting in the transcript and
+segment panel.  Hovering explains their empty media extent.  They remain
+normal text editing and filler-classification targets, but deleting them
+removes no samples or frames: edit feedback makes that explicit.  A
+deletion does not borrow audio from neighbours, remove unrelated gaps,
+or implicitly delete an otherwise playable segment whose words all have
+empty intervals.
+
+   ‘C-c C-v’ includes informational zero-duration warnings, even for
+hidden or deleted tokens.  These warnings require no acknowledgement on
+save or export and do not open a report during an ordinary save.  Fixing
+the interval removes the warning naturally; undo/reload derive it again
+from the current data.
+
+   Undeleted empty tokens remain in subtitles in transcript order.  They
+have no active karaoke highlight interval.  If all caption text is
+deleted but media remains, export produces an empty WebVTT sidecar
+rather than failing or inventing a cue.  Whole-segment edits remain
+available; caption splits still require valid positive-duration media on
+both sides.
 
 
 File: eve.info,  Node: Filler Words,  Next: B-Roll,  Prev: Editing,  Up: Top
@@ -2167,69 +2194,69 @@ Node: Transcription14976
 Node: Starting transcription from Emacs15279
 Node: French transcription and review16935
 Node: Timing and output validity20562
-Node: Backends25956
-Node: Configuration30641
-Node: Installing optional backends32196
-Node: Editing32654
-Node: Navigation32947
-Node: Deletion and restoration33324
-Node: Splitting and merging33963
-Node: Reordering35708
-Node: Markers and sections36352
-Node: Inline editing37051
-Node: Metadata38775
-Node: Undo and redo39373
-Node: Validation39700
-Node: Filler Words40026
-Node: Concept40238
-Node: Configuration (1)40871
-Node: Commands42065
-Node: Auto-tagging on file open43475
-Node: B-Roll43937
-Node: Concept (1)44243
-Node: Editing b-roll metadata44899
-Node: Compositing modes in detail46668
-Node: Replace mode46893
-Node: Pip mode47341
-Node: Audio policy48260
-Node: JSON templates48739
-Node: Overlay fields50032
-Node: Concrete example lower-third title card51435
-Node: Placeholders without templates53320
-Node: Continuation chains53743
-Node: Compilation and Rendering54766
-Node: Audio-only compilation55174
-Node: Two video modes draft and final57791
-Node: Burned-in captions58322
-Node: Under the hood62174
-Node: Pre-flight validation63837
-Node: Dry-run analysis64574
-Node: Checkpoint and resume65100
-Node: Progressive output65581
-Node: Configuration reference65983
-Node: CLI reference68267
-Node: Playback69697
-Node: Source playback69944
-Node: Rendered playback70405
-Node: Playback tracking and segment highlighting70903
-Node: Controls71330
-Node: Video layout72311
-Node: Display73847
-Node: Timestamp ruler74052
-Node: Context panels74640
-Node: Hiding deleted segments76604
-Node: Word-level display77037
-Node: Key Bindings78152
-Node: Single-key bindings78393
-Node: C-c prefix bindings80519
-Node: Playback-mode overrides81527
-Node: The hydra cheatsheet82128
-Node: Configuration Reference82530
-Node: Architecture90165
-Node: Two-layer boundary90352
-Node: Shared contract91156
-Node: Development91628
-Node: Appendix A TJM v11 Specification92104
+Node: Backends26344
+Node: Configuration31029
+Node: Installing optional backends32584
+Node: Editing33042
+Node: Navigation33335
+Node: Deletion and restoration33712
+Node: Splitting and merging34351
+Node: Reordering36096
+Node: Markers and sections36740
+Node: Inline editing37439
+Node: Metadata39163
+Node: Undo and redo39761
+Node: Validation40088
+Node: Filler Words41534
+Node: Concept41746
+Node: Configuration (1)42379
+Node: Commands43573
+Node: Auto-tagging on file open44983
+Node: B-Roll45445
+Node: Concept (1)45751
+Node: Editing b-roll metadata46407
+Node: Compositing modes in detail48176
+Node: Replace mode48401
+Node: Pip mode48849
+Node: Audio policy49768
+Node: JSON templates50247
+Node: Overlay fields51540
+Node: Concrete example lower-third title card52943
+Node: Placeholders without templates54828
+Node: Continuation chains55251
+Node: Compilation and Rendering56274
+Node: Audio-only compilation56682
+Node: Two video modes draft and final59299
+Node: Burned-in captions59830
+Node: Under the hood63682
+Node: Pre-flight validation65345
+Node: Dry-run analysis66082
+Node: Checkpoint and resume66608
+Node: Progressive output67089
+Node: Configuration reference67491
+Node: CLI reference69775
+Node: Playback71205
+Node: Source playback71452
+Node: Rendered playback71913
+Node: Playback tracking and segment highlighting72411
+Node: Controls72838
+Node: Video layout73819
+Node: Display75355
+Node: Timestamp ruler75560
+Node: Context panels76148
+Node: Hiding deleted segments78112
+Node: Word-level display78545
+Node: Key Bindings79660
+Node: Single-key bindings79901
+Node: C-c prefix bindings82027
+Node: Playback-mode overrides83035
+Node: The hydra cheatsheet83636
+Node: Configuration Reference84038
+Node: Architecture91673
+Node: Two-layer boundary91860
+Node: Shared contract92664
+Node: Development93136
+Node: Appendix A TJM v11 Specification93612
 
 End Tag Table
 

@@ -718,7 +718,7 @@ def test_each_transcribed_source_uses_its_own_sample_grid(
 
 
 @pytest.mark.parametrize(
-    "start,end", [(1.0, 1.0), (1.1, 1.0), (None, 1.0), (1.000001, 1.000002)]
+    "start,end", [(1.1, 1.0), (None, 1.0), (float("nan"), 1.0), (0.5, float("inf"))]
 )
 def test_transcribe_never_fabricates_a_positive_word_interval(
     tmp_path: Path,
