@@ -293,7 +293,7 @@
        (eve--render)
        (goto-char (car (eve-test--match-range "written")))
        (should (eve-test--face-contains-p (get-text-property (point) 'face)
-                                         'font-lock-warning-face))
+                                         'eve-zero-duration-word-face))
        (should (string-match-p "Zero-duration" (get-text-property (point) 'help-echo)))
        (cl-letf (((symbol-function 'message)
                   (lambda (format-string &rest args)
@@ -315,6 +315,33 @@
        (eve-undo)
        (should (= 1 (length (eve--zero-duration-warnings))))
        (should (eve-test--match-range "written"))))))
+
+(ert-deftest eve-empty-word-style-is-distinct-from-filler-in-both-views ()
+  "Empty-word timing and filler classification retain independent styling."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((source (current-buffer)) (segment (car (eve--segments)))
+          (words (alist-get 'words segment))
+          (empty (nth 1 words)) (filler (nth 2 words))
+          (filler-spec (copy-tree (get 'eve-filler-face 'face-defface-spec))))
+     (setf (alist-get 'end_tick empty) (alist-get 'start_tick empty))
+     (eve--set-word-filler empty t)
+     (eve--set-word-filler filler t)
+     (eve--render)
+     (dolist (entry '(("written" . t) ("gamma" . nil)))
+       (goto-char (car (eve-test--match-range (car entry))))
+       (let ((face (get-text-property (point) 'face)))
+         (should (eve-test--face-contains-p face 'eve-filler-face))
+         (should (eq (not (null (cdr entry)))
+                     (not (null (eve-test--face-contains-p face 'eve-zero-duration-word-face)))))))
+     (with-temp-buffer
+       (eve--segment-panel-render source nil)
+       (goto-char (point-min))
+       (search-forward "written")
+       (should (eve-test--face-contains-p (get-text-property (1- (point)) 'face)
+                                         'eve-zero-duration-word-face)))
+     (should (equal filler-spec (get 'eve-filler-face 'face-defface-spec)))
+     (should-not (equal (get 'eve-zero-duration-word-face 'face-defface-spec)
+                        filler-spec)))))
 
 (ert-deftest eve-empty-words-bulk-delete-retains-segment-media ()
   "Deleting only empty fillers cannot remove a positive-duration segment."

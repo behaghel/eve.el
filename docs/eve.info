@@ -997,13 +997,17 @@ Eve validates the manifest automatically on every save (controlled by
 ‘eve-validation-on-save’).  Manual validation runs with ‘C-c C-v’
 (‘eve-validate’).  Timing inconsistencies are reported in the echo area.
 
-   Zero-duration words use warning highlighting in the transcript and
-segment panel.  Hovering explains their empty media extent.  They remain
-normal text editing and filler-classification targets, but deleting them
-removes no samples or frames: edit feedback makes that explicit.  A
-deletion does not borrow audio from neighbours, remove unrelated gaps,
-or implicitly delete an otherwise playable segment whose words all have
-empty intervals.
+   Zero-duration words use a distinct purple
+‘eve-zero-duration-word-face’ in the transcript and segment panel,
+separate from filler highlighting.  The face adapts to light/dark
+backgrounds and can be customized with ‘M-x customize-face’.  For a word
+that is both empty and a filler, its timing colour takes precedence
+while filler styling remains independent.  Hovering explains its empty
+media extent.  They remain normal text editing and filler-classification
+targets, but deleting them removes no samples or frames: edit feedback
+makes that explicit.  A deletion does not borrow audio from neighbours,
+remove unrelated gaps, or implicitly delete an otherwise playable
+segment whose words all have empty intervals.
 
    ‘C-c C-v’ includes informational zero-duration warnings, even for
 hidden or deleted tokens.  These warnings require no acknowledgement on
@@ -2207,56 +2211,56 @@ Node: Inline editing37439
 Node: Metadata39163
 Node: Undo and redo39761
 Node: Validation40088
-Node: Filler Words41534
-Node: Concept41746
-Node: Configuration (1)42379
-Node: Commands43573
-Node: Auto-tagging on file open44983
-Node: B-Roll45445
-Node: Concept (1)45751
-Node: Editing b-roll metadata46407
-Node: Compositing modes in detail48176
-Node: Replace mode48401
-Node: Pip mode48849
-Node: Audio policy49768
-Node: JSON templates50247
-Node: Overlay fields51540
-Node: Concrete example lower-third title card52943
-Node: Placeholders without templates54828
-Node: Continuation chains55251
-Node: Compilation and Rendering56274
-Node: Audio-only compilation56682
-Node: Two video modes draft and final59299
-Node: Burned-in captions59830
-Node: Under the hood63682
-Node: Pre-flight validation65345
-Node: Dry-run analysis66082
-Node: Checkpoint and resume66608
-Node: Progressive output67089
-Node: Configuration reference67491
-Node: CLI reference69775
-Node: Playback71205
-Node: Source playback71452
-Node: Rendered playback71913
-Node: Playback tracking and segment highlighting72411
-Node: Controls72838
-Node: Video layout73819
-Node: Display75355
-Node: Timestamp ruler75560
-Node: Context panels76148
-Node: Hiding deleted segments78112
-Node: Word-level display78545
-Node: Key Bindings79660
-Node: Single-key bindings79901
-Node: C-c prefix bindings82027
-Node: Playback-mode overrides83035
-Node: The hydra cheatsheet83636
-Node: Configuration Reference84038
-Node: Architecture91673
-Node: Two-layer boundary91860
-Node: Shared contract92664
-Node: Development93136
-Node: Appendix A TJM v11 Specification93612
+Node: Filler Words41816
+Node: Concept42028
+Node: Configuration (1)42661
+Node: Commands43855
+Node: Auto-tagging on file open45265
+Node: B-Roll45727
+Node: Concept (1)46033
+Node: Editing b-roll metadata46689
+Node: Compositing modes in detail48458
+Node: Replace mode48683
+Node: Pip mode49131
+Node: Audio policy50050
+Node: JSON templates50529
+Node: Overlay fields51822
+Node: Concrete example lower-third title card53225
+Node: Placeholders without templates55110
+Node: Continuation chains55533
+Node: Compilation and Rendering56556
+Node: Audio-only compilation56964
+Node: Two video modes draft and final59581
+Node: Burned-in captions60112
+Node: Under the hood63964
+Node: Pre-flight validation65627
+Node: Dry-run analysis66364
+Node: Checkpoint and resume66890
+Node: Progressive output67371
+Node: Configuration reference67773
+Node: CLI reference70057
+Node: Playback71487
+Node: Source playback71734
+Node: Rendered playback72195
+Node: Playback tracking and segment highlighting72693
+Node: Controls73120
+Node: Video layout74101
+Node: Display75637
+Node: Timestamp ruler75842
+Node: Context panels76430
+Node: Hiding deleted segments78394
+Node: Word-level display78827
+Node: Key Bindings79942
+Node: Single-key bindings80183
+Node: C-c prefix bindings82309
+Node: Playback-mode overrides83317
+Node: The hydra cheatsheet83918
+Node: Configuration Reference84320
+Node: Architecture91955
+Node: Two-layer boundary92142
+Node: Shared contract92946
+Node: Development93418
+Node: Appendix A TJM v11 Specification93894
 
 End Tag Table
 

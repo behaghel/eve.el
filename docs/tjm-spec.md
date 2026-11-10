@@ -394,6 +394,8 @@ source coverage; an impossible split MUST fail before changing data or history.
 
 Editors SHOULD signal empty word intervals through their existing editing and
 validation facilities, without requiring acknowledgement on save or export.
+Their visual signals SHOULD distinguish timing limitations from filler
+classification, including when both apply to the same token.
 Deleting an empty word SHOULD report that no audio/video was removed. Hidden
 or deleted tokens remain discoverable in validation reporting. Warnings are
 informational and MUST NOT be treated as malformed timing. Missing, reversed,

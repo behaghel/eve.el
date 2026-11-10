@@ -998,8 +998,12 @@ Eve validates the manifest automatically on every save (controlled by
 @samp{eve-validation-on-save}).  Manual validation runs with @samp{C-c C-v}
 (@samp{eve-validate}).  Timing inconsistencies are reported in the echo area.
 
-Zero-duration words use warning highlighting in the transcript and segment
-panel.  Hovering explains their empty media extent.  They remain normal text
+Zero-duration words use a distinct purple @samp{eve-zero-duration-word-face} in the
+transcript and segment panel, separate from filler highlighting.  The face adapts
+to light/dark backgrounds and can be customized with @samp{M-x customize-face}.
+For a word that is both empty and a filler, its timing colour takes precedence
+while filler styling remains independent.  Hovering explains its empty media
+extent.  They remain normal text
 editing and filler-classification targets, but deleting them removes no
 samples or frames: edit feedback makes that explicit.  A deletion does not
 borrow audio from neighbours, remove unrelated gaps, or implicitly delete an

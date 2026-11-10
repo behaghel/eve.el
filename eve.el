@@ -348,6 +348,14 @@ When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
   "Face used for filler words."
   :group 'eve)
 
+(defface eve-zero-duration-word-face
+  '((((class color) (background dark)) :foreground "#c4b5fd")
+    (((class color) (background light)) :foreground "#6d28d9")
+    (t :underline t))
+  "Face for empty word intervals, distinct from filler classification.
+A word can be both empty and a filler; its timing colour takes precedence."
+  :group 'eve)
+
 (defface eve-deleted-face
   '((t :inherit shadow :strike-through t))
   "Face used for deleted content when shown."
@@ -2712,8 +2720,8 @@ face, and KEY uses the normal context-panel key-hint face."
    (when-let* ((range (eve--segment-panel-selection-range)))
      (when (and (<= (car range) index) (<= index (cdr range)))
        'eve-segment-panel-selection-face))
-   (when (eve--empty-word-p word) 'font-lock-warning-face)
-  (when (= index eve-segment-panel-word-index)
+   (when (eve--empty-word-p word) 'eve-zero-duration-word-face)
+   (when (= index eve-segment-panel-word-index)
      'eve-segment-panel-current-word-face)
    (when (eve--word-filler-p word)
      'eve-filler-face)
@@ -4915,7 +4923,7 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 			(let* ((word (nth 2 span))
 			       (word-face
 				(eve--merge-faces
-                                 (when (eve--empty-word-p word) 'font-lock-warning-face)
+                                 (when (eve--empty-word-p word) 'eve-zero-duration-word-face)
 				 (when (eve--word-filler-p word)
 				   'eve-filler-face)
 				 (when (eve--edit-deleted-p word)
