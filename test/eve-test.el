@@ -430,6 +430,64 @@
      (should (= 3.0 (eve--rendered-total-duration (eve--segments) t)))
      (should (eve--edit-deleted-p (nth 1 (alist-get 'words (car (eve--segments)))))))))
 
+(ert-deftest eve-token-layout-survives-caption-boundaries-with-atomic-targets ()
+  "Known separators join prose across captions without joining timed records."
+  (eve-test-with-canonical-v11-buffer
+   (setf (alist-get 'segments eve--data)
+         '(((id . "first") (source . "clip") (start_tick . 48000) (end_tick . 96000)
+            (spoken_text . "We do") (display_text . "We do")
+            (words . (((spoken . "We") (separator_before . "") (start_tick . 48000) (end_tick . 72000))
+                      ((spoken . "do") (separator_before . " ") (start_tick . 72000) (end_tick . 96000)))))
+           ((id . "second") (source . "clip") (start_tick . 96000) (end_tick . 144000)
+            (spoken_text . "n't know") (display_text . "n't know")
+            (words . (((spoken . "n't") (separator_before . "") (start_tick . 96000) (end_tick . 120000))
+                      ((spoken . "know") (separator_before . " ") (start_tick . 120000) (end_tick . 144000)))))))
+   (eve--render)
+   (should (eve-test--match-range "We don't know"))
+   (goto-char (+ 5 (car (eve-test--match-range "don't"))))
+   (backward-char 1)
+   (let* ((info (eve--word-data-at-point)) (word (plist-get info :word)))
+     (should (equal "n't" (alist-get 'spoken word)))
+     (should (= 96000 (alist-get 'start_tick word)))
+     (should (= 4 (apply #'+ (mapcar (lambda (s) (length (alist-get 'words s))) (eve--segments))))))
+   (let ((word (car (alist-get 'words (cadr (eve--segments))))))
+     (eve--segment-panel-rephrase-range (cadr (eve--segments)) 1 1 "understand")
+     (eve--render)
+     (should (eve-test--match-range "We don't understand"))
+     (should (equal "" (alist-get 'separator_before word))))
+   (setq eve--visual-separators '("first"))
+   (eve--render)
+   (should (eve-test--match-range "We do\n\nn't understand"))))
+
+(ert-deftest eve-token-layout-quotes-and-hyphens-are-not-language-heuristics ()
+  "Explicit spaces override elision guesses; tight compound joins stay tight."
+  (eve-test-with-canonical-v11-buffer
+   (let* ((segment (car (eve--segments)))
+          (words '(((spoken . "j") (separator_before . ""))
+                   ((spoken . "'quoted'") (separator_before . " "))
+                   ((spoken . "well") (separator_before . " "))
+                   ((spoken . "-") (separator_before . ""))
+                   ((spoken . "being") (separator_before . "")))))
+     (cl-loop for word in words for index from 0
+              do (setf (alist-get 'start_tick word) (+ 48000 (* index 12000))
+                       (alist-get 'end_tick word) (+ 60000 (* index 12000))))
+     (setf (alist-get 'words segment) words)
+     (eve--render)
+     (should (eve-test--match-range "j 'quoted' well-being"))
+     (let ((source (current-buffer)))
+       (with-temp-buffer
+         (eve--segment-panel-render source nil)
+         (should (eve-test--match-range "j 'quoted' well-being")))))))
+
+(ert-deftest eve-token-layout-validation-rejects-malformed-separators ()
+  "Invalid layout data is an error, not an informational timing warning."
+  (dolist (value '(nil 42 "visible" "\n"))
+    (eve-test-with-canonical-v11-buffer
+     (setf (alist-get 'separator_before (car (alist-get 'words (car (eve--segments))))) value)
+     (cl-letf (((symbol-function 'eve--display-validation) #'ignore))
+       (should (seq-some (lambda (issue) (string-match-p "separator_before" issue))
+                         (eve-validate t)))))))
+
 (defun eve-test--word-records (segment)
   "Return SEGMENT word records without their mutable display strings."
   (mapcar (lambda (word) (assq-delete-all 'display (copy-tree word t)))

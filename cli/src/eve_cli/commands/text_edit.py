@@ -594,8 +594,10 @@ def segment_gap_bounds(segment: dict[str, Any]) -> tuple[float, float] | None:
 
 
 def render_word_text(segment: dict[str, Any]) -> str:
+    words = surviving_words(segment)
     return join_display_tokens(
-        str(word.get("token", "")) for word in surviving_words(segment)
+        (str(word.get("token", "")) for word in words),
+        separators=(word.get("separator_before") for word in words),
     ).strip()
 
 
@@ -1009,8 +1011,13 @@ def build_token_captions(
                         (offset + left - range_start, offset + right - range_start)
                     )
                 offset += range_end - range_start
-            tokens.append(subtitles.TimedToken(fragment, intervals))
-        derived = join_display_tokens(token.text for token in tokens)
+            tokens.append(
+                subtitles.TimedToken(fragment, intervals, word.get("separator_before"))
+            )
+        derived = join_display_tokens(
+            (token.text for token in tokens),
+            separators=(token.separator_before for token in tokens),
+        )
         legacy_join = " ".join(token.text for token in tokens)
         display = None if has_deleted_words(segment) else segment.get("display_text")
         if display and str(display).strip() not in (

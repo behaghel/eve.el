@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from .subtitles import SubtitleError, validate_configuration
+from .utils.typography import valid_separator
 
 type JsonObject = dict[str, object]
 type JsonArray = list[object]
@@ -264,6 +265,12 @@ def _validate_word(
         raise ValidationError(
             f"segments[{segment_index}].words[{word_index}] "
             "falls outside parent segment"
+        )
+
+    if "separator_before" in word and not valid_separator(word["separator_before"]):
+        raise ValidationError(
+            f"segments[{segment_index}].words[{word_index}].separator_before "
+            "must be horizontal whitespace or an empty string"
         )
 
     _expect_non_empty_string(

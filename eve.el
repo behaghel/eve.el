@@ -2730,11 +2730,12 @@ face, and KEY uses the normal context-panel key-hint face."
 
 (defun eve--segment-panel-insert-words (visible-words)
   "Insert VISIBLE-WORDS into the current segment panel."
-  (let ((first t))
+  (let ((joined ""))
     (dolist (entry visible-words)
       (pcase-let ((`(,index ,word ,text) entry))
-        (unless first (insert " "))
-        (setq first nil)
+        (let ((separator (eve--display-token-separator joined text (alist-get 'separator_before word))))
+          (insert separator)
+          (setq joined (concat joined separator text)))
         (let ((start (point)))
           (insert text)
           (add-text-properties
@@ -3119,7 +3120,8 @@ Return one display fragment per existing token, without mutating data."
                       (cl-subseq words start-index (1+ end-index)))))
       (cond
        ((or (equal text (string-join old " "))
-            (equal text (eve--join-display-tokens old))) old)
+            (equal text (eve--join-display-tokens old))
+            (equal text (eve--join-word-displays (cl-subseq words start-index (1+ end-index))))) old)
        ((and (= count 1) (eve--canonical-editor-p)) (list text))
        ((= count (length tokens)) tokens)
        (t (user-error "Ambiguous replacement: edit one timed token at a time; timings are never redistributed"))))))
@@ -3141,9 +3143,8 @@ Return one display fragment per existing token, without mutating data."
   (let* ((segment (eve--segment-panel-segment))
          (range (eve--segment-panel-word-range))
          (words (alist-get 'words segment))
-         (current (eve--join-display-tokens
-                   (mapcar #'eve--word-render-text
-                           (cl-subseq words (car range) (1+ (cdr range))))))
+         (current (eve--join-word-displays
+                   (cl-subseq words (car range) (1+ (cdr range)))))
          (replacement (read-string "Rephrase words: " current)))
     (eve--segment-panel-rephrase-values segment (car range) (cdr range) replacement)
     (eve--segment-panel-record-state)
@@ -3157,7 +3158,7 @@ Return one display fragment per existing token, without mutating data."
   (interactive)
   (let* ((segment (eve--segment-panel-segment))
          (words (alist-get 'words segment))
-         (current (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
+         (current (eve--join-word-displays words))
          (replacement (read-string "Rephrase segment: " current)))
     (eve--segment-panel-rephrase-values segment 0 (1- (length words)) replacement)
     (eve--segment-panel-record-state)
@@ -3455,7 +3456,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
 
 (defun eve--segment-panel-words-label (words)
   "Return a compact display label for WORDS."
-  (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
+  (eve--join-word-displays words))
 
 (defun eve--segment-panel-set-word-token (word token)
   "Set WORD's visible TOKEN in place."
@@ -3496,7 +3497,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
   (let* ((canonical (eve--canonical-editor-p))
          (words (seq-remove (lambda (word) (and canonical (eve--word-media-cut-p word)))
                             (alist-get 'words segment))))
-    (eve--join-display-tokens (mapcar #'eve--word-render-text words))))
+    (eve--join-word-displays words)))
 
 (defun eve--segment-panel-refresh-segment-text (segment)
   "Refresh SEGMENT's caption cache without rewriting its spoken record."
@@ -4547,12 +4548,19 @@ Legacy manifests retain their seconds-based interpretation."
           "\\|puisqu\\|quoiqu\\|presqu\\|quelqu\\|entr\\|aujourd\\)\\(['’]?\\)\\'")
   "French elision stems at the end of a display fragment.")
 
-(defun eve--display-token-separator (left right)
-  "Return spacing between LEFT and RIGHT without changing either fragment."
+(defun eve--valid-display-separator-p (value)
+  "Return non-nil if VALUE is horizontal whitespace, including an empty join."
+  (and (stringp value)
+       (string-match-p "\\`[[:space:]]*\\'" value)
+       (not (string-match-p "[\r\n\v\f\u0085\u2028\u2029]" value))))
+
+(defun eve--display-token-separator (left right &optional separator-before)
+  "Return spacing between LEFT and RIGHT, preferring known SEPARATOR-BEFORE."
   (save-match-data
     (let ((case-fold-search t))
       (cond
        ((or (string-empty-p left) (string-empty-p right)) "")
+       ((eve--valid-display-separator-p separator-before) separator-before)
        ((and (string-match eve--french-elision-regexp left)
              (let ((apostrophe (match-string 1 left)))
                (if (not (string-empty-p apostrophe))
@@ -4561,13 +4569,19 @@ Legacy manifests retain their seconds-based interpretation."
                      (string-match-p "\\`['’][[:alpha:]]" right))))) "")
        (t " ")))))
 
-(defun eve--join-display-tokens (fragments)
-  "Join display FRAGMENTS with French elision spacing, never merging records."
-  (let ((text ""))
+(defun eve--join-display-tokens (fragments &optional separators)
+  "Join display FRAGMENTS using known SEPARATORS or legacy fallback."
+  (let ((text "") (layout separators))
     (dolist (fragment fragments)
-      (unless (string-empty-p fragment)
-        (setq text (concat text (eve--display-token-separator text fragment) fragment))))
+      (let ((separator (pop layout)))
+        (unless (string-empty-p fragment)
+          (setq text (concat text (eve--display-token-separator text fragment separator) fragment)))))
     text))
+
+(defun eve--join-word-displays (words)
+  "Project WORDS with known separators without changing their records."
+  (eve--join-display-tokens (mapcar #'eve--word-render-text words)
+                            (mapcar (lambda (word) (alist-get 'separator_before word)) words)))
 
 (defun eve--word-render-text (word)
   "Return WORD's display fragment, falling back to the format's source token."
@@ -4610,7 +4624,7 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
               (let ((word-text (string-trim (eve--word-render-text word))))
                 (unless (string-empty-p word-text)
                   (let ((separator (if canonical
-                                       (eve--display-token-separator joined word-text)
+                                       (eve--display-token-separator joined word-text (alist-get 'separator_before word))
                                      (if pieces " " ""))))
                     (setq cursor (+ cursor (length separator))
                           joined (concat joined separator word-text)))
@@ -4831,6 +4845,8 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
     (let ((previous-id nil)
 	  (previous-marker nil)
 	  (previous-meta-inserted nil)
+          (previous-source nil)
+          (previous-text "")
 	  (rendered-any nil))
 	  (dolist (segment segments)
 	    (let* ((id (or (alist-get 'id segment) ""))
@@ -4869,7 +4885,11 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		   (previous-meta-inserted
 		    (insert "\n"))
 		   (t
-		    (insert " "))))
+                    (insert (if (equal previous-source (alist-get 'source segment))
+                                (eve--display-token-separator
+                                 previous-text (or text "")
+                                 (alist-get 'separator_before (nth 2 (car word-spans))))
+                              " ")))))
                 (when-let* ((gap (and (not markerp)
                                       (eve--source-gap-before segment))))
                   (insert (propertize
@@ -4945,6 +4965,8 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		  (setq rendered-any t
 			previous-id id
 			previous-marker markerp
+                        previous-source (alist-get 'source segment)
+                        previous-text (or text "")
 			previous-meta-inserted meta-inserted)))))
     (goto-char (point-min))
     (when current-id
@@ -7206,6 +7228,10 @@ as blocking issues and require no acknowledgement when saving or exporting."
 	    (let ((w-start (eve--source-seconds word 'start segment))
 		  (w-end (eve--source-seconds word 'end segment))
 		  (token (or (alist-get 'spoken word) (alist-get 'token word))))
+              (when (and (assq 'separator_before word)
+                         (not (eve--valid-display-separator-p (alist-get 'separator_before word))))
+                (push (format "%s: word '%s' separator_before must be horizontal whitespace"
+                              (or id "<no-id>") (or token "")) issues))
 	      (when (or (null w-start) (null w-end))
 		(push (format "%s: word '%s' missing timing"
 			      (or id "<no-id>")

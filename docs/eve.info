@@ -942,12 +942,33 @@ changes ‘display’ fragments, never the factual ‘spoken’ tokens or their
 source ticks.  The panel's ‘i’ action edits one focused token or the
 selected token range; ‘E’ edits the segment's token displays.
 
-   French elisions such as ‘j’ + ‘'espère’ and ‘l’’ + ‘écouter’ display
-as ‘j'espère’ and ‘l’écouter’ in the editor and word-derived captions.
-Straight and curly apostrophes keep their spelling.  This removes only
-synthetic spacing: the source tokens stay separate, with their original
-timings and editing identities.  Existing timed transcripts do not need
-retranscription.
+   New transcripts retain known recognizer spacing as optional
+‘word.separator_before’ layout data.  The editor, segment panel, plain
+captions and word highlighting use those separators consistently,
+including across caption boundaries in continuous prose.  English
+contractions and hyphenated forms stay intact without language-specific
+guesses; quoted text and spaced command-line flags keep their supplied
+spaces.  Unspaced writing is preserved.  Automatic caption regrouping
+joins connected fragments within their original recognizer caption where
+the existing media selection can be preserved exactly.  It never bridges
+an excluded source gap merely to improve formatting; an unsafe boundary
+remains as recorded.  Original caption boundaries remain usable for
+unspaced writing, rather than combining the whole recording into one
+caption.
+
+   This changes presentation only: timed tokens remain separately
+editable, with unchanged identity, recognized text and source ticks.
+Display edits keep the layout metadata.  When literal text and token
+characters disagree, no layout is inferred and no words are rewritten.
+Older files remain usable unchanged; formatting already discarded from
+them cannot always be recovered automatically.
+
+   As a conservative fallback for existing files, French elisions such
+as ‘j’ + ‘'espère’ and ‘l’’ + ‘écouter’ display as ‘j'espère’ and
+‘l’écouter’ in the editor and word-derived captions.  Straight and curly
+apostrophes keep their spelling.  This removes only synthetic spacing:
+the source tokens stay separate, with their original timings and editing
+identities.  Existing timed transcripts do not need retranscription.
 
    A single v1.1 token can display a complete phrase, which highlights
 and deletes as one unit.  For a bulk replacement, supply one replacement
@@ -2208,59 +2229,59 @@ Node: Splitting and merging34351
 Node: Reordering36096
 Node: Markers and sections36740
 Node: Inline editing37439
-Node: Metadata39163
-Node: Undo and redo39761
-Node: Validation40088
-Node: Filler Words41816
-Node: Concept42028
-Node: Configuration (1)42661
-Node: Commands43855
-Node: Auto-tagging on file open45265
-Node: B-Roll45727
-Node: Concept (1)46033
-Node: Editing b-roll metadata46689
-Node: Compositing modes in detail48458
-Node: Replace mode48683
-Node: Pip mode49131
-Node: Audio policy50050
-Node: JSON templates50529
-Node: Overlay fields51822
-Node: Concrete example lower-third title card53225
-Node: Placeholders without templates55110
-Node: Continuation chains55533
-Node: Compilation and Rendering56556
-Node: Audio-only compilation56964
-Node: Two video modes draft and final59581
-Node: Burned-in captions60112
-Node: Under the hood63964
-Node: Pre-flight validation65627
-Node: Dry-run analysis66364
-Node: Checkpoint and resume66890
-Node: Progressive output67371
-Node: Configuration reference67773
-Node: CLI reference70057
-Node: Playback71487
-Node: Source playback71734
-Node: Rendered playback72195
-Node: Playback tracking and segment highlighting72693
-Node: Controls73120
-Node: Video layout74101
-Node: Display75637
-Node: Timestamp ruler75842
-Node: Context panels76430
-Node: Hiding deleted segments78394
-Node: Word-level display78827
-Node: Key Bindings79942
-Node: Single-key bindings80183
-Node: C-c prefix bindings82309
-Node: Playback-mode overrides83317
-Node: The hydra cheatsheet83918
-Node: Configuration Reference84320
-Node: Architecture91955
-Node: Two-layer boundary92142
-Node: Shared contract92946
-Node: Development93418
-Node: Appendix A TJM v11 Specification93894
+Node: Metadata40453
+Node: Undo and redo41051
+Node: Validation41378
+Node: Filler Words43106
+Node: Concept43318
+Node: Configuration (1)43951
+Node: Commands45145
+Node: Auto-tagging on file open46555
+Node: B-Roll47017
+Node: Concept (1)47323
+Node: Editing b-roll metadata47979
+Node: Compositing modes in detail49748
+Node: Replace mode49973
+Node: Pip mode50421
+Node: Audio policy51340
+Node: JSON templates51819
+Node: Overlay fields53112
+Node: Concrete example lower-third title card54515
+Node: Placeholders without templates56400
+Node: Continuation chains56823
+Node: Compilation and Rendering57846
+Node: Audio-only compilation58254
+Node: Two video modes draft and final60871
+Node: Burned-in captions61402
+Node: Under the hood65254
+Node: Pre-flight validation66917
+Node: Dry-run analysis67654
+Node: Checkpoint and resume68180
+Node: Progressive output68661
+Node: Configuration reference69063
+Node: CLI reference71347
+Node: Playback72777
+Node: Source playback73024
+Node: Rendered playback73485
+Node: Playback tracking and segment highlighting73983
+Node: Controls74410
+Node: Video layout75391
+Node: Display76927
+Node: Timestamp ruler77132
+Node: Context panels77720
+Node: Hiding deleted segments79684
+Node: Word-level display80117
+Node: Key Bindings81232
+Node: Single-key bindings81473
+Node: C-c prefix bindings83599
+Node: Playback-mode overrides84607
+Node: The hydra cheatsheet85208
+Node: Configuration Reference85610
+Node: Architecture93245
+Node: Two-layer boundary93432
+Node: Shared contract94236
+Node: Development94708
+Node: Appendix A TJM v11 Specification95184
 
 End Tag Table
 

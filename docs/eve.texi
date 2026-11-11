@@ -939,7 +939,26 @@ point.  On a marker it edits the title.  For timed v1.1 segments it changes
 The panel's @samp{i} action edits one focused token or the selected token range;
 @samp{E} edits the segment's token displays.
 
-French elisions such as @samp{j} + @samp{'espère} and @samp{l’} + @samp{écouter} display as
+New transcripts retain known recognizer spacing as optional
+@samp{word.separator_before} layout data.  The editor, segment panel, plain captions
+and word highlighting use those separators consistently, including across
+caption boundaries in continuous prose.  English contractions and hyphenated
+forms stay intact without language-specific guesses; quoted text and spaced
+command-line flags keep their supplied spaces.  Unspaced writing is preserved.
+Automatic caption regrouping joins connected fragments within their original
+recognizer caption where the existing media selection can be preserved exactly.
+It never bridges an excluded source gap merely to improve formatting; an unsafe
+boundary remains as recorded.  Original caption boundaries remain usable for
+unspaced writing, rather than combining the whole recording into one caption.
+
+This changes presentation only: timed tokens remain separately editable, with
+unchanged identity, recognized text and source ticks.  Display edits keep the
+layout metadata.  When literal text and token characters disagree, no layout is
+inferred and no words are rewritten.  Older files remain usable unchanged;
+formatting already discarded from them cannot always be recovered automatically.
+
+As a conservative fallback for existing files, French elisions such as
+@samp{j} + @samp{'espère} and @samp{l’} + @samp{écouter} display as
 @samp{j'espère} and @samp{l’écouter} in the editor and word-derived captions.  Straight and
 curly apostrophes keep their spelling.  This removes only synthetic spacing:
 the source tokens stay separate, with their original timings and editing

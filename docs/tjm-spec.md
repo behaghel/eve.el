@@ -294,7 +294,16 @@ The display token for a word is:
 1. `word.display` when present and non-empty;
 2. otherwise `word.spoken`.
 
-Derived display joins MUST omit synthetic spaces at French elision boundaries
+When present, `word.separator_before` supplies the horizontal whitespace before
+that token in a continuous display projection; an empty string explicitly joins
+fragments. Consumers MUST prefer this known layout over punctuation/language
+heuristics. Ignore a leading separator at the start of a standalone caption;
+retain it between consecutive captions in the same continuous text flow.
+Explicit user markers/visual separators and source changes remain boundaries.
+Display rewrites, deletion and regrouping MUST preserve the surviving tokens'
+layout metadata without changing their spoken strings or source intervals.
+
+Without explicit separator data, legacy derived display joins MUST omit synthetic spaces at French elision boundaries
 such as `j` + `'espère`, `c` + `'` + `est`, or `l’` + `écouter`. Both straight and
 curly apostrophes retain their original spelling. This changes only presentation
 separators: consumers MUST NOT merge timed tokens, rewrite recognized words or
@@ -371,9 +380,16 @@ Conforming word objects use:
 - `spoken`: REQUIRED string;
 - `kind`: OPTIONAL legacy compatibility string accepted on input only;
 - `display`: OPTIONAL string;
+- `separator_before`: OPTIONAL horizontal-whitespace string, including `""`;
 - `edit`: OPTIONAL word edit metadata object;
 - `start`: OPTIONAL numeric seconds convenience value;
 - `end`: OPTIONAL numeric seconds convenience value.
+
+`separator_before`, when supplied, MUST contain only horizontal whitespace or
+be empty. It MUST NOT contain visible characters or vertical whitespace (such
+as newlines). It is layout, not a linguistic-word label or a timing instruction.
+Its absence means unknown/legacy layout, not a mandatory space. Editors SHOULD
+preserve it when rewriting display strings and round-tripping existing files.
 
 `end_tick` MUST be greater than or equal to `start_tick`. An equal pair is a
 valid empty word interval: the token retains its spoken/display identity and
@@ -923,6 +939,25 @@ A conforming TJM v1.1 producer:
 
 Plain transcription producers MAY omit word kind on all words. In that case,
 consumers treat the words as lexical by default.
+
+Producers SHOULD retain recognizer-provided separators when the original text
+maps exactly, in order, to the unchanged token fragments. Missing or ambiguous
+layout MUST NOT cause lexical rewriting, fuzzy text alignment, retokenization,
+or fabricated separators. Lack of whitespace at an original recognizer caption's
+start does not establish how it connects to a preceding caption. Older manifests
+remain valid without layout data; consumers MUST NOT silently reconstruct
+unavailable layout by changing source records.
+
+Automatic caption limits are soft presentation targets: within an original
+recognizer caption, an explicitly joined run SHOULD stay together where the
+selected media coverage can be preserved. Unspaced writing systems retain usable
+original caption boundaries rather than becoming one file-wide caption. Layout
+regrouping MUST preserve the pre-existing selected media intervals and gaps
+exactly. In particular, it MUST NOT bridge an excluded source gap to repair a
+text boundary. Retain an unsafe boundary rather than fabricate word timing or
+change audio/video selection.
+This layout-only policy does not change the explicit lexical-token authority
+and independent acoustic alignment policy in Section 15.2.
 
 Producers MUST preserve available timing precision through transcription
 segmentation until conversion to the declared source clock. They MUST NOT first

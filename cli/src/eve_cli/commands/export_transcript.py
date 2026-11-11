@@ -40,7 +40,10 @@ def _text(segment: dict[str, Any]) -> str:
         raise tjm_v11.ValidationError("Source export does not apply word deletions")
     text = (
         segment.get("display_text")
-        or join_display_tokens(word.get("display") or word["spoken"] for word in words)
+        or join_display_tokens(
+            (word.get("display") or word["spoken"] for word in words),
+            separators=(word.get("separator_before") for word in words),
+        )
         or segment.get("spoken_text", "")
     )
     text = " ".join(text.split())

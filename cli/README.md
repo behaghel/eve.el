@@ -54,6 +54,21 @@ Missing, non-finite, reversed or out-of-bounds timing remains invalid; media
 segments still require positive duration. Failed validation leaves an existing
 output untouched; successful manifests are published atomically after validation.
 
+### Text layout without retokenization
+
+When the recognizer's literal text maps exactly to its timed fragments, adapters
+retain known horizontal separators as optional `word.separator_before` strings.
+An explicit empty separator joins fragments; an explicit space overrides legacy
+elision heuristics. Layout is used consistently by editor projections, WebVTT
+and karaoke without changing spoken strings, token identities or source ticks.
+Automatic caption regrouping keeps joined runs together within original
+recognizer captions only where the existing selected media intervals are
+preserved exactly. An excluded source gap is never bridged just to repair a
+text boundary. Unspaced writing retains original caption boundaries as a usable
+presentation limit.
+Unknown/ambiguous layout is not guessed or repaired with a model. Existing TJMs
+remain supported without new required fields or automatic migration.
+
 ### French recordings and standalone transcript export
 
 Use the existing local CLI, without Emacs or a video render:

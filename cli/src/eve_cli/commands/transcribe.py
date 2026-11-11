@@ -17,11 +17,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 from fractions import Fraction
 from importlib.metadata import version as package_version
+from itertools import groupby
 from typing import Any, Never
 
 from .. import alignment, tjm_v11
 from ..utils.fillers import DEFAULT_FILLERS
-from ..utils.typography import join_display_tokens
+from ..utils.typography import join_display_tokens, literal_separators
 from .common import add_json_flag, write_json_atomic
 from .tag_fillers import tag_manifest_fillers
 
@@ -66,6 +67,7 @@ class BackendSegment:
     text: str
     words: list[BackendWord]
     speaker: str | None = None
+    layout_known: bool = True
 
 
 class MissingBackendDependencyError(RuntimeError):
@@ -203,7 +205,139 @@ def _split_at_natural_boundaries(
     return groups
 
 
+def _layout_caption_parts(
+    segment: dict[str, Any], groups: list[list[dict[str, Any]]], rate: int | None = None
+) -> list[dict[str, Any]]:
+    """Partition known media coverage, not source words, at usable word edges."""
+    if len(groups) <= 1:
+        return [segment]
+    try:
+        start, end = Fraction(str(segment["start"])), Fraction(str(segment["end"]))
+        bounds = {
+            id(word): (Fraction(str(word["start"])), Fraction(str(word["end"])))
+            for group in groups
+            for word in group
+        }
+    except (KeyError, ValueError, ZeroDivisionError):
+        return [segment]  # Preserve the producer's original timing diagnostic.
+    boundaries = [start]
+    for left, right in zip(groups, groups[1:]):
+        cut = bounds[id(right[0])][0]
+        if not (
+            boundaries[-1] < cut < end
+            and all(bounds[id(w)][1] <= cut for w in left)
+            and all(bounds[id(w)][0] >= cut for w in right)
+            and (
+                rate is None
+                or round(boundaries[-1] * rate) < round(cut * rate) < round(end * rate)
+            )
+        ):
+            return [segment]  # A soft caption target never invents a cut.
+        boundaries.append(cut)
+    boundaries.append(end)
+    return [
+        {
+            **segment,
+            "id": f"{segment['id']}-{i}",
+            "start": float(boundaries[i]),
+            "end": float(boundaries[i + 1]),
+            "words": group,
+            "text": join_display_tokens(
+                (w["token"] for w in group),
+                separators=(w.get("separator_before") for w in group),
+            ),
+        }
+        for i, group in enumerate(groups)
+    ]
+
+
+def _layout_caption_groups(
+    segments: list[dict[str, Any]],
+    origins: dict[int, int],
+    sample_rates: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Repair presentation groups without changing the selected media union.
+
+    Runtime object identity tracks original recognizer captions only during
+    production; it is neither a stored token identity nor new TJM metadata.
+    """
+    partitioned: list[dict[str, Any]] = []
+    for segment in segments:
+        words = segment.get("words", [])
+        groups = (
+            [list(items) for _, items in groupby(words, lambda w: origins.get(id(w)))]
+            if words and all(id(w) in origins for w in words)
+            else [words]
+        )
+        partitioned.extend(
+            _layout_caption_parts(
+                segment, groups, (sample_rates or {}).get(segment["source"])
+            )
+        )
+    result: list[dict[str, Any]] = []
+    for segment in partitioned:
+        words = segment.get("words", [])
+        previous = result[-1] if result else None
+        left = previous.get("words", []) if previous else []
+        origin = origins.get(id(words[0])) if words else None
+        try:
+            contiguous = previous is not None and Fraction(
+                str(previous["end"])
+            ) == Fraction(str(segment["start"]))
+        except (KeyError, ValueError, ZeroDivisionError):
+            contiguous = False  # Canonical conversion reports malformed timing.
+        if (
+            previous
+            and left
+            and words
+            and origin is not None
+            and all(origins.get(id(w)) == origin for w in left + words)
+            and previous["source"] == segment["source"]
+            and contiguous
+            and words[0].get("separator_before") == ""
+            and all(
+                previous.get(key) == segment.get(key)
+                for key in ("speaker", "edit", "tags", "notes", "broll")
+            )
+        ):
+            combined = left + words
+            result[-1] = {
+                **previous,
+                "end": segment["end"],
+                "words": combined,
+                "text": join_display_tokens(
+                    (w["token"] for w in combined),
+                    separators=(w.get("separator_before") for w in combined),
+                ),
+            }
+        else:
+            result.append(segment)
+    return result
+
+
 def resegment_naturally(
+    segments: list[dict[str, Any]],
+    max_words: int,
+    *,
+    sample_rates: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    origins = {
+        id(w): index
+        for index, segment in enumerate(segments)
+        if any("separator_before" in word for word in segment.get("words", []))
+        for w in segment.get("words", [])
+    }
+    baseline = _resegment_word_captions(segments, max_words, sample_rates=sample_rates)
+    result = _layout_caption_groups(baseline, origins, sample_rates)
+    counts: dict[str, int] = {}
+    for segment in result:
+        source = segment["source"]
+        counts[source] = counts.get(source, 0) + 1
+        segment["id"] = f"{source}-s{counts[source]:04d}"
+    return result
+
+
+def _resegment_word_captions(
     segments: list[dict[str, Any]],
     max_words: int,
     *,
@@ -230,14 +364,16 @@ def resegment_naturally(
         for segment in segments:
             if has_empty_word(segment):
                 preserved.extend(
-                    resegment_naturally(pending, max_words, sample_rates=sample_rates)
+                    _resegment_word_captions(
+                        pending, max_words, sample_rates=sample_rates
+                    )
                 )
                 pending = []
                 preserved.append(deepcopy(segment))
             else:
                 pending.append(segment)
         preserved.extend(
-            resegment_naturally(pending, max_words, sample_rates=sample_rates)
+            _resegment_word_captions(pending, max_words, sample_rates=sample_rates)
         )
         counts: dict[str, int] = {}
         for segment in preserved:
@@ -298,6 +434,16 @@ def segment_to_dict(
         if word.word.strip()
     ]
 
+    if words and getattr(segment, "layout_known", True):
+        separators = literal_separators(segment.text, (word["token"] for word in words))
+        if separators is not None:
+            for word_index, (word, separator) in enumerate(
+                zip(words, separators, strict=True)
+            ):
+                # No leading whitespace at an SDK caption's start says nothing
+                # about its relationship with the preceding SDK caption.
+                if word_index or separator:
+                    word["separator_before"] = separator
     text = " ".join(word["token"] for word in words) if words else segment.text.strip()
     start = (
         segment.start
@@ -316,7 +462,13 @@ def segment_to_dict(
                 f"Segment '{source_id}-s{index:04d}' lacks a timed start; "
                 "audio-backed alignment repair is required"
             )
-        return split_segment(source_id, index, start, words, max_duration)
+        parts = split_segment(source_id, index, start, words, max_duration)
+        return _layout_caption_groups(
+            parts,
+            {id(w): 0 for w in words}
+            if any("separator_before" in w for w in words)
+            else {},
+        )
 
     return [
         {
@@ -555,6 +707,8 @@ def _v11_segments(
             }
             if "display" in raw:
                 word["display"] = raw["display"]
+            if "separator_before" in raw:
+                word["separator_before"] = raw["separator_before"]
             edit = deepcopy(raw.get("edit") or {})
             if edit.get("kind") == "filler":
                 edit.pop("kind")
@@ -572,7 +726,8 @@ def _v11_segments(
             "end": end_tick / rate,
             "spoken_text": " ".join(word["spoken"] for word in words),
             "display_text": join_display_tokens(
-                word.get("display") or word["spoken"] for word in words
+                (word.get("display") or word["spoken"] for word in words),
+                separators=(word.get("separator_before") for word in words),
             ),
             "words": words,
         }
@@ -883,9 +1038,10 @@ def _make_backend_segment(
     return BackendSegment(
         start=start,
         end=end,
-        text=text.strip() or " ".join(word.word for word in words),
+        text=text if text.strip() else " ".join(word.word for word in words),
         words=words,
         speaker=speaker,
+        layout_known=bool(text.strip()),
     )
 
 
