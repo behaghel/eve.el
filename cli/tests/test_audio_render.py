@@ -384,6 +384,29 @@ def test_audio_burning_is_rejected_before_font_resolution(audio_edit, capsys):
     assert not output.exists()
 
 
+def test_known_layout_changes_captions_without_changing_audio(audio_edit):
+    path, data, _ = audio_edit
+    data["render"]["filler_policy"] = "keep"
+    segment = data["segments"][0]
+    segment.pop("display_text")
+    for word, text in zip(segment["words"], ["well", "-", "being"], strict=True):
+        word.update(spoken=text, display=text)
+    results = []
+    for known in (False, True):
+        if known:
+            for word in segment["words"]:
+                word["separator_before"] = ""
+        path.write_text(json.dumps(data))
+        output = path.parent / f"layout-{known}.m4a"
+        assert (
+            main(["text-edit", str(path), "--output", str(output), "--subtitles"]) == 0
+        )
+        text = output.with_suffix(".vtt").read_text()
+        assert ("well-being" if known else "well - being") in text
+        results.append(output.read_bytes())
+    assert results[0] == results[1]
+
+
 def test_wav_is_not_a_public_export_format(audio_edit, capsys):
     path, _, _ = audio_edit
     output = path.parent / "out.wav"

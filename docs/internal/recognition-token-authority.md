@@ -85,3 +85,28 @@ makes this policy unnecessary. Compare actual pinned behavior before removing
 it; do not weaken identity or timing guarantees to accommodate a new backend.
 
 Normative behavior lives in [TJM §15.2](../tjm-spec.md#152-literal-text-recognition-and-trained-verbatim-profile).
+
+## Layout-only separators (all default adapters)
+
+The earlier display baseline stripped SDK whitespace, rejoined timed fragments
+with spaces and compensated using French elision rules. This lost recognizer
+layout: contractions could split across captions and hyphenated forms acquired
+spaces. Extending language/punctuation guess lists cannot reliably distinguish
+connected text from quoted text, spaced flags or unspaced writing systems.
+
+Preserve optional `word.separator_before` from an exact, in-order match between
+literal recognizer text and unchanged timed fragments. Explicit layout wins over
+legacy guesses. No lexical token or interval is combined, redistributed or
+reinterpreted; the trained-verbatim identity/alignment policy above is unchanged.
+Missing layout remains missing, and existing manifests are not silently migrated.
+
+Automatic regrouping keeps explicitly joined runs within original recognizer
+captions by partitioning existing selected envelopes at usable word edges and
+coalescing only source-contiguous groups from the same original caption. It
+preserves the earlier media selection exactly, including exclusions. A source
+gap must not be bridged simply to repair typography. This does not define linguistic word boundaries
+or add paragraph structure. Native recognizer captions bound unspaced runs;
+there is no new language-specific segmentation model. Revisiting the layout
+adapter is appropriate if a backend supplies better explicit boundary data.
+
+Normative layout behavior lives in TJM Sections 8.4, 9 and 15.

@@ -348,6 +348,14 @@ When nil, `--no-cache' is passed and every segment is re-encoded from scratch."
   "Face used for filler words."
   :group 'eve)
 
+(defface eve-zero-duration-word-face
+  '((((class color) (background dark)) :foreground "#c4b5fd")
+    (((class color) (background light)) :foreground "#6d28d9")
+    (t :underline t))
+  "Face for empty word intervals, distinct from filler classification.
+A word can be both empty and a filler; its timing colour takes precedence."
+  :group 'eve)
+
 (defface eve-deleted-face
   '((t :inherit shadow :strike-through t))
   "Face used for deleted content when shown."
@@ -2712,6 +2720,7 @@ face, and KEY uses the normal context-panel key-hint face."
    (when-let* ((range (eve--segment-panel-selection-range)))
      (when (and (<= (car range) index) (<= index (cdr range)))
        'eve-segment-panel-selection-face))
+   (when (eve--empty-word-p word) 'eve-zero-duration-word-face)
    (when (= index eve-segment-panel-word-index)
      'eve-segment-panel-current-word-face)
    (when (eve--word-filler-p word)
@@ -2721,16 +2730,19 @@ face, and KEY uses the normal context-panel key-hint face."
 
 (defun eve--segment-panel-insert-words (visible-words)
   "Insert VISIBLE-WORDS into the current segment panel."
-  (let ((first t))
+  (let ((joined ""))
     (dolist (entry visible-words)
       (pcase-let ((`(,index ,word ,text) entry))
-        (unless first (insert " "))
-        (setq first nil)
+        (let ((separator (eve--display-token-separator joined text (alist-get 'separator_before word))))
+          (insert separator)
+          (setq joined (concat joined separator text)))
         (let ((start (point)))
           (insert text)
           (add-text-properties
            start (point)
            (list 'eve-segment-panel-word-index index
+                 'help-echo (when (eve--empty-word-p word)
+                              "Zero-duration word: text is editable; media effects are empty")
                  'face (eve--segment-panel-word-face word index))))))))
 
 (defun eve--segment-panel-broll-summary (segment)
@@ -3108,7 +3120,8 @@ Return one display fragment per existing token, without mutating data."
                       (cl-subseq words start-index (1+ end-index)))))
       (cond
        ((or (equal text (string-join old " "))
-            (equal text (eve--join-display-tokens old))) old)
+            (equal text (eve--join-display-tokens old))
+            (equal text (eve--join-word-displays (cl-subseq words start-index (1+ end-index))))) old)
        ((and (= count 1) (eve--canonical-editor-p)) (list text))
        ((= count (length tokens)) tokens)
        (t (user-error "Ambiguous replacement: edit one timed token at a time; timings are never redistributed"))))))
@@ -3130,9 +3143,8 @@ Return one display fragment per existing token, without mutating data."
   (let* ((segment (eve--segment-panel-segment))
          (range (eve--segment-panel-word-range))
          (words (alist-get 'words segment))
-         (current (eve--join-display-tokens
-                   (mapcar #'eve--word-render-text
-                           (cl-subseq words (car range) (1+ (cdr range))))))
+         (current (eve--join-word-displays
+                   (cl-subseq words (car range) (1+ (cdr range)))))
          (replacement (read-string "Rephrase words: " current)))
     (eve--segment-panel-rephrase-values segment (car range) (cdr range) replacement)
     (eve--segment-panel-record-state)
@@ -3146,7 +3158,7 @@ Return one display fragment per existing token, without mutating data."
   (interactive)
   (let* ((segment (eve--segment-panel-segment))
          (words (alist-get 'words segment))
-         (current (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
+         (current (eve--join-word-displays words))
          (replacement (read-string "Rephrase segment: " current)))
     (eve--segment-panel-rephrase-values segment 0 (1- (length words)) replacement)
     (eve--segment-panel-record-state)
@@ -3444,7 +3456,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
 
 (defun eve--segment-panel-words-label (words)
   "Return a compact display label for WORDS."
-  (eve--join-display-tokens (mapcar #'eve--word-render-text words)))
+  (eve--join-word-displays words))
 
 (defun eve--segment-panel-set-word-token (word token)
   "Set WORD's visible TOKEN in place."
@@ -3473,7 +3485,10 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
   (when (and (eve--canonical-editor-p)
              (seq-some (lambda (segment)
                          (or (eve--edit-deleted-p segment)
-                             (seq-some #'eve--word-media-cut-p (alist-get 'words segment))))
+                             (seq-some (lambda (word)
+                                         (and (eve--word-media-cut-p word)
+                                              (not (eve--empty-word-p word))))
+                                       (alist-get 'words segment))))
                        segments))
     (user-error "Regroup first, then delete/drop fillers; restore existing cuts before regrouping (no changes made)")))
 
@@ -3482,7 +3497,7 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
   (let* ((canonical (eve--canonical-editor-p))
          (words (seq-remove (lambda (word) (and canonical (eve--word-media-cut-p word)))
                             (alist-get 'words segment))))
-    (eve--join-display-tokens (mapcar #'eve--word-render-text words))))
+    (eve--join-word-displays words)))
 
 (defun eve--segment-panel-refresh-segment-text (segment)
   "Refresh SEGMENT's caption cache without rewriting its spoken record."
@@ -3547,8 +3562,8 @@ TJM v1.1 rejects this seconds-only path before data or history changes."
 
 (defun eve-segment-panel-delete-words ()
   "Delete the focused word or selected range in the panel.
-When this deletes every word in the segment, delete the whole segment instead
-of leaving an empty visible-word state behind."
+When this deletes every word and any word has media extent, delete the
+segment.  Deleting only empty tokens removes text, not the segment's media."
   (interactive)
   (let* ((segment (eve--segment-panel-segment))
          (range (eve--segment-panel-word-range))
@@ -3557,13 +3572,15 @@ of leaving an empty visible-word state behind."
     (eve--segment-panel-record-state)
     (dolist (word words)
       (eve--set-edit-deleted word t))
-    (let ((segment-deleted (eve--segment-all-words-deleted-p segment)))
+    (let ((segment-deleted (and (eve--segment-all-words-deleted-p segment)
+                                (not (seq-every-p #'eve--empty-word-p
+                                                  (alist-get 'words segment))))))
       (when segment-deleted
         (eve--set-edit-deleted segment t))
       (eve--segment-panel-after-edit (car range))
       (if segment-deleted
           (message "Deleted segment")
-        (message "Deleted '%s'" label)))))
+        (message "Deleted '%s'%s" label (eve--empty-word-edit-notice words))))))
 
 (defun eve-segment-panel-delete-segment ()
   "Toggle deletion of the current segment in the panel."
@@ -4531,12 +4548,19 @@ Legacy manifests retain their seconds-based interpretation."
           "\\|puisqu\\|quoiqu\\|presqu\\|quelqu\\|entr\\|aujourd\\)\\(['’]?\\)\\'")
   "French elision stems at the end of a display fragment.")
 
-(defun eve--display-token-separator (left right)
-  "Return spacing between LEFT and RIGHT without changing either fragment."
+(defun eve--valid-display-separator-p (value)
+  "Return non-nil if VALUE is horizontal whitespace, including an empty join."
+  (and (stringp value)
+       (string-match-p "\\`[[:space:]]*\\'" value)
+       (not (string-match-p "[\r\n\v\f\u0085\u2028\u2029]" value))))
+
+(defun eve--display-token-separator (left right &optional separator-before)
+  "Return spacing between LEFT and RIGHT, preferring known SEPARATOR-BEFORE."
   (save-match-data
     (let ((case-fold-search t))
       (cond
        ((or (string-empty-p left) (string-empty-p right)) "")
+       ((eve--valid-display-separator-p separator-before) separator-before)
        ((and (string-match eve--french-elision-regexp left)
              (let ((apostrophe (match-string 1 left)))
                (if (not (string-empty-p apostrophe))
@@ -4545,13 +4569,19 @@ Legacy manifests retain their seconds-based interpretation."
                      (string-match-p "\\`['’][[:alpha:]]" right))))) "")
        (t " ")))))
 
-(defun eve--join-display-tokens (fragments)
-  "Join display FRAGMENTS with French elision spacing, never merging records."
-  (let ((text ""))
+(defun eve--join-display-tokens (fragments &optional separators)
+  "Join display FRAGMENTS using known SEPARATORS or legacy fallback."
+  (let ((text "") (layout separators))
     (dolist (fragment fragments)
-      (unless (string-empty-p fragment)
-        (setq text (concat text (eve--display-token-separator text fragment) fragment))))
+      (let ((separator (pop layout)))
+        (unless (string-empty-p fragment)
+          (setq text (concat text (eve--display-token-separator text fragment separator) fragment)))))
     text))
+
+(defun eve--join-word-displays (words)
+  "Project WORDS with known separators without changing their records."
+  (eve--join-display-tokens (mapcar #'eve--word-render-text words)
+                            (mapcar (lambda (word) (alist-get 'separator_before word)) words)))
 
 (defun eve--word-render-text (word)
   "Return WORD's display fragment, falling back to the format's source token."
@@ -4594,7 +4624,7 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
               (let ((word-text (string-trim (eve--word-render-text word))))
                 (unless (string-empty-p word-text)
                   (let ((separator (if canonical
-                                       (eve--display-token-separator joined word-text)
+                                       (eve--display-token-separator joined word-text (alist-get 'separator_before word))
                                      (if pieces " " ""))))
                     (setq cursor (+ cursor (length separator))
                           joined (concat joined separator word-text)))
@@ -4617,6 +4647,39 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
         duration
       0.0)))
 
+(defun eve--empty-word-p (word)
+  "Return non-nil when WORD has an explicitly empty source interval.
+Use integer ticks when present, without losing precision through seconds."
+  (let* ((ticks (and (assq 'start_tick word) (assq 'end_tick word)))
+         (start (alist-get (if ticks 'start_tick 'start) word))
+         (end (alist-get (if ticks 'end_tick 'end) word)))
+    (and (numberp start) (numberp end) (= start end))))
+
+(defun eve--empty-word-edit-notice (words)
+  "Describe the empty media effect of edited WORDS, or return an empty string."
+  (let ((count (seq-count #'eve--empty-word-p words)))
+    (if (> count 0)
+        (format " (%d zero-duration word%s: no audio/video removed for those tokens)"
+                count (if (= count 1) "" "s"))
+      "")))
+
+(defun eve--zero-duration-warnings ()
+  "Return informational timing warnings, including hidden and deleted tokens."
+  (let (warnings)
+    (dolist (segment (eve--segments) (nreverse warnings))
+      (cl-loop for word in (alist-get 'words segment) for index from 0
+               when (eve--empty-word-p word)
+               do (push (format "Warning: %s word %d '%s': zero-duration; word media effects are empty%s"
+                                (alist-get 'id segment) index (eve--word-render-text word)
+                                (if (eve--edit-deleted-p word) "; text deleted, no audio/video removed" ""))
+                        warnings)))))
+
+(defun eve--segment-has-media-word-deletions-p (segment)
+  "Return non-nil if SEGMENT has a deleted token with a non-empty extent."
+  (seq-some (lambda (word) (and (eve--edit-deleted-p word)
+                              (not (eve--empty-word-p word))))
+            (alist-get 'words segment)))
+
 (defun eve--segment-has-deleted-words-p (segment)
   "Return non-nil if SEGMENT has any deleted words."
   (seq-some #'eve--edit-deleted-p (or (alist-get 'words segment) '())))
@@ -4635,7 +4698,7 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
 
 (defun eve--rendered-segment-gap-bounds (segment hide-deleted)
   "Return rendered source-media bounds for gap calculations."
-  (if (and hide-deleted (eve--segment-has-deleted-words-p segment))
+  (if (and hide-deleted (eve--segment-has-media-word-deletions-p segment))
       (when-let* ((ranges (eve--rendered-word-ranges segment hide-deleted)))
         (cons (caar ranges) (cdar (last ranges))))
     (let ((start (eve--source-seconds segment 'start))
@@ -4663,7 +4726,7 @@ Each entry in SPANS is (START END WORD) over the returned TEXT."
   (cond
    ((and hide-deleted (eve--edit-deleted-p segment)) 0.0)
    ((eve--marker-p segment) (eve--rendered-marker-duration segment))
-   ((and hide-deleted (eve--segment-has-deleted-words-p segment))
+   ((and hide-deleted (eve--segment-has-media-word-deletions-p segment))
     (cl-reduce #'+ (mapcar (lambda (range) (- (cdr range) (car range)))
                            (eve--rendered-word-ranges segment hide-deleted))
                :initial-value 0.0))
@@ -4782,6 +4845,8 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
     (let ((previous-id nil)
 	  (previous-marker nil)
 	  (previous-meta-inserted nil)
+          (previous-source nil)
+          (previous-text "")
 	  (rendered-any nil))
 	  (dolist (segment segments)
 	    (let* ((id (or (alist-get 'id segment) ""))
@@ -4820,7 +4885,11 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		   (previous-meta-inserted
 		    (insert "\n"))
 		   (t
-		    (insert " "))))
+                    (insert (if (equal previous-source (alist-get 'source segment))
+                                (eve--display-token-separator
+                                 previous-text (or text "")
+                                 (alist-get 'separator_before (nth 2 (car word-spans))))
+                              " ")))))
                 (when-let* ((gap (and (not markerp)
                                       (eve--source-gap-before segment))))
                   (insert (propertize
@@ -4874,6 +4943,7 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 			(let* ((word (nth 2 span))
 			       (word-face
 				(eve--merge-faces
+                                 (when (eve--empty-word-p word) 'eve-zero-duration-word-face)
 				 (when (eve--word-filler-p word)
 				   'eve-filler-face)
 				 (when (eve--edit-deleted-p word)
@@ -4884,6 +4954,8 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 			    (add-text-properties (+ start-pos (nth 0 span))
 						 (+ start-pos (nth 1 span))
 						 (list 'face word-face
+                                                       'help-echo (when (eve--empty-word-p word)
+                                                                    "Zero-duration word: text is editable; media effects are empty")
 						       'font-lock-face word-face))))))
 		    (when (and eve--words-visible (alist-get 'words segment))
 		      (insert (propertize (format "\n[words] %s"
@@ -4893,6 +4965,8 @@ first segment id.  Returns nil when CUMULATIVE-TIMES is empty."
 		  (setq rendered-any t
 			previous-id id
 			previous-marker markerp
+                        previous-source (alist-get 'source segment)
+                        previous-text (or text "")
 			previous-meta-inserted meta-inserted)))))
     (goto-char (point-min))
     (when current-id
@@ -5678,7 +5752,8 @@ Optional COUNT moves backward multiple segments."
 	  (eve--goto-segment segment-id))
       (eve--update-focus-overlay)
       (eve--echo-segment-info)
-      (message "Word '%s' %s" word-text (if deleted "deleted" "restored")))))
+      (message "Word '%s' %s%s" word-text (if deleted "deleted" "restored")
+               (if deleted (eve--empty-word-edit-notice (list word)) "")))))
 
 (defun eve--filler-word-positions ()
   "Return visible filler word positions as (POSITION SEGMENT-ID WORD-INDEX WORD)."
@@ -5794,6 +5869,15 @@ Restore active v1.1 source cuts before regrouping; otherwise no change is made."
 		(>= word-index total))
 	(user-error "Move to a word away from the segment boundary to split")))
     (eve--require-uncut-caption-groups (list segment))
+    (when canonical
+      (let ((boundary (alist-get 'start_tick (nth word-index words))))
+        (unless (and (integerp boundary)
+                     (< (alist-get 'start_tick segment) boundary (alist-get 'end_tick segment))
+                     (seq-every-p (lambda (word) (<= (alist-get 'end_tick word) boundary))
+                                  (cl-subseq words 0 word-index))
+                     (seq-every-p (lambda (word) (>= (alist-get 'start_tick word) boundary))
+                                  (nthcdr word-index words)))
+          (user-error "Split needs valid, positive media bounds on both sides; no changes made"))))
     (eve--record-state)
     (let* ((segments (eve--segments))
 	   (segment-index (cl-position segment segments :test #'eq)))
@@ -6463,7 +6547,7 @@ Segment-only captions cannot support word-level filler removal."
   (unless (seq-some (lambda (segment) (alist-get 'words segment)) (eve--segments))
     (user-error "Filler removal requires timed words, not segment-only captions"))
   (eve--record-state)
-  (let ((count 0))
+  (let ((count 0) empty-words)
     (dolist (segment (eve--segments))
       (let ((words (alist-get 'words segment)))
         (when (listp words)
@@ -6472,13 +6556,15 @@ Segment-only captions cannot support word-level filler removal."
                        (eve--word-filler-p word)
                        (not (eve--edit-deleted-p word)))
               (setq count (1+ count))
+              (when (eve--empty-word-p word) (push word empty-words))
               (eve--set-edit-deleted word t))))))
     (when (> count 0)
       (eve--mark-dirty))
     (eve--render t)
     (message (if (> count 0)
-                 (format "Deleted %d filler word%s" count
-                         (if (= count 1) "" "s"))
+                 (format "Deleted %d filler word%s%s" count
+                         (if (= count 1) "" "s")
+                         (eve--empty-word-edit-notice empty-words))
                "No filler words to delete"))))
 
 (defun eve-toggle-separator ()
@@ -7115,7 +7201,9 @@ geometry string for the video area.  Returns nil when skipped."
 
 (defun eve-validate (&optional silent)
   "Validate manifest contents, returning a list of issue strings.
-If SILENT is non-nil, only produce messages when failures occur."
+If SILENT is non-nil, only produce messages when failures occur.
+Zero-duration word warnings appear in the manual report but are not returned
+as blocking issues and require no acknowledgement when saving or exporting."
   (interactive)
   (let ((tolerance eve-validation-time-tolerance)
 	issues)
@@ -7140,6 +7228,10 @@ If SILENT is non-nil, only produce messages when failures occur."
 	    (let ((w-start (eve--source-seconds word 'start segment))
 		  (w-end (eve--source-seconds word 'end segment))
 		  (token (or (alist-get 'spoken word) (alist-get 'token word))))
+              (when (and (assq 'separator_before word)
+                         (not (eve--valid-display-separator-p (alist-get 'separator_before word))))
+                (push (format "%s: word '%s' separator_before must be horizontal whitespace"
+                              (or id "<no-id>") (or token "")) issues))
 	      (when (or (null w-start) (null w-end))
 		(push (format "%s: word '%s' missing timing"
 			      (or id "<no-id>")
@@ -7164,13 +7256,12 @@ If SILENT is non-nil, only produce messages when failures occur."
 			      (- w-end end))
 		      issues)))))))
     (setq issues (cl-remove-duplicates issues :test #'equal))
-    (if issues
-	(progn
-	  (eve--display-validation issues)
-	  (unless silent
-	    (message "TJM validation reported %d issue(s)" (length issues))))
+    (let ((warnings (eve--zero-duration-warnings)))
+      (when (or issues (and warnings (not silent)))
+        (eve--display-validation (append issues warnings)))
       (unless silent
-	(message "TJM validation passed")))
+        (message "TJM validation: %d issue(s), %d informational warning(s)"
+                 (length issues) (length warnings))))
     issues))
 
 (defun eve--serialize-to-file (file)

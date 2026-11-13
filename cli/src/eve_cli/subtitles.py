@@ -25,6 +25,7 @@ class SubtitleError(ValueError):
 class TimedToken:
     text: str
     intervals: list[tuple[Fraction, Fraction]]
+    separator_before: str | None = None
 
 
 @dataclass(frozen=True)
@@ -234,7 +235,7 @@ def _timed_events(
                 else:
                     color += rf"\t({first},{first},\1c{active})"
                 color += rf"\t({last},{last},\1c{base})"
-            separator = display_separator(visible, token.text)
+            separator = display_separator(visible, token.text, token.separator_before)
             parts.append(separator + "{" + color + "}" + _ass_text(token.text))
             visible += separator + token.text
         text = "{" + visibility + "}" + _ass_text(caption.prefix) + "".join(parts)

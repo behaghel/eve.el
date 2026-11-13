@@ -718,7 +718,7 @@ def test_each_transcribed_source_uses_its_own_sample_grid(
 
 
 @pytest.mark.parametrize(
-    "start,end", [(1.0, 1.0), (1.1, 1.0), (None, 1.0), (1.000001, 1.000002)]
+    "start,end", [(1.1, 1.0), (None, 1.0), (float("nan"), 1.0), (0.5, float("inf"))]
 )
 def test_transcribe_never_fabricates_a_positive_word_interval(
     tmp_path: Path,
@@ -1617,8 +1617,8 @@ def test_transcribe_transformers_normalizes_pipeline_chunks(
             "speaker": None,
             "text": "hello world",
             "words": [
-                {"start": 0.0, "end": 0.5, "token": "hello"},
-                {"start": 0.5, "end": 1.1, "token": "world"},
+                {"start": 0.0, "end": 0.5, "token": "hello", "separator_before": " "},
+                {"start": 0.5, "end": 1.1, "token": "world", "separator_before": " "},
             ],
             "tags": [],
             "notes": "",
@@ -1708,7 +1708,9 @@ def test_transcribe_transformers_verbatim_adds_prompt_ids(
             "end": 0.2,
             "speaker": None,
             "text": "uh",
-            "words": [{"start": 0.0, "end": 0.2, "token": "uh"}],
+            "words": [
+                {"start": 0.0, "end": 0.2, "token": "uh", "separator_before": " "}
+            ],
             "tags": [],
             "notes": "",
             "broll": None,
@@ -1783,7 +1785,7 @@ def test_transcribe_nemo_normalizes_hypothesis_timestamps(
             "text": "hello world",
             "words": [
                 {"start": 0.0, "end": 0.4, "token": "hello"},
-                {"start": 0.4, "end": 0.9, "token": "world"},
+                {"start": 0.4, "end": 0.9, "token": "world", "separator_before": " "},
             ],
             "tags": [],
             "notes": "",

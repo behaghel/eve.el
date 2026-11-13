@@ -43,10 +43,31 @@ the declared original-source clock. Source paths are relative to the manifest.
 The output records explicit render settings: keep fillers and preserve no gaps
 unless the manifest is subsequently edited. Available backend timing precision
 is preserved, but this does not turn ASR estimates into sample-accurate acoustic
-alignment. Missing, reversed, zero-duration or sub-tick-collapsed word intervals
-produce a diagnostic rather than fabricated durations. Failed validation leaves
-an existing output untouched; successful manifests are published atomically
-after validation.
+alignment. Empty word intervals, including sub-tick collapses, are valid:
+their text and actual ticks are retained with an informational warning. Deleting
+or dropping them changes captions but removes no media. They have no active
+word-highlighting interval; existing positive-duration segment media remains
+usable, even when all word intervals are empty. No neighbouring duration is
+borrowed, and caption regrouping preserves existing media envelopes where
+needed. This behavior is independent of recognition language and backend.
+Missing, non-finite, reversed or out-of-bounds timing remains invalid; media
+segments still require positive duration. Failed validation leaves an existing
+output untouched; successful manifests are published atomically after validation.
+
+### Text layout without retokenization
+
+When the recognizer's literal text maps exactly to its timed fragments, adapters
+retain known horizontal separators as optional `word.separator_before` strings.
+An explicit empty separator joins fragments; an explicit space overrides legacy
+elision heuristics. Layout is used consistently by editor projections, WebVTT
+and karaoke without changing spoken strings, token identities or source ticks.
+Automatic caption regrouping keeps joined runs together within original
+recognizer captions only where the existing selected media intervals are
+preserved exactly. An excluded source gap is never bridged just to repair a
+text boundary. Unspaced writing retains original caption boundaries as a usable
+presentation limit.
+Unknown/ambiguous layout is not guessed or repaired with a model. Existing TJMs
+remain supported without new required fields or automatic migration.
 
 ### French recordings and standalone transcript export
 
